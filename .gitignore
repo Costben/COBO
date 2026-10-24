@@ -1,0 +1,23 @@
+# 原始样本与反编译产物（体积大，不随仓库分发）
+apk/
+work/
+
+# Gradle
+.gradle/
+build/
+local.properties
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# native 签名库（不随仓库分发）
+client/app/src/main/jniLibs/
+
+# 构建产物
+*.apk
+
+# 图标调研产物（候选 SVG / 生成脚本 / 预览页，不随仓库分发）
+icon-lab/
