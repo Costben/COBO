@@ -54,7 +54,7 @@
 | :--- | :--- |
 | applicationId | `com.cobo.app` |
 | 应用名 | Cobo |
-| 版本 | 1.0.0.0（versionCode 10000） |
+| 版本 | 1.0.0（versionCode 10000） |
 | minSdk / targetSdk | 26 / 37 |
 | 工程 | `frontend/`（独立 Gradle 工程） |
 
