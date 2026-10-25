@@ -13,7 +13,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class ApiException(message: String) : Exception(message)
+class ApiException(message: String, val errno: String? = null) : Exception(message)
 
 /**
  * 非 2xx 响应。微博的 CSRF 校验失败就是 `HTTP 403` + `errno:100006 / 请求非法`，
@@ -119,11 +119,16 @@ object Api {
         mime: String,
         cookie: String?,
         st: String?,
+        /** 文件字段名。发微博图是 `pic`，私信图是 `file`。 */
+        field: String = "pic",
+        /** 附带的其他表单字段，比如私信上传要的 `tuid`。 */
+        extra: Map<String, String> = emptyMap(),
     ): JSONObject = withContext(Dispatchers.IO) {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("st", st.orEmpty())
-            .addFormDataPart("pic", fileName, bytes.toRequestBody(mime.toMediaType()))
+            .apply { extra.forEach { (k, v) -> addFormDataPart(k, v) } }
+            .addFormDataPart(field, fileName, bytes.toRequestBody(mime.toMediaType()))
             .build()
         execute(Request.Builder().url(url).weiboHeaders(cookie, st).post(body).build())
     }

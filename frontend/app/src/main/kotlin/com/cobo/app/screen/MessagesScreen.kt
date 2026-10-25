@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.MessageItem
+import com.cobo.app.data.chatPlainText
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.pageContainerColor
@@ -140,8 +141,14 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
                 }
             }
             itemsIndexed(items, key = { index, item -> "${item.id.ifBlank { item.scheme }}#$index" }) { index, item ->
-                MessageRow(item, Modifier.testTag("message_row_$index")) {
-                    val uid = item.user?.id.orEmpty()
+                val uid = item.user?.id.orEmpty()
+                MessageRow(
+                    item = item,
+                    // 服务端没有已读接口，只能拿「上次点进去时这条会话的预览文字」比：文字变了就是新消息。
+                    seen = App.store.chatSeen(uid) == item.text,
+                    modifier = Modifier.testTag("message_row_$index"),
+                ) {
+                    App.store.markChatSeen(uid, item.text)
                     nav.push(Route.Chat(uid, item.user?.name.orEmpty()))
                 }
             }
@@ -161,7 +168,12 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
 }
 
 @Composable
-private fun MessageRow(item: MessageItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun MessageRow(
+    item: MessageItem,
+    seen: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val scheme = COUITheme.colorScheme
     Row(
         modifier = modifier
@@ -190,14 +202,14 @@ private fun MessageRow(item: MessageItem, modifier: Modifier = Modifier, onClick
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                item.text,
+                chatPlainText(item.text),
                 fontSize = 13.sp,
                 color = scheme.onSurfaceSecondary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (item.unread > 0) {
+        if (item.unread > 0 && !seen) {
             Spacer(Modifier.width(8.dp))
             Box(
                 Modifier

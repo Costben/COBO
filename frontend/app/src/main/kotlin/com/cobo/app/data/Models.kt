@@ -63,6 +63,13 @@ fun stripHtml(html: String?): String {
     }
 }
 
+/** 私信正文里的 emoji 是 `<img alt="[可爱]">`，[stripHtml] 会把它变成 U+FFFC 方块，这里换成 alt 文本。 */
+fun chatPlainText(html: String?): String {
+    if (html.isNullOrBlank()) return ""
+    val withAlt = html.replace(Regex("<img[^>]*alt=\"([^\"]*)\"[^>]*>")) { it.groupValues[1] }
+    return stripHtml(withAlt).replace("\uFFFC", "").trim()
+}
+
 data class User(
     val id: String,
     val name: String,
@@ -299,6 +306,63 @@ data class MessageItem(
     val user: User?,
     val unread: Int,
     val scheme: String,
+)
+
+/**
+ * 一条私信。
+ *
+ * - [mediaType] 1 是图片，正文在 [imageUrl] / [thumbUrl]，[text] 只是占位；
+ * - [dmType] 9 是系统提示（居中的灰条，不是气泡）；
+ * - [pending] / [failed] 只用于本地乐观发送的那条，服务端回来的消息两者都是 false。
+ */
+data class ChatMessage(
+    val id: String,
+    val text: String,
+    val senderId: String,
+    val recipientId: String,
+    val createdAt: String,
+    val mediaType: Int = 0,
+    val dmType: Int = 0,
+    val imageUrl: String = "",
+    val thumbUrl: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    val pending: Boolean = false,
+    val failed: Boolean = false,
+) {
+    val isImage: Boolean get() = mediaType == 1 && (imageUrl.isNotBlank() || thumbUrl.isNotBlank())
+    val isNotice: Boolean get() = dmType == 9
+
+    companion object {
+        fun from(o: JSONObject?): ChatMessage? {
+            if (o == null) return null
+            val id = o.str("id")
+            if (id.isBlank()) return null
+            val attachment = o.optJSONObject("attachment")
+            val original = attachment?.optJSONObject("original_image")
+            return ChatMessage(
+                id = id,
+                text = o.str("text"),
+                senderId = o.str("sender_id"),
+                recipientId = o.str("recipient_id"),
+                createdAt = o.str("created_at"),
+                mediaType = o.int("media_type"),
+                dmType = o.int("dm_type"),
+                imageUrl = original?.str("url").orEmpty(),
+                thumbUrl = attachment?.optJSONObject("thumbnail")?.str("url").orEmpty(),
+                width = original?.int("width") ?: 0,
+                height = original?.int("height") ?: 0,
+            )
+        }
+    }
+}
+
+/** 一次 `api/chat/list` 的结果。列表本身是最新在前，界面按 reverseLayout 铺。 */
+data class ChatPage(
+    val messages: List<ChatMessage>,
+    val users: Map<String, User>,
+    val title: String,
+    val total: Int,
 )
 
 data class Account(

@@ -62,15 +62,6 @@ fun WebScreen(nav: NavState, url: String, title: String) {
 }
 
 @Composable
-fun ChatScreen(nav: NavState, uid: String, name: String) {
-    WebScreen(
-        nav = nav,
-        url = "https://m.weibo.cn/message/chat?uid=$uid",
-        title = name.ifBlank { "私信" },
-    )
-}
-
-@Composable
 fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false) {
     val scope = rememberCoroutineScope()
     var canGoBack by remember { mutableStateOf(false) }

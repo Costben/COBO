@@ -156,4 +156,52 @@ class Store(private val context: Context) {
     }
 
     fun clearHistory() = write("history.json", JSONArray())
+
+    /** uid -> 关注标记 key。存空串表示「明确清掉」，和「没记过」要分开，否则服务端值会一直补回来。 */
+    private fun readFollowTags(): JSONObject {
+        val f = file("follows.json")
+        if (!f.exists()) return JSONObject()
+        return runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+    }
+
+    fun hasFollowTag(uid: String): Boolean = readFollowTags().has(uid)
+
+    fun followTag(uid: String): FollowTag? = FollowTag.of(readFollowTags().optString(uid))
+
+    fun followTags(): Map<String, FollowTag> {
+        val o = readFollowTags()
+        val out = LinkedHashMap<String, FollowTag>()
+        o.keys().forEach { uid -> FollowTag.of(o.optString(uid))?.let { out[uid] = it } }
+        return out
+    }
+
+    fun setFollowTag(uid: String, tag: FollowTag?) {
+        val o = readFollowTags()
+        o.put(uid, tag?.key ?: "")
+        write("follows.json", o)
+    }
+
+    /**
+     * uid -> 读到过的最后一条私信 id。
+     *
+     * 微博的 H5 私信没有暴露「标记已读」的接口，`msglist` 的 unread 会一直是 1。
+     * 这里只记本地已读：列表里的未读点只在「最新一条 id 变过」时重新亮起，
+     * 和服务端语义一致，也不会因为刷新又把点顶回来。
+     */
+    private fun readChatSeen(): JSONObject {
+        val f = file("chat-seen.json")
+        if (!f.exists()) return JSONObject()
+        return runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+    }
+
+    fun chatSeen(uid: String): String = readChatSeen().optString(uid)
+
+    /** token 用会话列表里的预览文字：服务端没有已读接口，只能靠「预览是否变过」判断有没有新消息。 */
+    fun markChatSeen(uid: String, token: String) {
+        if (uid.isBlank() || token.isBlank()) return
+        val o = readChatSeen()
+        if (o.optString(uid) == token) return
+        o.put(uid, token)
+        write("chat-seen.json", o)
+    }
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,12 +34,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
+import com.cobo.app.data.FollowTag
+import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
@@ -52,21 +57,32 @@ import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
+import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.RefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
+import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.PullToRefresh
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(nav: NavState, uid: String?) {
+    val key = uid.orEmpty()
+    val tag = FollowTags[key]
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
@@ -74,10 +90,65 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                 color = pageContainerColor(),
                 title = "主页",
                 navigationIcon = { BackIconButton { nav.pop() } },
+                actions = {
+                    ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
+                },
             )
         },
     ) { padding ->
         ProfileContent(nav, uid, Modifier.fillMaxSize().padding(padding))
+    }
+}
+
+/**
+ * 主页右上角的三点菜单：给这个人挂一个关注标记，三种互斥，再点一次已选中的那项就取消。
+ * 用 COUI 的 ListPopup 而不是 Material 的 DropdownMenu，和首页筛选菜单同一套观感。
+ */
+@Composable
+private fun ProfileMoreAction(tag: FollowTag?, onSelect: (FollowTag?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        HighlightedIconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.couiTopAppBarActionItem().testTag("profile_more"),
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.semantics { contentDescription = "更多" },
+            ) {
+                repeat(3) {
+                    Box(
+                        Modifier
+                            .size(3.5.dp)
+                            .clip(CircleShape)
+                            .background(COUITheme.colorScheme.onSurface)
+                    )
+                }
+            }
+        }
+        WindowListPopup(
+            show = expanded,
+            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+            onDismissRequest = { expanded = false },
+        ) {
+            val dismiss = LocalDismissState.current
+            ListPopupColumn {
+                FollowTag.entries.forEachIndexed { index, item ->
+                    DropdownImpl(
+                        item = DropdownItem(text = item.menuLabel),
+                        optionSize = FollowTag.entries.size,
+                        isSelected = item == tag,
+                        index = index,
+                        groupKey = "tags",
+                        onSelectedIndexChange = {
+                            onSelect(if (item == tag) null else item)
+                            dismiss?.invoke()
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -133,6 +204,14 @@ fun ProfileContent(
         loadStatuses(true, force = false)
     }
 
+    // 服务端说这个人被设了特别关注、本机又没记过标记，就补一次初值；之后一律以本机为准。
+    LaunchedEffect(user?.id, user?.specialFollow) {
+        val loaded = user ?: return@LaunchedEffect
+        if (loaded.specialFollow && !FollowTags.has(loaded.id)) {
+            FollowTags.set(loaded.id, FollowTag.Special)
+        }
+    }
+
     LaunchedEffect(listState, items.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
@@ -164,6 +243,7 @@ fun ProfileContent(
             item {
                 ProfileHeader(
                     user = user,
+                    tag = FollowTags[user?.id ?: uid],
                     onFollow = user?.let { target ->
                         if (target.id == App.repo.session?.uid) {
                             null
@@ -248,7 +328,7 @@ fun ProfileContent(
 }
 
 @Composable
-private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?) {
+private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?, tag: FollowTag? = null) {
     val scheme = COUITheme.colorScheme
     Column(Modifier.fillMaxWidth()) {
         Box(
@@ -289,6 +369,10 @@ private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f).padding(bottom = 4.dp)) {
+                    if (tag != null) {
+                        FollowTagBadge(tag)
+                        Spacer(Modifier.height(2.dp))
+                    }
                     Text(
                         user?.name ?: "加载中…",
                         fontSize = 20.sp,

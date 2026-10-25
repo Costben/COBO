@@ -3,6 +3,8 @@ package com.cobo.app.data
 import android.content.Context
 import android.net.Uri
 import com.cobo.app.App
+import com.cobo.app.data.FollowTag
+import com.cobo.app.data.FollowTags
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -21,6 +23,9 @@ private const val SPECIAL_PAGE_SIZE = 12
 
 /** 关注流里扫不到时，最多拼几个特别关注用户的主页时间线兜底。 */
 private const val SPECIAL_DIRECT_USERS = 5
+
+/** 一轮拼流最多花多久；到点就用已有结果返回，避免下拉头长时间挂着。 */
+private const val SPECIAL_REFRESH_BUDGET_MS = 15_000L
 
 class Repo(private val context: Context, private val store: Store) {
 
@@ -145,34 +150,53 @@ class Repo(private val context: Context, private val store: Store) {
      * 先用 231093_-_specialfollow 把名单拿全，再退回每条 status 上现成的 special_follow 标记，
      * 两者取并集 —— 名单接口挂了也不至于整页空白。
      */
-    suspend fun special(maxId: String? = null, force: Boolean = false): FeedPage {
-        val uids = specialFollowUids(force)
-        val kept = ArrayList<Status>()
+    suspend fun special(maxId: String? = null, force: Boolean = false): FeedPage =
+        byUsers(specialFollowUids(force) + FollowTags.uids(FollowTag.Special), maxId, force)
+
+    /** 「悄悄关注」：服务端没有这个名单，就按本机打的「悄悄」标记拼。 */
+    suspend fun secret(maxId: String? = null, force: Boolean = false): FeedPage =
+        byUsers(FollowTags.uids(FollowTag.Secret).toSet(), maxId, force)
+
+    /** 「本地关注」：同上，按本机「本地」标记拼。 */
+    suspend fun localFollows(maxId: String? = null, force: Boolean = false): FeedPage =
+        byUsers(FollowTags.uids(FollowTag.Local).toSet(), maxId, force)
+
+    /**
+     * 把一组人的微博拼成一条流。
+     *
+     * 先扫关注流，按原本的时间序把他们挑出来（这样和「全部」看到的是同一批卡片）；本机标记的
+     * 人可能压根不在关注流里，所以再补一次各自的主页时间线，按 id 倒序去重。
+     */
+    private suspend fun byUsers(uids: Set<String>, maxId: String?, force: Boolean): FeedPage {
+        if (uids.isEmpty()) return FeedPage(emptyList(), null)
+        val kept = LinkedHashMap<String, Status>()
         var cursor = maxId
-        var next: String? = null
         var scanned = 0
-        while (scanned < SPECIAL_SCAN_PAGES) {
+        // 拼流要发好几次请求，网络半死时一路 25s 超时叠起来，下拉头会挂很久。给整轮一个预算，
+        // 到点就用手上已有的返回：宁可比平时少几条，也不能让刷新看起来永远不结束。
+        val deadline = System.currentTimeMillis() + SPECIAL_REFRESH_BUDGET_MS
+        while (scanned < SPECIAL_SCAN_PAGES && kept.size < SPECIAL_PAGE_SIZE) {
+            if (scanned > 0 && System.currentTimeMillis() > deadline) break
             val page = statusFeed("https://m.weibo.cn/feed/friends", cursor, force)
             scanned++
             for (status in page.items) {
                 val user = status.user ?: continue
-                if (user.specialFollow || user.id in uids) kept.add(status)
+                if (user.id in uids) kept[status.id] = status
             }
-            next = page.sinceId
-            if (next.isNullOrBlank() || kept.size >= SPECIAL_PAGE_SIZE) break
-            cursor = next
+            cursor = page.sinceId
+            if (cursor.isNullOrBlank()) break
         }
-        if (kept.isEmpty() && uids.isNotEmpty()) {
-            // 关注流里一条都没撞上：要么特别关注的人这几天没发博，要么服务端没给 special_follow
-            // 标记。这时直接把这几个人的主页时间线拼起来，保证这一页不是空的。
+        if (kept.size < SPECIAL_PAGE_SIZE) {
             for (uid in uids.take(SPECIAL_DIRECT_USERS)) {
+                if (System.currentTimeMillis() > deadline) break
                 val page = runCatching { container("107603$uid", force = force) }.getOrNull() ?: continue
-                kept += page.items
+                for (status in page.items) kept.putIfAbsent(status.id, status)
             }
-            kept.sortByDescending { it.id.toLongOrNull() ?: 0L }
-            next = null
         }
-        return FeedPage(kept, next)
+        val items = kept.values
+            .sortedByDescending { it.id.toLongOrNull() ?: 0L }
+            .take(SPECIAL_PAGE_SIZE * 2)
+        return FeedPage(items, null)
     }
 
     @Volatile
@@ -181,21 +205,59 @@ class Repo(private val context: Context, private val store: Store) {
     @Volatile
     private var specialUidsAt: Long = 0L
 
-    /** 特别关注名单：containerid=231093_-_specialfollow 就是关注页那个「特别关注」入口。 */
+    /**
+     * 特别关注名单。
+     *
+     * m.weibo.cn 没有现成的「特别关注」容器（231093_-_specialfollow 直接返回 ok:0），
+     * 真名单在 weibo.com 的分组表里：先按标题找出「特别关注」这一组的 gid，再用
+     * 231093_-_selfgroupfollow_-_<gid> 拉成员；这条挂了就退回分组时间线，只从里面挖 uid。
+     */
     private suspend fun specialFollowUids(force: Boolean): Set<String> {
         val fresh = System.currentTimeMillis() - specialUidsAt < SPECIAL_UIDS_TTL_MS
         if (!force && fresh) return specialUids
         val ids = HashSet<String>()
-        runCatching {
-            val url = Api.url(
-                "https://m.weibo.cn/api/container/getIndex",
-                linkedMapOf<String, String?>("containerid" to "231093_-_specialfollow", "page" to "1"),
-            )
-            collectUserIds(Api.get(url, cookie(), force), ids)
+        val gid = runCatching { specialGroupId() }.getOrNull()
+        if (!gid.isNullOrBlank()) {
+            runCatching {
+                val url = Api.url(
+                    "https://m.weibo.cn/api/container/getIndex",
+                    linkedMapOf<String, String?>("containerid" to "231093_-_selfgroupfollow_-_$gid", "page" to "1"),
+                )
+                collectUserIds(Api.get(url, cookie(), force), ids)
+            }
+            if (ids.isEmpty()) {
+                runCatching {
+                    val root = Api.getDesktop("https://weibo.com/ajax/feed/groupstimeline?list_id=$gid", cookie())
+                    val statuses = root.optJSONArray("statuses") ?: JSONArray()
+                    for (i in 0 until statuses.length()) {
+                        statuses.optJSONObject(i)
+                            ?.optJSONObject("user")
+                            ?.str("id")
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let(ids::add)
+                    }
+                }
+            }
         }
         specialUids = ids
         specialUidsAt = System.currentTimeMillis()
         return ids
+    }
+
+    /** weibo.com 分组表里标题为「特别关注」那一组的 gid，4040233714204024 是它的历史固定值。 */
+    private suspend fun specialGroupId(): String? {
+        val root = Api.getDesktop("https://weibo.com/ajax/feed/allGroups", cookie())
+        val groups = root.optJSONArray("groups") ?: return null
+        for (i in 0 until groups.length()) {
+            val items = groups.optJSONObject(i)?.optJSONArray("group") ?: continue
+            for (j in 0 until items.length()) {
+                val item = items.optJSONObject(j) ?: continue
+                if (item.str("title") == "特别关注") {
+                    item.str("gid").takeIf { it.isNotBlank() }?.let { return it }
+                }
+            }
+        }
+        return null
     }
 
     /** 卡片里挖用户：关注类容器的 user 可能挂在卡片本身，也可能挂在 mblog 里，统一递归取。 */
@@ -619,6 +681,122 @@ class Repo(private val context: Context, private val store: Store) {
         }
         return out
     }
+
+    /**
+     * 聊天记录。接口给的是**最新在前**，[ChatPage.messages] 保持这个顺序，
+     * 界面用 `reverseLayout = true` 铺，index 0 落在屏幕最下面。
+     *
+     * @param maxId 取更早的一屏（传当前最旧那条的 id）
+     * @param sinceId 取更新的消息（轮询用）
+     */
+    suspend fun chat(
+        uid: String,
+        maxId: String? = null,
+        sinceId: String? = null,
+        count: Int = 20,
+        force: Boolean = false,
+    ): ChatPage {
+        val url = Api.url(
+            "https://m.weibo.cn/api/chat/list",
+            mapOf(
+                "uid" to uid,
+                "count" to count.toString(),
+                "max_id" to maxId,
+                "since_id" to sinceId,
+                "is_continuous" to if (sinceId != null) "1" else null,
+            ),
+        )
+        val root = Api.get(url, cookie(), force)
+        if (root.optInt("ok", 1) == 0) {
+            // errno 要带出去：20003 是对方注销，界面据此不再给「重试」。
+            throw ApiException(root.str("msg", "聊天记录加载失败"), root.str("errno"))
+        }
+        val data = root.optJSONObject("data")
+            ?: return ChatPage(emptyList(), emptyMap(), "", 0)
+        val arr = data.optJSONArray("msgs")
+        val messages = ArrayList<ChatMessage>()
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                ChatMessage.from(arr.optJSONObject(i))?.let { messages.add(it) }
+            }
+        }
+        val users = LinkedHashMap<String, User>()
+        data.optJSONObject("users")?.let { o ->
+            o.keys().forEach { key -> User.from(o.optJSONObject(key))?.let { users[key] = it } }
+        }
+        return ChatPage(
+            messages = messages,
+            users = users,
+            title = data.str("title"),
+            total = data.int("total_number"),
+        )
+    }
+
+    /** 发一条纯文字私信。成功返回服务端那条消息，失败抛 [ApiException]。 */
+    suspend fun sendChat(uid: String, text: String): ChatMessage? =
+        sendChatForm(mapOf("uid" to uid, "content" to text))
+
+    /**
+     * 发图片私信。
+     *
+     * H5 是两步：先 `api/chat/upload`（multipart `file` + `tuid`）拿 `fids`，
+     * 再把 `fids` 交给 `api/chat/send`（`media_type=1`，`content` 留空）。
+     */
+    suspend fun sendChatImage(uid: String, fids: String): ChatMessage? =
+        sendChatForm(
+            mapOf("uid" to uid, "content" to "", "media_type" to "1", "fids" to fids),
+        )
+
+    private suspend fun sendChatForm(form: Map<String, String>): ChatMessage? {
+        val root = postJson("https://m.weibo.cn/api/chat/send", form)
+        if (root.optInt("ok", 0) != 1) {
+            // 关注门槛这类业务拦截，人话在 extra 里，msg 只有「出错了，未知错误」。
+            throw ApiException(
+                root.str("extra").ifBlank { root.str("msg", "发送失败") },
+                root.str("errno"),
+            )
+        }
+        return ChatMessage.from(
+            root.optJSONObject("data")?.optJSONArray("msgs")?.optJSONObject(0),
+        )
+    }
+
+    /** 上传私信图片，返回 `fids`。 */
+    suspend fun uploadChatImage(uid: String, uri: Uri): String {
+        val cookie = cookie() ?: throw ApiException("未登录")
+        val resolver = context.contentResolver
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw ApiException("无法读取图片")
+        val mime = resolver.getType(uri) ?: "image/jpeg"
+        val name = "chat." + (mime.substringAfterLast('/', "jpg"))
+        var st = st()
+        var root = uploadChat(uid, bytes, name, mime, cookie, st)
+        if (root.optInt("ok", 0) != 1 && isCsrfBody(root)) {
+            st = config(force = true).st
+            root = uploadChat(uid, bytes, name, mime, cookie, st)
+        }
+        val fids = root.optJSONObject("data")?.str("fids").orEmpty()
+        if (fids.isBlank()) throw ApiException(root.str("msg", "图片上传失败"), root.str("errno"))
+        return fids
+    }
+
+    private suspend fun uploadChat(
+        uid: String,
+        bytes: ByteArray,
+        name: String,
+        mime: String,
+        cookie: String,
+        st: String,
+    ) = Api.upload(
+        "https://m.weibo.cn/api/chat/upload",
+        bytes,
+        name,
+        mime,
+        cookie,
+        st,
+        field = "file",
+        extra = mapOf("tuid" to uid),
+    )
 
     suspend fun profileFor(cookie: String, uid: String, force: Boolean = false): User? {
         val url = Api.url(

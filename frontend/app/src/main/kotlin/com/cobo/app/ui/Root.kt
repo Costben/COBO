@@ -89,6 +89,7 @@ import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.COUIPopupUtils.Companion.COUIPopupHost
+import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
@@ -165,7 +166,12 @@ fun CoboRoot() {
     // 录制节点和读 backdrop 的节点必须是兄弟，否则菜单会把自己模糊过的样子再采一遍。
     val rootBackdrop = rememberLayerBackdrop { drawContent() }
 
+    // ColorOS 自家应用（相册、设置、桌面）都把窗口钉在 360dp 短边，因此不受系统「显示大小」影响。
+    // 想和它们逐像素一致只有一条路：整棵树也用这个密度（见 coui docs/coui-density-spec.md）。
+    // 顶栏按钮 40dp、底栏条 56dp / 项 48dp / 圆钮 56dp 都会因此落到 141 / 198 / 170 / 198px。
+    val galleryDensity = rememberGalleryDensity()
     CompositionLocalProvider(
+        LocalDensity provides galleryDensity,
         LocalLinkHandler provides linkHandler,
         LocalImageSaver provides imageSaver,
     ) {

@@ -144,6 +144,91 @@
 | GET | `groups`、`groups/allgroups`、`groups/allmembers`、`groups/timeline` |
 | POST | `groups/create`、`groups/update`、`groups/update_lists`、`groups/members_add`、`groups/members_destroy`、`!/groups/destroy` |
 
+#### 4.4.1 H5 私信（m.weibo.cn，本项目实际使用）
+
+`direct_messages/*` 是移动端旧接口；H5 私信走的是下面这套。**读不需要 `st`，写必须带 `st`**（`api/config` 取，10 分钟过期）。
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `https://m.weibo.cn/message/msglist?page=N` | 会话列表，`data[]` 每项含 `id` / `text` / `created_at` / `unread` / `user` / `scheme` |
+| GET | `https://m.weibo.cn/api/chat/list` | 聊天记录 |
+| POST | `https://m.weibo.cn/api/chat/send` | 发私信，form：`uid`、`content`、`st` |
+| POST | `https://m.weibo.cn/api/chat/upload` | 发图，multipart：`file`、`tuid` → `data.fids` |
+
+`api/chat/list` 参数：
+
+| 参数 | 必填 | 说明 |
+| :--- | :--- | :--- |
+| `uid` | 是 | 对方 uid；缺失返回 `errno=20002`「Uid参数为空」 |
+| `count` | 否 | 一屏条数，默认 20 |
+| `max_id` | 否 | 取更早一页，传当前**最旧**一条的 `id` |
+| `since_id` | 否 | 取更新消息，传当前**最新**一条的 `id` |
+| `is_continuous` | 否 | 配 `since_id` 用，`1` 表示增量拉取 |
+
+响应：`{"ok":1,"data":{"msgs":[…],"users":{"<uid>":{…}},"total_number":0,"following":…,"last_read_mid":…,"title":"成都人社局"}}`
+
+`msgs` **最新在前**（H5 渲染前会 `reverse()`），字段：
+
+| 字段 | 说明 |
+| :--- | :--- |
+| `id` | 消息 id，分页锚点 |
+| `text` | 正文 HTML；emoji 形如 `<span class="url-icon"><img alt="[太开心]" src="…" /></span>` |
+| `sender_id` / `recipient_id` | 发送方 / 接收方 uid |
+| `created_at` | `Sun Oct 25 17:48:35 +0800 2026`（Twitter 格式） |
+| `media_type` | `0` 文本，`1` 图片 |
+| `dm_type` | `9` 系统提示（居中灰条，不画气泡） |
+| `msg_status` | 发送状态 |
+| `attachment` | 图片消息：`original_image.url` / `width` / `height`、`thumbnail.url`（**`thumbnail` 是对象，不是字符串**）、`fid` / `fidstr` / `filename` / `filesize` |
+
+`api/chat/send` 返回 `{"ok":1,"data":{"msgs":[{…新建的那条…}]}}`；业务拒绝用 `ok:0` + `errno`：
+
+| errno | 含义 |
+| :--- | :--- |
+| `100006` | `st` 失效 / 请求非法 → 刷新 `api/config` 重发 |
+| `20000` | 业务拒绝，**真正原因在 `extra`**，`msg` 只是「出错了，未知错误」（例 `extra`：「由于对方的设置，关注后才能私信」） |
+| `20002` | 缺 `uid` |
+| `20003` | 用户不存在（账号已注销） |
+
+#### 4.4.2 私信发图（两步：先上传拿 `fids`，再发送）
+
+H5 的 `chat.5eca4190.js` 里 `sendMsg` 之前先 `post("api/chat/upload")`，拿到 `fids` 再走发送接口。**上传字段名是 `file`、目标字段是 `tuid`**（群聊用 `tochatid`），写成 `pic` / `uid` 一律 `{"ok":0,"msg":"参数有误"}`。
+
+1. 上传
+
+```bash
+curl -s -H "Cookie: $COOKIE" -F "file=@a.jpg" -F "tuid=2397088380" \
+     "https://m.weibo.cn/api/chat/upload?st=$ST"
+```
+
+```json
+{"ok":1,"data":{"fids":5357969622696022,"vfid":5357969212446155,
+ "filename":"0dbe…f1.jpg","filesize":"2M",
+ "original_image":{"url":"https://attachment.api.weibo.com/2/mss/msget?fid=…&imageType=origin&source=…","width":600,"height":600},
+ "thumbnail":{"url":"https://attachment.api.weibo.com/2/mss/msget_thumbnail?fid=…&high=240&width=240&size=111,240&source=…","width":240,"height":240}}}
+```
+
+2. 发送（form，注意是 `fids` + `media_type=1`，不是 `pic_id`）
+
+```bash
+curl -s -H "Cookie: $COOKIE" -d "uid=2397088380" -d "content=" -d "media_type=1" \
+     -d "fids=5357969622696022" -d "st=$ST" "https://m.weibo.cn/api/chat/send"
+```
+
+3. 落到 `api/chat/list` 里的样子：`media_type=1`、`dm_type=1`、`text="附件信息"`，`attachment.original_image` / `attachment.thumbnail` 是上面那两个 URL。
+
+实测注意：
+
+- 上传限制 `5242880` 字节（5 MB），超了 H5 提示「文件过大，请使用客户端上传」；
+- `fids` 传错（例如用 `statuses/uploadPic` 拿到的 `pic_id`）→ `errno=21101 参数错误`；
+- 附件图 `attachment.api.weibo.com` **必须带登录 cookie**，裸请求 403（148 字节错误页），气泡会塌成一条细边；
+- `st` 失效同样返回 `100006`，刷新 `api/config` 后重传即可。
+
+实测注意：
+
+- `total_number` 恒为 `0`，不能当消息总数用；
+- 没有「标记已读」接口，`msglist` 的 `unread` 会一直是 `1`，已读只能客户端本地记；
+- 时间分隔：相邻两条间隔 > 5 分钟才插一条时间，和 H5 一致。
+
 ### 4.5 内容容器 / 卡片
 
 | 方法 | 路径 | 说明 |

@@ -51,7 +51,11 @@ import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class FeedFilter(val label: String, val emptyText: String) {
     All("全部", "这里还没有微博"),
@@ -97,19 +101,42 @@ class FeedStore(
     // 静默加载与主动刷新分开：只有后者驱动下拉动画，切 tab 触发的首次加载不播。
     private var fetching = false
 
+    /**
+     * 所有取数排同一队。
+     *
+     * 下拉手势在松手那一刻就把刷新头拉下来了，接着调 [refresh]；如果这时恰好有一次加载在跑
+     * （切筛选的首次加载、关注/取关触发的自动刷新、上拉翻页），老代码直接 return，刷新头就
+     * 永远停在「刷新中」，页面再也不回落。现在改成排队等前一次收尾，再补一次强制刷新。
+     */
+    private val lock = Mutex()
+
     suspend fun loadInitial() {
-        if (loaded || fetching) return
-        fetch(force = false, silent = true)
+        if (loaded) return
+        lock.withLock {
+            if (loaded) return@withLock
+            fetch(force = false)
+        }
     }
 
     suspend fun refresh() {
-        if (fetching) return
-        fetch(force = true)
+        // 已经有一次刷新在跑：它的 finally 会把 refreshing 降下来，这里直接跟它收尾。
+        if (refreshing) return
+        refreshing = true
+        val startedAt = System.currentTimeMillis()
+        try {
+            lock.withLock { fetch(force = true) }
+            // COUI 的刷新头只在观察到 isRefreshing 变化时才收尾。列表为空或命中缓存时取数
+            // 瞬间返回，true→false 落在同一帧里，界面根本看不到中间那一跳，头就永远停在
+            // 「刷新中」。这里给标志一个最短可见时间，保证至少有一帧读到 true。
+            val left = MinRefreshVisibleMillis - (System.currentTimeMillis() - startedAt)
+            if (left > 0) delay(left)
+        } finally {
+            refreshing = false
+        }
     }
 
-    private suspend fun fetch(force: Boolean, silent: Boolean = false) {
+    private suspend fun fetch(force: Boolean) {
         fetching = true
-        if (!silent) refreshing = true
         error = null
         try {
             val page = loader(null, force)
@@ -121,25 +148,30 @@ class FeedStore(
             end = unique.isEmpty()
             loaded = true
             generation++
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
             if (items.isNotEmpty()) App.toast(error!!)
         } finally {
             fetching = false
-            refreshing = false
         }
     }
 
     suspend fun loadMore() {
-        if (loading || end || fetching) return
+        if (loading || end || refreshing || fetching) return
         val cursor = sinceId ?: return
         loading = true
         try {
-            val page = loader(cursor, false)
-            val known = items.mapTo(HashSet()) { it.id }
-            page.items.forEach { if (known.add(it.id)) items.add(it) }
-            sinceId = page.sinceId
-            if (page.items.isEmpty()) end = true
+            lock.withLock {
+                val page = loader(cursor, false)
+                val known = items.mapTo(HashSet()) { it.id }
+                page.items.forEach { if (known.add(it.id)) items.add(it) }
+                sinceId = page.sinceId
+                if (page.items.isEmpty()) end = true
+            }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
         } finally {
@@ -379,6 +411,9 @@ private suspend fun LazyListState.glideToTop() {
         }
     }
 }
+
+/** 刷新头最短可见时间：空列表/命中缓存时也要让界面看到一次 `refreshing = true`。 */
+private const val MinRefreshVisibleMillis = 320L
 
 private const val GlideSeconds = 0.3f
 // Short trips still get a visible ride: the floor is low enough that a one-card hop takes about

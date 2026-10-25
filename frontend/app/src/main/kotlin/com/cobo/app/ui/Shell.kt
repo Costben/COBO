@@ -57,7 +57,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
@@ -129,8 +128,12 @@ fun MainShell(nav: NavState) {
                 App.repo.special(cursor, force)
             },
             FeedFilter.Circle to FeedStore("circle") { cursor, force -> App.repo.circle(cursor, force) },
-            FeedFilter.Secret to FeedStore("secret") { _, _ -> FeedPage(emptyList(), null) },
-            FeedFilter.Local to FeedStore("local") { _, _ -> FeedPage(emptyList(), null) },
+            FeedFilter.Secret to FeedStore("secret") { cursor, force ->
+                App.repo.secret(cursor, force)
+            },
+            FeedFilter.Local to FeedStore("local") { cursor, force ->
+                App.repo.localFollows(cursor, force)
+            },
         )
     }
     val recommendStore = remember { FeedStore("102803") }
@@ -216,6 +219,12 @@ fun MainShell(nav: NavState) {
                     onFilterSelected = { selected ->
                         filterIndex = selected.ordinal
                         App.settings.applyFeedFilter(selected.ordinal)
+                        // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
+                        if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
+                            selected == FeedFilter.Local
+                        ) {
+                            scope.launch { filterStores[selected]?.refresh() }
+                        }
                         scope.launch { feedPager.animateScrollToPage(FollowPage) }
                     },
                     modifier = Modifier.reportTopBarBottom(topBarBounds),
@@ -467,6 +476,8 @@ private fun FeedTabs(
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
     val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 2f)
+    // 中间那一格显示当前选中的分类（全部 / 原创微博 / 特别关注 …），左右两格固定。
+    val labels = listOf(FeedTabLabels[CirclePage], filter.label, FeedTabLabels[RecommendPage])
     val interactions = remember { List(FeedTabLabels.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
     val indicatorScale by animateFloatAsState(
@@ -474,15 +485,19 @@ private fun FeedTabs(
         animationSpec = FeedTabPressSpring,
         label = "feedTabIndicatorScale",
     )
+    // 三格同宽，按「4 个字 + 箭头」预留，字数是 2/3/4 时胶囊和位置都不动。
+    // 用 sp 折算，系统字体放大时格子跟着变宽，不会被截断。
+    val density = LocalDensity.current
+    val segmentWidth = with(density) { (4 * 13).sp.toDp() } + 2.dp + 10.dp + 22.dp
+    val containerWidth = segmentWidth * FeedTabLabels.size + 8.dp
     BoxWithConstraints(
         modifier
             // Opaque 40dp capsule, the same height as the search action in the header row.
             .requiredHeight(40.dp)
-            .width(200.dp)
+            .width(containerWidth)
             .clip(RoundedCornerShape(20.dp))
             .background(containerColor),
     ) {
-        val segmentWidth = (maxWidth - 8.dp) / FeedTabLabels.size
         Box(
             Modifier
                 .offset(
@@ -502,7 +517,7 @@ private fun FeedTabs(
             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FeedTabLabels.forEachIndexed { index, label ->
+            labels.forEachIndexed { index, label ->
                 FeedTabSegment(
                     label = label,
                     index = index,
@@ -590,6 +605,8 @@ private fun FeedTabSegment(
                 fontSize = 13.sp,
                 fontWeight = if (amount >= 0.5f) FontWeight.Medium else FontWeight.Normal,
                 color = lerp(scheme.onSurfaceSecondary, scheme.onSurface, amount),
+                maxLines = 1,
+                softWrap = false,
             )
             if (showArrow) {
                 Icon(
@@ -613,9 +630,6 @@ private fun FloatingBottomBar(
     onPublish: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // The Gallery bar reads smaller than COUI's 56dp default: shrink the structural dp while
-    // keeping label text at its normal physical size.
-    val density = LocalDensity.current
     // 双击「微博」= 回到顶部。用时间戳判定而不是 detectTapGestures：底栏 item 内部的
     // combinedClickable 会先消费 up 事件，外层再加 pointerInput 收不到点击。
     // 单击照常切 tab，不延迟；320ms 内的第二下追加一次回到顶部。
@@ -635,12 +649,9 @@ private fun FloatingBottomBar(
             .fillMaxWidth()
             .navigationBarsPadding()
     ) {
-        CompositionLocalProvider(
-            LocalDensity provides Density(
-                density = density.density * 0.86f,
-                fontScale = density.fontScale / 0.86f,
-            ),
-        ) {
+        // 尺寸不再在这里手改：整棵树已在 CoboRoot 钉到相册密度，
+        // 底栏条 56dp / 项 48dp / 圆钮 56dp 由组件自己的 token 决定。
+        run {
             BottomFloatingAccessoryNavigationBar(
                 modifier = Modifier,
                 startAccessory = {

@@ -2,11 +2,16 @@ package com.cobo.app
 
 import android.app.Application
 import android.content.Context
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import okhttp3.OkHttpClient
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.cobo.app.data.CacheStore
+import com.cobo.app.data.FollowTags
 import kotlinx.coroutines.flow.MutableSharedFlow
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
@@ -18,6 +23,15 @@ class CoboApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         App.init(this)
+        // 私信附件在 attachment.api.weibo.com 上，不带 cookie 直接 403，
+        // 默认加载器拿不到图，气泡就只剩一圈内边距。只给 weibo 域名挂 cookie。
+        SingletonImageLoader.setSafe { ctx ->
+            ImageLoader.Builder(ctx)
+                .components {
+                    add(OkHttpNetworkFetcherFactory(callFactory = { App.imageClient }))
+                }
+                .build()
+        }
     }
 }
 
@@ -32,6 +46,24 @@ object App {
         private set
     lateinit var cache: CacheStore
         private set
+
+    /** Coil 专用客户端：微博附件域名要带登录 cookie。 */
+    val imageClient: OkHttpClient by lazy {
+        OkHttpClient.Builder().addInterceptor { chain ->
+            val req = chain.request()
+            val cookie = runCatching { repo.cookie() }.getOrNull()
+            if (cookie.isNullOrBlank() || !req.url.host.endsWith("weibo.com")) {
+                chain.proceed(req)
+            } else {
+                chain.proceed(
+                    req.newBuilder()
+                        .header("Cookie", cookie)
+                        .header("User-Agent", com.cobo.app.data.Api.WEB_UA)
+                        .build(),
+                )
+            }
+        }.build()
+    }
 
     var feedVersion by mutableIntStateOf(0)
         private set
@@ -115,6 +147,7 @@ object App {
         if (this::store.isInitialized) return
         this.context = context.applicationContext
         store = Store(this.context)
+        FollowTags.attach(store)
         cache = CacheStore(this.context)
         repo = Repo(this.context, store)
         settings = Settings(this.context)

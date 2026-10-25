@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.data.Pic
+import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.data.VideoInfo
@@ -161,8 +162,16 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
                     color = scheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { user?.let(onUser) },
+                    // 昵称太长时先压缩昵称，别把后面的徽标和认证勾挤出去。
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .clickable { user?.let(onUser) },
                 )
+                val tag = FollowTags[user?.id]
+                if (tag != null) {
+                    Spacer(Modifier.width(4.dp))
+                    FollowTagBadge(tag, compact = true)
+                }
                 if (user?.verified == true) {
                     Spacer(Modifier.width(4.dp))
                     Box(
