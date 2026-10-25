@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
+import com.cobo.app.data.UpdateCheckInterval
+import com.cobo.app.data.Updater
 import com.cobo.app.screen.AccountsScreen
 import com.cobo.app.screen.ChatScreen
 import com.cobo.app.screen.ContainerScreen
@@ -79,6 +81,7 @@ import com.cobo.app.ui.components.ImageSaver
 import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.components.SaveHud
 import com.cobo.app.ui.components.SaveImagesMenu
+import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
@@ -104,6 +107,14 @@ fun CoboRoot() {
     val nav = remember { NavState() }
     val scope = rememberCoroutineScope()
     SideEffect { nav.attach(scope) }
+
+    // 启动时静默查一次更新：开关打开、且距上次检查超过节流窗口才真的发请求。
+    LaunchedEffect(Unit) {
+        if (!App.settings.autoCheckUpdate) return@LaunchedEffect
+        val elapsed = System.currentTimeMillis() - App.settings.updateCheckedAt
+        if (elapsed < UpdateCheckInterval) return@LaunchedEffect
+        App.checkUpdate(manual = false)
+    }
 
     // The search field keeps focus after its result opens a page, and the IME's candidate bar
     // then floats over whatever is on top. Drop focus on every navigation.
@@ -206,8 +217,29 @@ fun CoboRoot() {
                 }
                 COUIPopupHost()
             }
+
+            // 更新提示挂在根节点：自动检查与设置页的手动检查都往 App.pendingUpdate 里写。
+            UpdatePrompt()
         }
     }
+}
+
+/** 单独一层，只让它读 [App.pendingUpdate]，免得更新状态一变就重组整摞路由。 */
+@Composable
+private fun UpdatePrompt() {
+    val info = App.pendingUpdate ?: return
+    UpdateDialog(
+        info = info,
+        onDismiss = { App.dismissUpdate() },
+        onSkip = {
+            App.settings.applySkippedUpdate(info.version)
+            App.dismissUpdate()
+        },
+        onDownload = {
+            Updater.openDownload(info)
+            App.dismissUpdate()
+        },
+    )
 }
 
 /**

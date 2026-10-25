@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONArray
 
@@ -54,6 +56,18 @@ class Settings(context: Context) {
     var feedFilter by mutableIntStateOf(sp.getInt("feed_filter", 0))
         private set
 
+    /** 启动时自动查更新，默认开。 */
+    var autoCheckUpdate by mutableStateOf(sp.getBoolean("auto_check_update", true))
+        private set
+
+    /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
+    var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
+        private set
+
+    /** 点过「跳过此版本」的版本号：自动检查时不再拿它打扰。 */
+    var skippedUpdate by mutableStateOf(sp.getString("skipped_update", "").orEmpty())
+        private set
+
     fun applyMainTab(value: Int) {
         mainTab = value
         sp.edit().putInt("main_tab", value).apply()
@@ -90,6 +104,21 @@ class Settings(context: Context) {
     fun applyFeedFilter(value: Int) {
         feedFilter = value.coerceIn(0, FeedFilterCount - 1)
         sp.edit().putInt("feed_filter", feedFilter).apply()
+    }
+
+    fun applyAutoCheckUpdate(value: Boolean) {
+        autoCheckUpdate = value
+        sp.edit().putBoolean("auto_check_update", value).apply()
+    }
+
+    fun applyUpdateCheckedAt(value: Long) {
+        updateCheckedAt = value
+        sp.edit().putLong("update_checked_at", value).apply()
+    }
+
+    fun applySkippedUpdate(value: String) {
+        skippedUpdate = value
+        sp.edit().putString("skipped_update", value).apply()
     }
 
     fun applyDarkMode(value: Int) {

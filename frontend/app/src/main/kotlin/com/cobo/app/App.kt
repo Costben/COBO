@@ -4,12 +4,15 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.cobo.app.data.CacheStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
 import com.cobo.app.data.Store
+import com.cobo.app.data.UpdateInfo
+import com.cobo.app.data.Updater
 
 class CoboApplication : Application() {
     override fun onCreate() {
@@ -32,6 +35,49 @@ object App {
 
     var feedVersion by mutableIntStateOf(0)
         private set
+
+    /** 正在检查更新：设置页那一行据此换成「正在检查…」。 */
+    var checkingUpdate by mutableStateOf(false)
+        private set
+
+    /** 查到的新版本；非空时根节点弹更新提示，关掉就清空。 */
+    var pendingUpdate by mutableStateOf<UpdateInfo?>(null)
+        private set
+
+    fun dismissUpdate() {
+        pendingUpdate = null
+    }
+
+    /**
+     * 查一次更新。[manual] 为 true 时无论有没有结果都给反馈（toast），
+     * 自动检查只在真的查到新版本时挂上 [pendingUpdate]。
+     */
+    suspend fun checkUpdate(manual: Boolean): UpdateInfo? {
+        if (checkingUpdate) {
+            if (manual) toast("正在检查更新…")
+            return pendingUpdate
+        }
+        checkingUpdate = true
+        try {
+            val current = Updater.currentVersion(context)
+            val info = Updater.latest(current)
+            settings.applyUpdateCheckedAt(System.currentTimeMillis())
+            if (info == null) {
+                pendingUpdate = null
+                if (manual) toast("已是最新版本 $current")
+                return null
+            }
+            // 用户明确跳过这个版本就别再拿自动检查烦他，手动检查照旧提示。
+            if (!manual && info.version == settings.skippedUpdate) return info
+            pendingUpdate = info
+            return info
+        } catch (t: Throwable) {
+            if (manual) toast(t.message ?: "检查更新失败")
+            return null
+        } finally {
+            checkingUpdate = false
+        }
+    }
 
     val feedRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val feedTopEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)

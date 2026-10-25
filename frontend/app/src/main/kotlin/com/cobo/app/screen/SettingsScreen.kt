@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -20,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.SingletonImageLoader
 import com.cobo.app.App
+import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
@@ -35,12 +37,16 @@ import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(nav: NavState) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val version = remember { Updater.currentVersion(context) }
     var darkMode by remember { mutableStateOf(App.settings.darkMode) }
     var fontScale by remember { mutableStateOf(App.settings.fontScale) }
+    var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -149,6 +155,33 @@ fun SettingsScreen(nav: NavState) {
                     insideMargin = PaddingValues(0.dp),
                 ) {
                     ArrowPreference(
+                        title = "检查更新",
+                        modifier = Modifier.testTag("settings_update"),
+                        summary = if (App.checkingUpdate) "正在检查…" else "当前版本 $version",
+                        cardListPosition = CardListPosition.Head,
+                        onClick = { scope.launch { App.checkUpdate(manual = true) } },
+                    )
+                    HorizontalDivider()
+                    SwitchPreference(
+                        checked = autoCheckUpdate,
+                        onCheckedChange = {
+                            autoCheckUpdate = it
+                            App.settings.applyAutoCheckUpdate(it)
+                        },
+                        title = "自动检查更新",
+                        modifier = Modifier.testTag("settings_auto_update"),
+                        summary = "启动时检查，有新版本弹窗提示",
+                        cardListPosition = CardListPosition.Tail,
+                    )
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    ArrowPreference(
                         title = "清理缓存",
                         modifier = Modifier.testTag("settings_clear_cache"),
                         summary = "图片与已保存的内容",
@@ -207,7 +240,7 @@ fun SettingsScreen(nav: NavState) {
     if (about) {
         ConfirmDialog(
             title = "关于 Cobo",
-            message = "Cobo · COUI 前端\n\n使用 COUI（ColorOS 17 设计语言）重建的第三方微博客户端。\n仅用于个人学习与研究。",
+            message = "Cobo · COUI 前端 v$version\n\n使用 COUI（ColorOS 17 设计语言）重建的第三方微博客户端。\n仅用于个人学习与研究。",
             confirmText = "知道了",
             onDismiss = { about = false },
             onConfirm = { about = false },

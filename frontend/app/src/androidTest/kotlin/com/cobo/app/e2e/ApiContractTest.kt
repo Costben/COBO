@@ -2,6 +2,7 @@ package com.cobo.app.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cobo.app.App
+import com.cobo.app.data.Updater
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -62,6 +63,15 @@ class ApiContractTest : DataE2eTest() {
         page.items.forEach { status ->
             assertTrue("好友圈微博 id 为空", status.id.isNotBlank())
             assertNotNull("好友圈微博缺少作者", status.user)
+        }
+    }
+
+    @Test
+    fun specialFeed_doesNotFail() {
+        val page = net { App.repo.special(force = true) }
+        page.items.forEach { status ->
+            assertTrue("特别关注流微博 id 为空", status.id.isNotBlank())
+            assertNotNull("特别关注流微博缺少作者", status.user)
         }
     }
 
@@ -137,5 +147,26 @@ class ApiContractTest : DataE2eTest() {
     fun favorites_doesNotFail() {
         val page = net { App.repo.favorites(force = false) }
         page.items.forEach { assertTrue("收藏微博 id 为空", it.id.isNotBlank()) }
+    }
+
+    @Test
+    fun update_versionCompare_ordersCorrectly() {
+        assertTrue("1.0.10 应高于 1.0.9", Updater.compareVersion("1.0.10", "1.0.9") > 0)
+        assertTrue("1.1.0-pre 应高于 1.0.9", Updater.compareVersion("1.1.0-pre", "1.0.9") > 0)
+        assertTrue("正式版应高于同号预发布", Updater.compareVersion("1.0.0", "1.0.0-pre") > 0)
+        assertEquals(0, Updater.compareVersion("v1.0.0", "1.0.0"))
+    }
+
+    @Test
+    fun update_releaseFeedIsUsable() {
+        val current = Updater.currentVersion(App.context)
+        assertTrue("读不到本地版本号", current.isNotBlank() && current != "0.0.0")
+        val info = net { Updater.latest(current) }
+        // 本地就是最新时返回 null；真发了新版就必须比本地新，且带 APK 资产。
+        info?.let {
+            assertTrue("返回的版本不比本地新", Updater.compareVersion(it.version, current) > 0)
+            assertTrue("release 没有 APK 资产", !it.apkUrl.isNullOrBlank())
+            assertTrue("release 没有页面地址", it.pageUrl.startsWith("https://github.com/"))
+        }
     }
 }

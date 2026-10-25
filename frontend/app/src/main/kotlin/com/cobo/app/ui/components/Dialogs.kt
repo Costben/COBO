@@ -4,8 +4,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -16,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.User
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
@@ -122,6 +126,75 @@ fun ConfirmDialog(
                 },
             ),
         )
+    }
+}
+
+/**
+ * 更新提示。release notes 可能有几十行，正文自己滚动、封顶 220dp，别把按钮顶出屏幕。
+ * 三个出口分开记：稍后 / 跳过此版本 / 下载更新，等窗口收完再分发，避免和关闭动画抢时序。
+ */
+@Composable
+fun UpdateDialog(
+    info: UpdateInfo,
+    onDismiss: () -> Unit,
+    onSkip: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    var download by remember { mutableStateOf(false) }
+    var skip by remember { mutableStateOf(false) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+    WindowDialog(
+        show = show,
+        title = "发现新版本 ${info.version}",
+        summary = if (info.prerelease) "预发布版本" else "正式版本",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                when {
+                    download -> onDownload()
+                    skip -> onSkip()
+                    else -> onDismiss()
+                }
+            }
+        },
+    ) {
+        Column {
+            if (info.notes.isNotBlank()) {
+                Text(
+                    info.notes,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    color = COUITheme.colorScheme.onSurfaceSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
+                )
+            }
+            TextButton(
+                text = "跳过此版本",
+                modifier = Modifier.padding(start = 8.dp),
+                onClick = {
+                    skip = true
+                    show = false
+                },
+            )
+            DialogButtonBar(
+                negative = DialogButtonBarAction(text = "稍后", onClick = { show = false }),
+                positive = DialogButtonBarAction(
+                    text = "下载更新",
+                    onClick = {
+                        download = true
+                        show = false
+                    },
+                ),
+            )
+        }
     }
 }
 
