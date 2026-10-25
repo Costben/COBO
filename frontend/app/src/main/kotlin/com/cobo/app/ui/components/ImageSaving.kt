@@ -38,12 +38,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import io.github.suqi8.coui.kmp.basic.DropdownDefaults
-import io.github.suqi8.coui.kmp.basic.DropdownEntry
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.popup.OverlayDropdownPopup
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -264,43 +265,47 @@ fun SaveImagesMenu(
     val targets = urls ?: last
     if (targets.isEmpty()) return
 
-    val entries = remember(targets, lastIndex) {
-        listOf(
-            DropdownEntry(
-                items = buildList {
-                    add(
-                        DropdownItem(
-                            text = "保存原图",
-                            onClick = {
-                                state.saveOne(targets.getOrNull(lastIndex) ?: targets.first())
-                            },
-                        ),
-                    )
-                    if (targets.size > 1) {
-                        add(
-                            DropdownItem(
-                                text = "一键保存原图（${targets.size} 张）",
-                                onClick = { state.saveAll(targets) },
-                            ),
-                        )
-                    }
+    val actions = remember(targets, lastIndex, state) {
+        buildList {
+            add(
+                "保存原图" to {
+                    state.saveOne(targets.getOrNull(lastIndex) ?: targets.first())
                 },
-            ),
-        )
+            )
+            if (targets.size > 1) {
+                add("一键保存原图（${targets.size} 张）" to { state.saveAll(targets) })
+            }
+        }
     }
 
     val point = precise?.touchPoint
     val popup: @Composable () -> Unit = {
-        OverlayDropdownPopup(
-            entries = entries,
+        // 独立窗口而不是主窗口里的浮层：底栏的玻璃含一块平台 View 遮罩，主窗口的视图树一变
+        // （浮层卸载），它作为独立 RenderNode 会丢一帧，整块玻璃跟着消失。菜单挪进自己的窗口
+        // 后主窗口结构不动。WindowListPopup 在收起开始就把窗口让出来，页面照样能继续滑。
+        WindowListPopup(
             show = urls != null,
-            onDismiss = onDismiss,
+            onDismissRequest = onDismiss,
             onDismissFinished = {},
             maxHeight = null,
-            dropdownColors = DropdownDefaults.dropdownColors(),
-            renderInRootScaffold = false,
-            collapseOnSelection = true,
-        )
+        ) {
+            val dismiss = LocalDismissState.current
+            ListPopupColumn {
+                actions.forEachIndexed { index, (label, action) ->
+                    DropdownImpl(
+                        item = DropdownItem(text = label),
+                        optionSize = actions.size,
+                        isSelected = false,
+                        index = index,
+                        groupKey = "save",
+                        onSelectedIndexChange = {
+                            action()
+                            dismiss?.invoke()
+                        },
+                    )
+                }
+            }
+        }
     }
 
     if (point == null || !point.isSpecified) {
