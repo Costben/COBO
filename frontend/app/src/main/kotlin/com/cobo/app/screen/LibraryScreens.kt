@@ -216,6 +216,7 @@ fun AccountsScreen(nav: NavState) {
                 val current = account.cookie == currentCookie
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("account_row_$index"),
+                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     onClick = {
                         App.repo.updateSession(account.cookie, account.uid)
                         currentCookie = account.cookie
@@ -223,7 +224,7 @@ fun AccountsScreen(nav: NavState) {
                     },
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(account.avatar, 46.dp)
+                        Avatar(account.avatar, 40.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
