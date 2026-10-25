@@ -74,6 +74,8 @@ data class User(
     val friends: Int = 0,
     val statuses: Int = 0,
     val cover: String = "",
+    /** 当前登录者是否把这个用户设成了「特别关注」；m.weibo.cn 每条 status 的 user 都带这个字段。 */
+    val specialFollow: Boolean = false,
 ) {
     companion object {
         fun from(o: JSONObject?): User? {
@@ -94,6 +96,7 @@ data class User(
                 friends = o.int("follow_count", o.int("friends_count", o.count("friends_count_str"))),
                 statuses = o.count("statuses_count"),
                 cover = o.str("cover_image_phone"),
+                specialFollow = o.optBoolean("special_follow", false),
             )
         }
     }

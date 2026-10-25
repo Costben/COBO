@@ -12,6 +12,16 @@ private const val ST_TTL_MS = 10 * 60 * 1000L
 /** 同一条微博两次点赞之间的最小间隔，低于这个值基本只会换来 20016。 */
 private const val LIKE_COOLDOWN_MS = 1500L
 
+/** 特别关注名单缓存时间：名单变动不频繁，翻页时不必每页重拉。 */
+private const val SPECIAL_UIDS_TTL_MS = 5 * 60 * 1000L
+
+/** 特别关注流单次最多回扫多少页关注流、凑够多少条就停。 */
+private const val SPECIAL_SCAN_PAGES = 4
+private const val SPECIAL_PAGE_SIZE = 12
+
+/** 关注流里扫不到时，最多拼几个特别关注用户的主页时间线兜底。 */
+private const val SPECIAL_DIRECT_USERS = 5
+
 class Repo(private val context: Context, private val store: Store) {
 
     @Volatile
@@ -125,6 +135,84 @@ class Repo(private val context: Context, private val store: Store) {
     /** The "好友圈" feed: posts from mutual follows, same shape as /feed/friends. */
     suspend fun circle(maxId: String? = null, force: Boolean = false): FeedPage =
         statusFeed("https://m.weibo.cn/feed/circle", maxId, force)
+
+    /**
+     * The "特别关注" feed.
+     *
+     * m.weibo.cn 没有单独的特别关注时间线：H5 的关注页只有 关注 / 好友圈 / 悄悄关注 / 自建分组
+     * 四个 tab，特别关注的人发的东西是被塞进 /feed/friends 里的（weibo.com 设特别关注时的提示
+     * 原话就是「发布的微博在信息流将置顶显示」）。所以这里扫关注流，只留下特别关注的人：
+     * 先用 231093_-_specialfollow 把名单拿全，再退回每条 status 上现成的 special_follow 标记，
+     * 两者取并集 —— 名单接口挂了也不至于整页空白。
+     */
+    suspend fun special(maxId: String? = null, force: Boolean = false): FeedPage {
+        val uids = specialFollowUids(force)
+        val kept = ArrayList<Status>()
+        var cursor = maxId
+        var next: String? = null
+        var scanned = 0
+        while (scanned < SPECIAL_SCAN_PAGES) {
+            val page = statusFeed("https://m.weibo.cn/feed/friends", cursor, force)
+            scanned++
+            for (status in page.items) {
+                val user = status.user ?: continue
+                if (user.specialFollow || user.id in uids) kept.add(status)
+            }
+            next = page.sinceId
+            if (next.isNullOrBlank() || kept.size >= SPECIAL_PAGE_SIZE) break
+            cursor = next
+        }
+        if (kept.isEmpty() && uids.isNotEmpty()) {
+            // 关注流里一条都没撞上：要么特别关注的人这几天没发博，要么服务端没给 special_follow
+            // 标记。这时直接把这几个人的主页时间线拼起来，保证这一页不是空的。
+            for (uid in uids.take(SPECIAL_DIRECT_USERS)) {
+                val page = runCatching { container("107603$uid", force = force) }.getOrNull() ?: continue
+                kept += page.items
+            }
+            kept.sortByDescending { it.id.toLongOrNull() ?: 0L }
+            next = null
+        }
+        return FeedPage(kept, next)
+    }
+
+    @Volatile
+    private var specialUids: Set<String> = emptySet()
+
+    @Volatile
+    private var specialUidsAt: Long = 0L
+
+    /** 特别关注名单：containerid=231093_-_specialfollow 就是关注页那个「特别关注」入口。 */
+    private suspend fun specialFollowUids(force: Boolean): Set<String> {
+        val fresh = System.currentTimeMillis() - specialUidsAt < SPECIAL_UIDS_TTL_MS
+        if (!force && fresh) return specialUids
+        val ids = HashSet<String>()
+        runCatching {
+            val url = Api.url(
+                "https://m.weibo.cn/api/container/getIndex",
+                linkedMapOf<String, String?>("containerid" to "231093_-_specialfollow", "page" to "1"),
+            )
+            collectUserIds(Api.get(url, cookie(), force), ids)
+        }
+        specialUids = ids
+        specialUidsAt = System.currentTimeMillis()
+        return ids
+    }
+
+    /** 卡片里挖用户：关注类容器的 user 可能挂在卡片本身，也可能挂在 mblog 里，统一递归取。 */
+    private fun collectUserIds(node: Any?, into: MutableSet<String>) {
+        when (node) {
+            is JSONObject -> {
+                node.optJSONObject("user")?.str("id")?.takeIf { it.isNotBlank() }?.let(into::add)
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key == "user") continue
+                    collectUserIds(node.opt(key), into)
+                }
+            }
+            is JSONArray -> for (i in 0 until node.length()) collectUserIds(node.opt(i), into)
+        }
+    }
 
     private suspend fun statusFeed(base: String, maxId: String?, force: Boolean): FeedPage {
         val params = LinkedHashMap<String, String?>()

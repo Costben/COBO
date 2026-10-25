@@ -125,7 +125,9 @@ fun MainShell(nav: NavState) {
             },
             FeedFilter.Unread to FeedStore("unread") { _, _ -> FeedPage(emptyList(), null) },
             FeedFilter.Favorites to FeedStore("favorites") { _, force -> App.repo.favorites(force) },
-            FeedFilter.Special to FeedStore("special") { _, _ -> FeedPage(emptyList(), null) },
+            FeedFilter.Special to FeedStore("special") { cursor, force ->
+                App.repo.special(cursor, force)
+            },
             FeedFilter.Circle to FeedStore("circle") { cursor, force -> App.repo.circle(cursor, force) },
             FeedFilter.Secret to FeedStore("secret") { _, _ -> FeedPage(emptyList(), null) },
             FeedFilter.Local to FeedStore("local") { _, _ -> FeedPage(emptyList(), null) },
