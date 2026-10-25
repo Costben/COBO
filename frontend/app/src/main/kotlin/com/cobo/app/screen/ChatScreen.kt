@@ -75,12 +75,14 @@ import androidx.compose.ui.unit.em
 import com.cobo.app.ui.LocalLinkHandler
 import com.cobo.app.ui.components.parseWeiboHtml
 import com.cobo.app.ui.pageContainerColor
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextField
 import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -427,25 +429,37 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
             }
         }
 
-        CompositionLocalProvider(LocalBackdrop provides backdrop) {
-            SmallTopAppBar(
-                title = peerName,
-                modifier = Modifier.align(Alignment.TopCenter),
-                color = pageColor,
-                showDivider = false,
-                gradientGlass = true,
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = {
-                    Avatar(
-                        url = peer?.avatar,
-                        size = 28.dp,
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .clickable { nav.push(Route.Profile(uid)) }
-                            .testTag("chat_peer_avatar"),
-                    )
-                },
-            )
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
+            LocalEdgeToEdge provides true,
+        ) {
+            // 和「消息」页完全同一个材质：AppBarBlurOverlay（COUI 渐变玻璃，材质量到顶栏
+            // +24dp 并向下淡出）。SmallTopAppBar 的均匀磨砂会在顶栏下缘留一条硬切线，
+            // 这里把它的底色设成透明，只借它的标题 / 图标排版，材质由 overlay 画。
+            AppBarBlurOverlay(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                containerColor = pageColor,
+                scrollFraction = { 1f },
+            ) {
+                SmallTopAppBar(
+                    title = peerName,
+                    color = Color.Transparent,
+                    showDivider = false,
+                    gradientGlass = false,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                    actions = {
+                        Avatar(
+                            url = peer?.avatar,
+                            size = 28.dp,
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .clickable { nav.push(Route.Profile(uid)) }
+                                .testTag("chat_peer_avatar"),
+                        )
+                    },
+                )
+            }
         }
     }
 }

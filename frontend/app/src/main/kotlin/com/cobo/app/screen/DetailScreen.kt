@@ -98,6 +98,7 @@ import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -435,7 +436,11 @@ fun DetailScreen(nav: NavState, id: String, mid: String) {
             }
         }
 
-        CompositionLocalProvider(LocalBackdrop provides backdrop) {
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
+            LocalEdgeToEdge provides true,
+        ) {
             SmallTopAppBar(
                 title = "微博正文",
                 modifier = Modifier

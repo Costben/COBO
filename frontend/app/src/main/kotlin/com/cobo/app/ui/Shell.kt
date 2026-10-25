@@ -76,6 +76,7 @@ import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -201,7 +202,13 @@ fun MainShell(nav: NavState) {
             }
         }
 
-        CompositionLocalProvider(LocalBackdrop provides backdrop) {
+        // 顶栏材质要靠 LocalEdgeToEdge 才会画：COUI 只在内容真的铺到状态栏下面时才肯采样，
+        // 否则把内容第一行抹成一条平色横带（顶栏「糊成一团」）。页面 contentPadding 把 topInset
+        // 放在列表自己身上，滚动时内容确实从顶栏底下过，这里直接开。
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            LocalEdgeToEdge provides true,
+        ) {
             // The bar fades with its page; a hard swap would leave the old title sitting over the
             // incoming page for the length of the cross-fade.
             Crossfade(
