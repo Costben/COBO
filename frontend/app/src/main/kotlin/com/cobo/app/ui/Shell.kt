@@ -405,6 +405,10 @@ private fun FeedHeader(
         modifier = modifier.fillMaxWidth(),
         containerColor = pageContainerColor(),
         scrollFraction = { collapsed },
+        // 标题行的高度是动画出来的，材质节点每帧都在改尺寸。ColorOS 的平台渐变模糊采样的是窗口
+        // 内容，节点一改尺寸就把自己上一帧的结果又采了一遍，整条顶栏会在动画期间变黑再闪掉。
+        // 这条顶栏固定走 COUI 自己的引擎（采录好的 backdrop 图层，尺寸变化不影响）。
+        platformRenderer = false,
     ) {
         Column(
             Modifier
