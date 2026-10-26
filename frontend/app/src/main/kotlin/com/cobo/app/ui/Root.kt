@@ -204,9 +204,9 @@ fun CoboRoot() {
             // HUD 独立于菜单，菜单收起之后它还要自己活 1.6 秒。
             Box(Modifier.fillMaxSize().zIndex(10f)) { SaveHud(saveState) }
 
-            // 菜单画在本窗口的浮层宿主里（不是 Dialog 窗口）：收起动画一开始就把触摸交还给页面，
-            // 不必等它完全收回去才能滑屏。宿主带玻璃表面，配上 backdrop 才是透明+外发光，
-            // 没有 backdrop 时 COUI 会退回实心 #333333。
+            // 菜单走独立窗口宿主（见 SaveImagesMenu）：收起一开始就把触摸交还给页面，不必等它
+            // 完全收回去才能滑屏。独立窗口采不到页面内容，菜单弹出时自己抓一帧页面当玻璃底；
+            // 这块 backdrop 只给本窗口里别的玻璃控件用。
             Box(
                 Modifier
                     .fillMaxSize()

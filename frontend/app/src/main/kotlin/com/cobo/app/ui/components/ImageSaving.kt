@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -237,13 +238,16 @@ class ImageSaver internal constructor(
 val LocalImageSaver = staticCompositionLocalOf<ImageSaver?> { null }
 
 /**
- * 长按呼出的保存菜单：直接用 COUI 的浮层下拉菜单（demo 右上角三点那个），按手指位置弹出。
+ * 长按呼出的保存菜单：直接用 COUI 的下拉菜单（demo 右上角三点那个），按手指位置弹出。
  * [urls] == null 表示收起；收起动画期间靠上一次的列表把条目留住。
  *
- * 用 overlay 宿主而不是 Dialog 宿主：Dialog 会开独立窗口，收起动画没播完之前整块窗口都在吞触摸，
- * 手指怎么划都没反应；overlay 宿主一旦开始收起就把触摸交还给页面，页面能立刻接着滚。
+ * 走 [WindowListPopup] 的独立窗口宿主：菜单收起时主窗口的视图树不动，底栏那块平台材质图层
+ * 才不会丢帧；这个宿主在收起一开始就把触摸交还给页面，不用等动画播完才能接着滑。
  *
- * 入场/收起的缩放由 COUI 的玻璃菜单自己给（0→1 从锚点放大、缩回锚点），本文件只负责把按下点
+ * 独立窗口里没有页面可采样，图层也跨不了窗口，所以弹出那一刻用 PixelCopy 抓一帧页面、模糊好
+ * 递进去当玻璃底，菜单在这张底上叠 80% 白和 COUI 的材质边（上高光、内阴影、外投影）。
+ *
+ * 入场/收起的缩放由 COUI 的菜单自己给（0→1 从锚点放大、缩回锚点），本文件只负责把按下点
  * 摆成一颗 1dp 的锚点，别在调用处再套一层缩放。
  */
 @Composable
@@ -279,6 +283,8 @@ fun SaveImagesMenu(
     }
 
     val point = precise?.touchPoint
+    // 独立窗口没有页面可以采样，玻璃底只能自己截一帧带进去。
+    val snapshot = rememberPageSnapshot(urls != null)
     val popup: @Composable () -> Unit = {
         // 独立窗口而不是主窗口里的浮层：底栏的玻璃含一块平台 View 遮罩，主窗口的视图树一变
         // （浮层卸载），它作为独立 RenderNode 会丢一帧，整块玻璃跟着消失。菜单挪进自己的窗口
@@ -288,6 +294,8 @@ fun SaveImagesMenu(
             onDismissRequest = onDismiss,
             onDismissFinished = {},
             maxHeight = null,
+            staticBackdrop = snapshot?.image,
+            staticBackdropWindowSize = snapshot?.windowSize ?: IntSize.Zero,
         ) {
             val dismiss = LocalDismissState.current
             ListPopupColumn {
