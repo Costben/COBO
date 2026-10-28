@@ -93,8 +93,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -409,8 +408,8 @@ fun ProfileContent(
 
 private val ProfileAvatarRing = 68.dp
 
-/** 封面上下边缘淡出带的高度。 */
-private val CoverEdgeFade = 14.dp
+/** 封面下沿那道分隔线的粗细。 */
+private val CoverDivider = 0.5.dp
 
 /**
  * 关注按钮：顶栏返回键 / 三点键那颗 [HighlightedIconButton] 的材质拉成胶囊 —— 同样的半透明
@@ -505,22 +504,20 @@ private fun ProfileHeader(
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 },
         ) {
-            // 封面层下边缘淡出到页面底色，不留硬切线（上沿在顶栏玻璃底下，由顶栏的渐变接住）；
-            // 头像和文字在这一层外面，不受影响。
+            // 封面下沿是一条直线，再压一道分隔线把边界收实：封面很浅或白底时不至于像没铺满。
+            // 上沿在顶栏玻璃底下，由顶栏的渐变接住。
+            val dividerColor = scheme.dividerLine
             Box(
                 Modifier
                     .fillMaxSize()
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
-                        val fade = (CoverEdgeFade.toPx() / size.height).coerceAtMost(0.5f)
-                        drawRect(
-                            Brush.verticalGradient(
-                                0f to Color.Black,
-                                1f - fade to Color.Black,
-                                1f to Color.Transparent,
-                            ),
-                            blendMode = BlendMode.DstIn,
+                        val stroke = CoverDivider.toPx()
+                        drawLine(
+                            color = dividerColor,
+                            start = Offset(0f, size.height - stroke / 2),
+                            end = Offset(size.width, size.height - stroke / 2),
+                            strokeWidth = stroke,
                         )
                     }
                     .background(

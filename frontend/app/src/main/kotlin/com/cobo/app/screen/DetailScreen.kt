@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -94,6 +95,8 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -446,14 +449,24 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
+            // 玻璃比顶栏往下多画 24dp 做渐隐，而正文卡片只在顶栏下留 8dp：常亮的话静止时卡片顶端
+            // 就被糊住。改成 COUI 原生的随滚动出现 —— 在顶部时透明，内容滚进顶栏底下 30dp 内淡入。
+            val density = LocalDensity.current
+            AppBarBlurOverlay(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                containerColor = pageContainerColor(),
+                scrollFraction = {
+                    val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+                    else listState.firstVisibleItemScrollOffset.toFloat()
+                    AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+                },
+            ) {
             SmallTopAppBar(
                 title = "微博正文",
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .reportTopBarBottom(topBarBounds),
-                color = pageContainerColor(),
+                modifier = Modifier.reportTopBarBottom(topBarBounds),
+                color = Color.Transparent,
                 showDivider = false,
-                gradientGlass = true,
+                gradientGlass = false,
                 navigationIcon = { BackIconButton { nav.pop() } },
                 actions = {
                     HighlightedIconButton(
@@ -469,6 +482,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     }
                 },
             )
+            }
         }
 
         Row(
