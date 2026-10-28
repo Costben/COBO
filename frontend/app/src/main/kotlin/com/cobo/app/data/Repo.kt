@@ -340,6 +340,37 @@ class Repo(private val context: Context, private val store: Store) {
         )
     }
 
+    /**
+     * 搜索的「用户」分类（containerid 的 `type=3`）。和微博搜索一样按 page 翻页，
+     * 空页就是到底了。
+     */
+    suspend fun searchUsers(query: String, page: Int = 1, force: Boolean = true): List<User> =
+        searchIndex("100103type=3&q=$query&t=0", page, force, ::parseUserCards)
+
+    /** 搜索的「话题」分类（`type=38`）。 */
+    suspend fun searchTopics(query: String, page: Int = 1, force: Boolean = true): List<TopicItem> =
+        searchIndex("100103type=38&q=$query&t=0", page, force, ::parseTopicCards)
+
+    private suspend fun <T> searchIndex(
+        cid: String,
+        page: Int,
+        force: Boolean,
+        parse: (JSONObject?) -> List<T>,
+    ): List<T> {
+        val params = LinkedHashMap<String, String?>()
+        params["containerid"] = cid
+        params["page_type"] = "searchall"
+        params["page"] = page.coerceAtLeast(1).toString()
+        val root = Api.get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
+        val items = parse(root)
+        if (items.isEmpty() && root.optInt("ok", 1) != 1) {
+            val message = root.str("msg", "搜索失败")
+            if (message.contains("还没有内容") || message.contains("暂无")) return emptyList()
+            throw ApiException(message)
+        }
+        return items
+    }
+
     suspend fun detail(id: String, force: Boolean = false): Status? {
         val root = Api.get(
             Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),

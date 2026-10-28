@@ -61,6 +61,21 @@ fun Avatar(url: String?, size: Dp, modifier: Modifier = Modifier) {
     }
 }
 
+/** 昵称后面的认证勾。搜索结果的用户行和信息流共用同一个尺寸比例。 */
+@Composable
+fun VerifiedBadge(modifier: Modifier = Modifier, size: Dp = 14.dp) {
+    val scheme = COUITheme.colorScheme
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(scheme.primary),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("✓", fontSize = (size.value * 0.64f).sp, color = scheme.onPrimary)
+    }
+}
+
 @Composable
 fun LoadingState(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {

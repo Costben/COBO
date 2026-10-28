@@ -53,6 +53,30 @@ class SearchE2eTest : UiE2eTest() {
         io { App.settings.clearSearchHistory() }
     }
 
+    @Test
+    fun userSearch_switchesToUserResults() {
+        tapTag("top_search")
+        waitText("微博热搜")
+
+        submitQuery("微博")
+        waitText("“微博” 的结果")
+
+        tapText("用户")
+        waitAny(By.res("search_user_0"), By.text("没有找到相关用户"))
+    }
+
+    @Test
+    fun topicSearch_switchesToTopicResults() {
+        tapTag("top_search")
+        waitText("微博热搜")
+
+        submitQuery("微博")
+        waitText("“微博” 的结果")
+
+        tapText("话题")
+        waitAny(By.res("search_topic_0"), By.text("没有找到相关话题"))
+    }
+
     /**
      * Types into the COUI search field and submits the way the IME search key does. The IME is
      * dismissed first because it swallows the key event, while the field keeps focus.

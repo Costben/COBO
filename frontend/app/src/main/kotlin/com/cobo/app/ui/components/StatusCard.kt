@@ -174,15 +174,7 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
                 }
                 if (user?.verified == true) {
                     Spacer(Modifier.width(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .clip(CircleShape)
-                            .background(scheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("✓", fontSize = 9.sp, color = scheme.onPrimary)
-                    }
+                    VerifiedBadge()
                 }
             }
             Text(

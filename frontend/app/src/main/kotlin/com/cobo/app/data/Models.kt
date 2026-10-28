@@ -299,6 +299,9 @@ data class CommentPage(
 
 data class HotItem(val title: String, val scheme: String, val label: String = "", val rank: Int = 0)
 
+/** 搜索「话题」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论两项计数。 */
+data class TopicItem(val title: String, val desc1: String = "", val desc2: String = "")
+
 data class MessageItem(
     val id: String,
     val text: String,
@@ -417,4 +420,65 @@ fun parseCards(root: JSONObject?): FeedPage {
     }
     val since = data?.optJSONObject("cardlistInfo")?.str("since_id")?.ifBlank { null }
     return FeedPage(items, since)
+}
+
+/**
+ * 用户搜索（`100103type=3`）的卡片。用户挂在 `cards[].card_group[].user` 上，
+ * 首页还可能多一张 `card_type` 不是 11 的筛选卡，所以逐张扫、只认带 user 的项。
+ *
+ * 搜索结果里的简介和粉丝数不总在 user 对象里：卡片项的 `desc1` 是简介、`desc2` 是
+ * 「粉丝：58.8万」这种展示串，user 上没有对应字段时用它们补。
+ */
+fun parseUserCards(root: JSONObject?): List<User> {
+    val data = root?.optJSONObject("data") ?: return emptyList()
+    val users = LinkedHashMap<String, User>()
+    val cards = data.optJSONArray("cards") ?: return emptyList()
+    for (i in 0 until cards.length()) {
+        val card = cards.optJSONObject(i) ?: continue
+        searchUserOf(card)?.let { if (it.id !in users) users[it.id] = it }
+        val group = card.optJSONArray("card_group") ?: continue
+        for (j in 0 until group.length()) {
+            val item = group.optJSONObject(j) ?: continue
+            searchUserOf(item)?.let { if (it.id !in users) users[it.id] = it }
+        }
+    }
+    return users.values.toList()
+}
+
+private fun searchUserOf(item: JSONObject): User? {
+    val user = User.from(item.optJSONObject("user")) ?: return null
+    val description = item.str("desc1").ifBlank { user.description }
+    val followers = if (user.followers > 0) {
+        user.followers
+    } else {
+        val raw = item.str("desc2").substringAfter("粉丝", "").trim('：', ':', ' ')
+        parseCount(raw) ?: 0
+    }
+    return user.copy(description = description, followers = followers)
+}
+
+/**
+ * 话题搜索（`100103type=38`）的卡片：`card_type` 11 的卡里，`card_type` 8 的项才是话题，
+ * 名字在 `title_sub`（形如 `#话题#`），阅读/讨论数在 `desc1` / `desc2`。
+ */
+fun parseTopicCards(root: JSONObject?): List<TopicItem> {
+    val data = root?.optJSONObject("data") ?: return emptyList()
+    val topics = LinkedHashMap<String, TopicItem>()
+    val cards = data.optJSONArray("cards") ?: return emptyList()
+    for (i in 0 until cards.length()) {
+        val card = cards.optJSONObject(i) ?: continue
+        val group = card.optJSONArray("card_group") ?: continue
+        for (j in 0 until group.length()) {
+            val item = group.optJSONObject(j) ?: continue
+            val title = item.str("title_sub").trim('#', ' ', '\u00a0')
+            if (title.isBlank()) continue
+            if (title in topics) continue
+            topics[title] = TopicItem(
+                title = title,
+                desc1 = item.str("desc1"),
+                desc2 = item.str("desc2"),
+            )
+        }
+    }
+    return topics.values.toList()
 }
