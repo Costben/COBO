@@ -57,6 +57,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
@@ -97,6 +98,7 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @Composable
@@ -400,34 +402,43 @@ private fun FeedHeader(
     val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
     val collapsed = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
     var filterMenuExpanded by remember { mutableStateOf(false) }
-
+    // 「消息」和「我」两页共用 PageTitleBar：固定尺寸、材质常驻、整条栏在滚动中一帧都不重排。
+    // 这条顶栏以前是把标题行的高度动画掉，材质节点跟着每帧改尺寸 —— 平台渐变模糊采的是窗口内容，
+    // 节点一改尺寸就采到自己上一帧的输出，于是变黑 / 抖动。这里改成和 PageTitleBar 一模一样：
+    // 栏的高度、材质的大小和透明度都不动，折叠只是画的时候把内容往上挪。
+    // 材质整块跟着分段行往上平移（只改位置不改尺寸），模糊→透明的渐变带才会贴着分段行的下沿；
+    // 内容反向平移回原位，标题和按钮的折叠轨迹不受影响。
+    val materialShift = (collapsed * titleHeightPx).roundToInt()
     AppBarBlurOverlay(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, -materialShift) },
         containerColor = pageContainerColor(),
-        scrollFraction = { collapsed },
-        // 标题行的高度是动画出来的，材质节点每帧都在改尺寸。ColorOS 的平台渐变模糊采样的是窗口
-        // 内容，节点一改尺寸就把自己上一帧的结果又采了一遍，整条顶栏会在动画期间变黑再闪掉。
-        // 这条顶栏固定走 COUI 自己的引擎（采录好的 backdrop 图层，尺寸变化不影响）。
-        platformRenderer = false,
+        scrollFraction = { 1f },
     ) {
         Column(
             Modifier
+                .offset { IntOffset(0, materialShift) }
                 .fillMaxWidth()
                 .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
         ) {
-            Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight * (1f - collapsed))) {
+            Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
                 // Only the title folds away under the status bar; clipping the whole row cut the
                 // search button's halo off in a straight line.
                 Box(Modifier.fillMaxSize().clipToBounds()) {
-                    Text(
-                        stringResource(R.string.app_name),
-                        color = scheme.onSurface.copy(alpha = 1f - collapsed),
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 16.dp, bottom = 6.dp),
-                    )
+                    Box(Modifier.fillMaxSize().graphicsLayer {
+                        translationY = -collapsed * titleHeightPx
+                    }) {
+                        Text(
+                            stringResource(R.string.app_name),
+                            color = scheme.onSurface.copy(alpha = 1f - collapsed),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(start = 16.dp, bottom = 6.dp),
+                        )
+                    }
                 }
                 HighlightedIconButton(
                     onClick = onSearch,
@@ -435,7 +446,11 @@ private fun FeedHeader(
                         .align(Alignment.CenterEnd)
                         .padding(end = TopAppBarDefaults.ActionIconPadding)
                         .couiTopAppBarActionItem()
-                        .graphicsLayer { alpha = 1f - collapsed }
+                        .graphicsLayer {
+                            // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
+                            translationY = -collapsed * titleHeightPx / 2f
+                            alpha = 1f - collapsed
+                        }
                         .testTag("top_search"),
                 ) {
                     Icon(COUIIcons.Basic.Search, "搜索", Modifier.size(24.dp))
@@ -444,7 +459,8 @@ private fun FeedHeader(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(TopAppBarDefaults.SmallTopAppBarCenterHeight),
+                    .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+                    .graphicsLayer { translationY = -collapsed * titleHeightPx },
             ) {
                 FeedTabs(
                     pager = feedPager,
