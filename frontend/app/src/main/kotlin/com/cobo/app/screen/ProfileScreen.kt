@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -32,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -66,7 +69,6 @@ import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
-import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -74,7 +76,6 @@ import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
-import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
@@ -82,25 +83,71 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
+import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
+import io.github.suqi8.coui.kmp.basic.FullPageRefreshState
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
+import io.github.suqi8.coui.kmp.basic.materialShadowEdge
+import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
+import io.github.suqi8.coui.kmp.blur.LocalBackdrop
+import io.github.suqi8.coui.kmp.blur.layerBackdrop
+import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import kotlin.math.roundToInt
 
 @Composable
 fun ProfileScreen(nav: NavState, uid: String?) {
     val key = uid.orEmpty()
     val tag = FollowTags[key]
-    Scaffold(
-        containerColor = pageContainerColor(),
-        topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "主页",
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = {
-                    ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
-                },
-            )
-        },
-    ) { padding ->
-        ProfileContent(nav, uid, Modifier.fillMaxSize().padding(padding))
+    val backdrop = rememberLayerBackdrop()
+    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    Box(Modifier.fillMaxSize().background(pageContainerColor())) {
+        // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样；和「我」页同一套材质。
+        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+            ProfileContent(nav, uid, Modifier.fillMaxSize(), topInset = topBarHeight)
+        }
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            LocalEdgeToEdge provides true,
+        ) {
+            AppBarBlurOverlay(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                containerColor = pageContainerColor(),
+                scrollFraction = { 1f },
+            ) {
+                SmallTopAppBar(
+                    title = "主页",
+                    color = Color.Transparent,
+                    showDivider = false,
+                    gradientGlass = false,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                    actions = {
+                        ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -174,6 +221,7 @@ fun ProfileContent(
     var error by remember(uid) { mutableStateOf<String?>(null) }
     var resolvedUid by remember(uid) { mutableStateOf<String?>(uid) }
     val listState = rememberLazyListState()
+    val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
     suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
@@ -232,26 +280,52 @@ fun ProfileContent(
             }
         },
         modifier = modifier,
+        state = pullState,
         contentPadding = PaddingValues(top = topInset),
-        colors = fullPagePullToRefreshColors(backgroundColor = pageContainerColor()),
+        // 下拉时不让整页往下走，而是把封面往下拉长；自带的提示会被封面盖住，改由封面自己显示。
+        colors = fullPagePullToRefreshColors(
+            backgroundColor = pageContainerColor(),
+            textColor = Color.Transparent,
+            indicatorColor = Color.Transparent,
+        ),
         refreshTexts = FullPageRefreshTexts,
         completeHoldDurationMillis = FullPageRefreshHoldMillis,
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) },
+            // 封面从屏幕最顶上铺起，顶栏的玻璃直接压在封面上；顶栏的高度由封面自己让出来。
             contentPadding = PaddingValues(
-                top = topInset + 8.dp,
+                top = 0.dp,
                 bottom = 16.dp + navBottomPadding() + extraBottom,
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
+                val tag = FollowTags[user?.id ?: uid]
                 ProfileHeader(
                     user = user,
-                    tag = FollowTags[user?.id ?: uid],
+                    tag = tag,
+                    topInset = topInset,
+                    pullState = pullState,
+                    onCover = { urls, i -> nav.push(Route.Images(urls, i)) },
+                    followLabel = when {
+                        App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
+                        user?.following == true -> "已关注"
+                        else -> "关注"
+                    },
                     onFollow = user?.let { target ->
-                        if (target.id == App.repo.session?.uid) {
+                        if (App.repo.guest) {
+                            // 纯本地模式没有账号可关注，按钮直接切本机的「本地关注」标记。
+                            {
+                                val on = FollowTags[target.id] == FollowTag.Local
+                                FollowTags.set(target.id, if (on) null else FollowTag.Local)
+                                App.notifyFollowChanged()
+                                App.toast(if (on) "已取消本地关注" else "已加入本地关注")
+                            }
+                        } else if (target.id == App.repo.session?.uid) {
                             null
                         } else {
                             {
@@ -333,48 +407,205 @@ fun ProfileContent(
     }
 }
 
+private val ProfileAvatarRing = 68.dp
+
+/** 封面上下边缘淡出带的高度。 */
+private val CoverEdgeFade = 14.dp
+
+/**
+ * 关注按钮：顶栏返回键 / 三点键那颗 [HighlightedIconButton] 的材质拉成胶囊 —— 同样的半透明
+ * 径向填充、材质描边和按下回弹缩放，只是形状换成能放下文字的胶囊。
+ */
 @Composable
-private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?, tag: FollowTag? = null) {
+private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = COUITheme.colorScheme
+    val isDark = scheme.background.luminance() < 0.5f
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val press by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = HighlightedIconButtonDefaults.PressSpring,
+        label = "followPress",
+    )
+    val brighten = HighlightedIconButtonDefaults.PressedFillBrighten * press
+    Box(
+        modifier = modifier
+            .height(36.dp)
+            .graphicsLayer {
+                val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .drawBehind {
+                drawRect(
+                    Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0f to lerp(HighlightedIconButtonDefaults.fillCenter(isDark), Color.White, brighten)
+                                .copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
+                            HighlightedIconButtonDefaults.FillEdgeStop to lerp(
+                                HighlightedIconButtonDefaults.fillEdge(isDark),
+                                Color.White,
+                                brighten,
+                            ).copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
+                        ),
+                        center = center,
+                        radius = size.maxDimension / 2f,
+                    ),
+                )
+            }
+            .materialShadowEdge(stroke = HighlightedIconButtonDefaults.stroke(isDark))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = lerp(scheme.onBackground, Color.White, HighlightedIconButtonDefaults.PressedContentBrighten * press),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ProfileHeader(
+    user: User?,
+    onFollow: (() -> Unit)?,
+    followLabel: String,
+    pullState: FullPagePullToRefreshState,
+    tag: FollowTag? = null,
+    /** 顶栏（含状态栏）的高度：封面顶到屏幕最上沿，多出这一截藏在顶栏玻璃下面。 */
+    topInset: Dp = 0.dp,
+    onCover: (List<String>, Int) -> Unit = { _, _ -> },
+) {
+    val scheme = COUITheme.colorScheme
+    val covers = user?.covers.orEmpty()
+    val hasCover = covers.isNotEmpty()
+    // 头像和昵称压在封面上；有封面图时整体压暗一层，文字统一用白色保证看得清。
+    val onCoverColor = if (hasCover) Color.White else scheme.onSurface
+    val pagerState = rememberPagerState { covers.size }
     Column(Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(132.dp)
-                .background(
-                    if (!user?.cover.isNullOrBlank()) {
-                        Brush.linearGradient(listOf(scheme.primaryContainer, scheme.background))
-                    } else {
-                        Brush.linearGradient(listOf(scheme.primaryContainer, scheme.surfaceContainer))
-                    }
-                ),
+                // 顶栏下面露出的封面只截中间一条，高度取头像的 1.5 倍，点开再看整张；
+                // 往上再多出顶栏那一截垫在玻璃底下；下拉多少就往下拉长多少，
+                // 封面是居中裁切，拉长就是把上下被裁掉的部分逐渐露出来。高度在布局阶段读，不逐帧重组。
+                .layout { measurable, constraints ->
+                    val height = (topInset + ProfileAvatarRing * 1.5f).roundToPx() +
+                        pullState.dragOffset.roundToInt()
+                    val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth, height))
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                },
         ) {
-            if (!user?.cover.isNullOrBlank()) {
-                AsyncImage(
-                    model = user.cover,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+            // 封面层下边缘淡出到页面底色，不留硬切线（上沿在顶栏玻璃底下，由顶栏的渐变接住）；
+            // 头像和文字在这一层外面，不受影响。
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        val fade = (CoverEdgeFade.toPx() / size.height).coerceAtMost(0.5f)
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.Black,
+                                1f - fade to Color.Black,
+                                1f to Color.Transparent,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    }
+                    .background(
+                        Brush.linearGradient(listOf(scheme.primaryContainer, scheme.surfaceContainer))
+                    ),
+            ) {
+            if (hasCover) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize().testTag("profile_cover"),
+                    userScrollEnabled = covers.size > 1,
+                ) { page ->
+                    AsyncImage(
+                        model = covers[page],
+                        contentDescription = "封面",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable { onCover(covers, page) },
+                    )
+                }
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)))
+            }
+            }
+            if (hasCover) {
+                if (covers.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        repeat(covers.size) { i ->
+                            Box(
+                                Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Color.White.copy(
+                                            alpha = if (i == pagerState.currentPage) 0.95f else 0.45f
+                                        )
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+            val hint = when (pullState.refreshState) {
+                FullPageRefreshState.Pulling -> FullPageRefreshTexts.pulling
+                FullPageRefreshState.ThresholdReached -> FullPageRefreshTexts.thresholdReached
+                FullPageRefreshState.Refreshing -> FullPageRefreshTexts.refreshing
+                FullPageRefreshState.RefreshComplete -> FullPageRefreshTexts.complete
+                else -> ""
+            }
+            if (hint.isNotEmpty()) {
+                Text(
+                    hint,
+                    fontSize = 12.sp,
+                    color = onCoverColor.copy(alpha = 0.85f),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = topInset + 12.dp)
+                        .graphicsLayer { alpha = pullState.pullProgress },
                 )
             }
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp),
-        ) {
-            Row(verticalAlignment = Alignment.Bottom) {
+            // 头像一行贴着封面底部：不拉时上下各留 17dp 正好居中，拉长时停在原位，上方露出封面。
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = (ProfileAvatarRing * 0.5f) / 2),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Box(
                     modifier = Modifier
-                        .size(78.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(pageContainerColor())
-                        .padding(3.dp),
+                        .size(ProfileAvatarRing)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.9f))
+                        .padding(2.dp),
                 ) {
-                    Avatar(user?.avatar, 72.dp)
+                    Avatar(user?.avatar, 64.dp)
                 }
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f).padding(bottom = 4.dp)) {
+                Column(Modifier.weight(1f)) {
                     if (tag != null) {
                         FollowTagBadge(tag)
                         Spacer(Modifier.height(2.dp))
@@ -382,9 +613,11 @@ private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?, tag: FollowTag? 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             user?.name ?: "加载中…",
+                            color = onCoverColor,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                         val membership = user?.membership ?: Membership.None
                         if (membership != Membership.None) {
@@ -393,23 +626,28 @@ private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?, tag: FollowTag? 
                         }
                     }
                     if (user?.verified == true) {
-                        Text("已认证", fontSize = 11.sp, color = scheme.primary)
+                        Text(
+                            "已认证",
+                            fontSize = 11.sp,
+                            color = if (hasCover) Color.White.copy(alpha = 0.85f) else scheme.primary,
+                        )
                     }
                 }
                 if (onFollow != null) {
                     Spacer(Modifier.width(8.dp))
-                    Button(
+                    FollowCapsule(
+                        text = followLabel,
                         onClick = onFollow,
-                        modifier = Modifier.height(36.dp).testTag("follow_button"),
-                        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
-                    ) {
-                        Text(
-                            text = if (user?.following == true) "已关注" else "关注",
-                            fontSize = 13.sp,
-                        )
-                    }
+                        modifier = Modifier.testTag("follow_button"),
+                    )
                 }
             }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+        ) {
             if (!user?.description.isNullOrBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text(

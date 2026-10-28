@@ -88,7 +88,8 @@ data class User(
     val followers: Int = 0,
     val friends: Int = 0,
     val statuses: Int = 0,
-    val cover: String = "",
+    /** 主页封面原图；官方号常配好几张轮播，接口里用 `;` 拼在一起。 */
+    val covers: List<String> = emptyList(),
     /** 当前登录者是否把这个用户设成了「特别关注」；m.weibo.cn 每条 status 的 user 都带这个字段。 */
     val specialFollow: Boolean = false,
     val mbtype: Int = 0,
@@ -120,7 +121,7 @@ data class User(
                 followers = o.count("followers_count", o.count("followers_count_str")),
                 friends = o.int("follow_count", o.int("friends_count", o.count("friends_count_str"))),
                 statuses = o.count("statuses_count"),
-                cover = o.str("cover_image_phone"),
+                covers = coverUrls(o.str("cover_image_phone")),
                 specialFollow = o.optBoolean("special_follow", false),
                 mbtype = o.int("mbtype"),
                 mbrank = o.int("mbrank"),
@@ -129,6 +130,19 @@ data class User(
         }
     }
 }
+
+private val CoverCrop = Regex("""^(https?://[^/]+)/crop\.[^/]+/(.+)$""")
+
+/**
+ * `cover_image_phone` 给的是 `crop.0.0.640.640.640/<pid>.jpg` 这种 640 方图，可能多张用 `;` 拼接。
+ * 拆开后把裁剪段换成 `large`，拿到同一张的原图。
+ */
+internal fun coverUrls(raw: String): List<String> =
+    raw.split(';')
+        .map { it.trim() }
+        .filter { it.startsWith("http") }
+        .map { url -> CoverCrop.replace(url) { "${it.groupValues[1]}/large/${it.groupValues[2]}" } }
+        .distinct()
 
 data class Pic(
     val thumb: String,
