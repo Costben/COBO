@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.StaleObjectException
 import com.cobo.app.App
+import com.cobo.app.data.Membership
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -94,6 +95,21 @@ class UiSmokeTest : UiE2eTest() {
 
         tapTag("feed_tab_recommend")
         waitTag("feed_page_2")
+    }
+
+    @Test
+    fun feedShowsMemberBadges() {
+        val feed = io { App.repo.container("102803") }
+        val hasVip = feed.items.any { (it.user?.membership ?: Membership.None) != Membership.None }
+        assumeTrue("这一屏推荐流里没有会员账号，跳过", hasVip)
+
+        // 徽标挂在昵称后面，属于卡片正文，会随卡片一起出现。
+        val deadline = System.currentTimeMillis() + UI_WAIT
+        while (System.currentTimeMillis() < deadline) {
+            if (existsTag("vip_badge_vip", 0) || existsTag("vip_badge_svip", 0)) return
+            Thread.sleep(200)
+        }
+        throw AssertionError("推荐流里有会员账号，但界面上没有会员徽标\n${dump()}")
     }
 
     @Test

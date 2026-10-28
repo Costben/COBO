@@ -5,6 +5,13 @@ import android.net.Uri
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,6 +33,55 @@ private const val SPECIAL_DIRECT_USERS = 5
 
 /** 一轮拼流最多花多久；到点就用已有结果返回，避免下拉头长时间挂着。 */
 private const val SPECIAL_REFRESH_BUDGET_MS = 15_000L
+
+/** 「本地关注」每轮并发拉几个人的主页时间线：并发再高容易被微博限流。 */
+private const val TAG_FEED_CONCURRENCY = 4
+
+/** 「本地关注」一页给多少条：多个人合并时按全局时间切，不按人切。 */
+private const val TAG_FEED_PAGE_SIZE = 20
+
+/** 为了让页与页之间保持时间序，翻得慢的人最多再补几轮。 */
+private const val TAG_FEED_CATCHUP_ROUNDS = 3
+
+/** 游标里表示「这个人已经翻到底」的记号。 */
+private const val TAG_CURSOR_END = ""
+
+/** [uid] 为空或不在 [accounts] 里时返回 [current]，否则返回那个账号的 cookie。 */
+internal fun pickLocalFollowCookie(uid: String, accounts: List<Account>, current: String?): String? {
+    if (uid.isBlank()) return current
+    return accounts.firstOrNull { it.uid == uid }?.cookie?.takeIf { it.isNotBlank() } ?: current
+}
+
+/**
+ * 「本地关注」的翻页游标：uid -> 这个人翻到的 since_id，空串表示他已经没有更早的微博。
+ * 存成 JSON 是为了让一条流里每个人各记各的进度。
+ */
+internal fun encodeTagCursor(next: Map<String, String>): String {
+    val o = JSONObject()
+    next.forEach { (uid, since) -> o.put(uid, since) }
+    return o.toString()
+}
+
+/** 解析失败或没游标时返回空表，等于所有人从头拉一遍。 */
+internal fun parseTagCursor(cursor: String?): Map<String, String> {
+    if (cursor.isNullOrBlank()) return emptyMap()
+    val o = runCatching { JSONObject(cursor) }.getOrNull() ?: return emptyMap()
+    val out = LinkedHashMap<String, String>()
+    o.keys().forEach { uid -> out[uid] = o.optString(uid) }
+    return out
+}
+
+/** 合并后的第 [size] 条微博的 id，作为这一页的时间切点；条数不够时没有切点。 */
+private fun tagFeedCut(fetched: Map<String, List<Status>>, size: Int): Long? =
+    fetched.values.asSequence()
+        .flatten()
+        .mapNotNull { it.id.toLongOrNull() }
+        .sortedDescending()
+        .elementAtOrNull(size - 1)
+
+/** 一个人这一轮拉到的最旧一条的 id。 */
+private fun oldestStatusId(items: List<Status>?): Long? =
+    items?.mapNotNull { it.id.toLongOrNull() }?.minOrNull()
 
 class Repo(private val context: Context, private val store: Store) {
 
@@ -111,8 +167,8 @@ class Repo(private val context: Context, private val store: Store) {
         sinceId: String? = null,
         extra: Map<String, String> = emptyMap(),
         force: Boolean = false,
+        cookie: String? = this.cookie(),
     ): FeedPage {
-        val cookie = cookie()
         val params = LinkedHashMap<String, String?>()
         params["containerid"] = cid
         if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
@@ -157,9 +213,105 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun secret(maxId: String? = null, force: Boolean = false): FeedPage =
         byUsers(FollowTags.uids(FollowTag.Secret).toSet(), maxId, force)
 
-    /** 「本地关注」：同上，按本机「本地」标记拼。 */
-    suspend fun localFollows(maxId: String? = null, force: Boolean = false): FeedPage =
-        byUsers(FollowTags.uids(FollowTag.Local).toSet(), maxId, force)
+    /**
+     * 「本地关注」：把本机打了「本地」标记的人的主页时间线合并成一条能一直往下翻的流。
+     *
+     * 游标是「uid -> 这个人翻到哪了」的 JSON，每个人单独记 since_id，才不会因为某个人更新
+     * 得多就把别人的旧微博挤掉。合并按全局时间序切页：页尾定在全局第 N 条，谁这一轮还没
+     * 翻到这条线就以他为准再补一页——不然下一页会冒出比本页最后一条更新的微博。
+     */
+    suspend fun localFollows(maxId: String? = null, force: Boolean = false): FeedPage {
+        val uids = FollowTags.uids(FollowTag.Local)
+        if (uids.isEmpty()) return FeedPage(emptyList(), null)
+        val cookie = localFollowCookie()
+        val positions = parseTagCursor(maxId)
+        val deadline = System.currentTimeMillis() + SPECIAL_REFRESH_BUDGET_MS
+        val lock = Mutex()
+        val fetched = HashMap<String, MutableList<Status>>()
+        val pending = HashMap<String, String?>()
+        val done = HashSet<String>()
+        uids.forEach { uid ->
+            if (positions[uid] == TAG_CURSOR_END) done.add(uid) else pending[uid] = positions[uid]
+        }
+
+        suspend fun pull(targets: List<String>) {
+            if (targets.isEmpty()) return
+            coroutineScope {
+                val permits = Semaphore(TAG_FEED_CONCURRENCY)
+                targets.map { uid ->
+                    async {
+                        if (System.currentTimeMillis() > deadline) return@async
+                        permits.withPermit {
+                            val since = lock.withLock { pending[uid] }
+                            val page = runCatching {
+                                container("107603$uid", sinceId = since, force = force, cookie = cookie)
+                            }.getOrNull() ?: return@withPermit
+                            lock.withLock {
+                                // since_id 是闭区间：边界那条会原样再回来一次，只要更旧的。
+                                val cutoff = since?.toLongOrNull()
+                                val items = if (cutoff == null) page.items else page.items.filter {
+                                    (it.id.toLongOrNull() ?: Long.MIN_VALUE) < cutoff
+                                }
+                                fetched.getOrPut(uid) { ArrayList() }.addAll(items)
+                                if (page.sinceId.isNullOrBlank()) {
+                                    done.add(uid)
+                                    pending.remove(uid)
+                                } else {
+                                    pending[uid] = page.sinceId
+                                }
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+
+        val alive = uids.filter { it !in done }
+        pull(alive)
+        repeat(TAG_FEED_CATCHUP_ROUNDS - 1) {
+            val cut = tagFeedCut(fetched, TAG_FEED_PAGE_SIZE) ?: return@repeat
+            val behind = alive.filter { uid ->
+                uid !in done && (oldestStatusId(fetched[uid]) ?: Long.MAX_VALUE) > cut
+            }
+            pull(behind)
+        }
+
+        val merged = LinkedHashMap<String, Pair<Status, String>>()
+        fetched.forEach { (uid, items) -> items.forEach { merged.putIfAbsent(it.id, it to uid) } }
+        val ordered = merged.values.sortedByDescending { it.first.id.toLongOrNull() ?: 0L }
+        val page = ordered.take(TAG_FEED_PAGE_SIZE)
+        if (page.isEmpty()) return FeedPage(emptyList(), null)
+
+        val emittedOldest = HashMap<String, String>()
+        val emittedCount = HashMap<String, Int>()
+        page.forEach { (status, uid) ->
+            emittedOldest[uid] = status.id
+            emittedCount[uid] = (emittedCount[uid] ?: 0) + 1
+        }
+        val cursor = LinkedHashMap<String, String>()
+        for (uid in uids) {
+            val total = fetched[uid]?.size ?: 0
+            val sent = emittedCount[uid] ?: 0
+            val oldest = emittedOldest[uid]
+            val old = positions[uid]
+            if (uid in done && sent == total) {
+                cursor[uid] = TAG_CURSOR_END
+            } else if (oldest != null) {
+                // 只推到真正发出去的最旧一条；被切在页外的下轮会重新拉，不会漏。
+                cursor[uid] = oldest
+            } else if (old != null) {
+                cursor[uid] = old
+            }
+        }
+        return FeedPage(page.map { it.first }, encodeTagCursor(cursor))
+    }
+
+    /**
+     * 「本地关注」的取数身份：设置里选了哪个已保存账号就用它的 cookie，
+     * 没选、或那个账号已经被删掉，就回到当前登录账号。
+     */
+    private fun localFollowCookie(): String? =
+        pickLocalFollowCookie(App.settings.localFollowUid, store.accounts(), cookie())
 
     /**
      * 把一组人的微博拼成一条流。
@@ -167,7 +319,12 @@ class Repo(private val context: Context, private val store: Store) {
      * 先扫关注流，按原本的时间序把他们挑出来（这样和「全部」看到的是同一批卡片）；本机标记的
      * 人可能压根不在关注流里，所以再补一次各自的主页时间线，按 id 倒序去重。
      */
-    private suspend fun byUsers(uids: Set<String>, maxId: String?, force: Boolean): FeedPage {
+    private suspend fun byUsers(
+        uids: Set<String>,
+        maxId: String?,
+        force: Boolean,
+        cookie: String? = this.cookie(),
+    ): FeedPage {
         if (uids.isEmpty()) return FeedPage(emptyList(), null)
         val kept = LinkedHashMap<String, Status>()
         var cursor = maxId
@@ -177,7 +334,7 @@ class Repo(private val context: Context, private val store: Store) {
         val deadline = System.currentTimeMillis() + SPECIAL_REFRESH_BUDGET_MS
         while (scanned < SPECIAL_SCAN_PAGES && kept.size < SPECIAL_PAGE_SIZE) {
             if (scanned > 0 && System.currentTimeMillis() > deadline) break
-            val page = statusFeed("https://m.weibo.cn/feed/friends", cursor, force)
+            val page = statusFeed("https://m.weibo.cn/feed/friends", cursor, force, cookie)
             scanned++
             for (status in page.items) {
                 val user = status.user ?: continue
@@ -189,7 +346,9 @@ class Repo(private val context: Context, private val store: Store) {
         if (kept.size < SPECIAL_PAGE_SIZE) {
             for (uid in uids.take(SPECIAL_DIRECT_USERS)) {
                 if (System.currentTimeMillis() > deadline) break
-                val page = runCatching { container("107603$uid", force = force) }.getOrNull() ?: continue
+                val page = runCatching {
+                    container("107603$uid", force = force, cookie = cookie)
+                }.getOrNull() ?: continue
                 for (status in page.items) kept.putIfAbsent(status.id, status)
             }
         }
@@ -276,10 +435,15 @@ class Repo(private val context: Context, private val store: Store) {
         }
     }
 
-    private suspend fun statusFeed(base: String, maxId: String?, force: Boolean): FeedPage {
+    private suspend fun statusFeed(
+        base: String,
+        maxId: String?,
+        force: Boolean,
+        cookie: String? = this.cookie(),
+    ): FeedPage {
         val params = LinkedHashMap<String, String?>()
         if (!maxId.isNullOrBlank()) params["max_id"] = maxId
-        val root = Api.get(Api.url(base, params), cookie(), force)
+        val root = Api.get(Api.url(base, params), cookie, force)
         val data = root.optJSONObject("data")
         if (data == null) {
             if (root.optInt("ok", 1) == 1) return FeedPage(emptyList(), null)

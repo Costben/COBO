@@ -134,7 +134,7 @@ fun MainShell(nav: NavState) {
             FeedFilter.Secret to FeedStore("secret") { cursor, force ->
                 App.repo.secret(cursor, force)
             },
-            FeedFilter.Local to FeedStore("local") { cursor, force ->
+            FeedFilter.Local to FeedStore("local", readOnly = true) { cursor, force ->
                 App.repo.localFollows(cursor, force)
             },
         )

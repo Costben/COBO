@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
+import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.data.VideoInfo
@@ -62,6 +63,8 @@ fun StatusCard(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     showActions: Boolean = true,
+    /** 只读流（本地关注）：计数照常显示，但点赞 / 评论 / 转发都不响应。 */
+    actionsEnabled: Boolean = true,
     onRepost: () -> Unit = {},
     onComment: () -> Unit = {},
     /** Opens the quoted post when it is tapped; the frame grows from and returns into that block. */
@@ -125,17 +128,20 @@ fun StatusCard(
                     icon = CoboIcons.Repost,
                     text = fmtCount(status.reposts),
                     onClick = onRepost,
+                    enabled = actionsEnabled,
                 )
                 ActionIcon(
                     icon = CoboIcons.Comment,
                     text = fmtCount(status.comments),
                     onClick = onComment,
+                    enabled = actionsEnabled,
                 )
                 ActionIcon(
                     icon = if (status.liked) CoboIcons.HeartFill else CoboIcons.Heart,
                     text = fmtCount(status.attitudes),
                     onClick = onLike,
                     tint = if (status.liked) scheme.primary else scheme.onSurfaceSecondary,
+                    enabled = actionsEnabled,
                 )
             }
         }
@@ -167,6 +173,11 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
                         .weight(1f, fill = false)
                         .clickable { user?.let(onUser) },
                 )
+                val membership = user?.membership ?: Membership.None
+                if (membership != Membership.None) {
+                    Spacer(Modifier.width(4.dp))
+                    MemberBadge(membership, compact = true)
+                }
                 val tag = FollowTags[user?.id]
                 if (tag != null) {
                     Spacer(Modifier.width(4.dp))

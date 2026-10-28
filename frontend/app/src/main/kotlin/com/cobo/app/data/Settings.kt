@@ -56,6 +56,13 @@ class Settings(context: Context) {
     var feedFilter by mutableIntStateOf(sp.getInt("feed_filter", 0))
         private set
 
+    /**
+     * 「本地关注」固定用这个账号的 cookie 取数；空串表示跟随当前登录账号。
+     * 标记表本身与账号无关，这条只决定拿谁的身份去拉那批人的内容。
+     */
+    var localFollowUid by mutableStateOf(sp.getString("local_follow_uid", "").orEmpty())
+        private set
+
     /** 启动时自动查更新，默认开。 */
     var autoCheckUpdate by mutableStateOf(sp.getBoolean("auto_check_update", true))
         private set
@@ -118,6 +125,11 @@ class Settings(context: Context) {
     fun applyAcceptPrerelease(value: Boolean) {
         acceptPrerelease = value
         sp.edit().putBoolean("accept_prerelease", value).apply()
+    }
+
+    fun applyLocalFollowUid(uid: String) {
+        localFollowUid = uid
+        sp.edit().putString("local_follow_uid", uid).apply()
     }
 
     fun applyUpdateCheckedAt(value: Long) {

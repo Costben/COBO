@@ -70,6 +70,13 @@ fun chatPlainText(html: String?): String {
     return stripHtml(withAlt).replace("\uFFFC", "").trim()
 }
 
+/**
+ * 微博会员。接口给的三个字段：`mbtype`（0 非会员，2 普通会员，12 年费会员）、
+ * `mbrank`（会员等级 1–9）、`svip`（1 = 超级会员）。
+ * 微博客户端自己只区分「会员 / 超级会员」两种标识，年费在界面上不单独标，这里也照办。
+ */
+enum class Membership { None, Vip, Svip }
+
 data class User(
     val id: String,
     val name: String,
@@ -83,7 +90,17 @@ data class User(
     val cover: String = "",
     /** 当前登录者是否把这个用户设成了「特别关注」；m.weibo.cn 每条 status 的 user 都带这个字段。 */
     val specialFollow: Boolean = false,
+    val mbtype: Int = 0,
+    val mbrank: Int = 0,
+    val svip: Boolean = false,
 ) {
+    val membership: Membership
+        get() = when {
+            svip -> Membership.Svip
+            mbtype > 0 -> Membership.Vip
+            else -> Membership.None
+        }
+
     companion object {
         fun from(o: JSONObject?): User? {
             if (o == null) return null
@@ -104,6 +121,9 @@ data class User(
                 statuses = o.count("statuses_count"),
                 cover = o.str("cover_image_phone"),
                 specialFollow = o.optBoolean("special_follow", false),
+                mbtype = o.int("mbtype"),
+                mbrank = o.int("mbrank"),
+                svip = o.int("svip") > 0,
             )
         }
     }

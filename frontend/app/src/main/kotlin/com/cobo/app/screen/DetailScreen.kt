@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -72,6 +73,7 @@ import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.CommentSort
 import com.cobo.app.data.HistoryItem
+import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
@@ -87,6 +89,7 @@ import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.InputDialog
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
@@ -112,7 +115,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun DetailScreen(nav: NavState, id: String, mid: String) {
+fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = false) {
     val scope = rememberCoroutineScope()
     var status by remember(id) { mutableStateOf<Status?>(null) }
     var detailError by remember(id) { mutableStateOf<String?>(null) }
@@ -299,9 +302,10 @@ fun DetailScreen(nav: NavState, id: String, mid: String) {
                                 }
                             },
                             showActions = false,
+                            actionsEnabled = !readOnly,
                             onOpenQuoted = { quoted, quotedOrigin ->
                                 quotedOrigin.attachToRow(listState, "status", topBarBounds)
-                                nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
+                                nav.push(Route.Detail(quoted.id, quoted.mid, readOnly), quotedOrigin)
                             },
                         )
                     }
@@ -396,6 +400,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String) {
                         modifier = Modifier.graphicsLayer { alpha = commentsAlpha },
                         likeTag = Modifier.testTag("comment_like_$index"),
                         replyTag = Modifier.testTag("comment_reply_$index"),
+                        readOnly = readOnly,
                     ) {
                         val at = comments.indexOfFirst { it.id == comment.id }
                         if (at < 0) return@CommentCard
@@ -482,12 +487,14 @@ fun DetailScreen(nav: NavState, id: String, mid: String) {
                 text = "转发 ${fmtCount(current?.reposts ?: 0)}",
                 onClick = { repostDialog = true },
                 modifier = Modifier.weight(1f).testTag("detail_repost"),
+                enabled = !readOnly,
             )
             ActionIcon(
                 icon = CoboIcons.Comment,
                 text = "评论 ${fmtCount(current?.comments ?: 0)}",
                 onClick = { commentDialog = true },
                 modifier = Modifier.weight(1f).testTag("detail_comment"),
+                enabled = !readOnly,
             )
             ActionIcon(
                 icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,
@@ -506,6 +513,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String) {
                 tint = if (current?.liked == true) scheme.primary
                 else scheme.onSurfaceSecondary,
                 modifier = Modifier.weight(1f).testTag("detail_like"),
+                enabled = !readOnly,
             )
         }
     }
@@ -554,6 +562,7 @@ private fun CommentCard(
     modifier: Modifier = Modifier,
     likeTag: Modifier = Modifier,
     replyTag: Modifier = Modifier,
+    readOnly: Boolean = false,
     onLike: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
@@ -628,12 +637,19 @@ private fun CommentCard(
             Avatar(comment.user?.avatar, 34.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    comment.user?.name.orEmpty(),
-                    fontSize = 13.sp,
-                    color = scheme.onSurface,
-                    fontWeight = FontWeight.Medium,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        comment.user?.name.orEmpty(),
+                        fontSize = 13.sp,
+                        color = scheme.onSurface,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    val membership = comment.user?.membership ?: Membership.None
+                    if (membership != Membership.None) {
+                        Spacer(Modifier.width(4.dp))
+                        MemberBadge(membership, compact = true)
+                    }
+                }
                 Spacer(Modifier.height(3.dp))
                 WeiboText(
                     html = comment.textHtml,
@@ -679,6 +695,7 @@ private fun CommentCard(
                                 reply = reply,
                                 onLike = { likeReply(reply) },
                                 onReply = { replyTarget = reply },
+                                enabled = !readOnly,
                             )
                         }
                         when {
@@ -738,7 +755,10 @@ private fun CommentCard(
                         color = scheme.onSurfaceSecondary,
                         modifier = replyTag
                             .clip(RoundedCornerShape(11.dp))
-                            .clickable { replyTarget = comment }
+                            .then(
+                                if (readOnly) Modifier.alpha(0.38f)
+                                else Modifier.clickable { replyTarget = comment },
+                            )
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     )
                     Spacer(Modifier.width(4.dp))
@@ -754,7 +774,10 @@ private fun CommentCard(
                                     alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
                                 )
                             )
-                            .clickable(onClick = onLike)
+                            .then(
+                                if (readOnly) Modifier.alpha(0.38f)
+                                else Modifier.clickable(onClick = onLike),
+                            )
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -798,18 +821,30 @@ private fun CommentCard(
 }
 
 @Composable
-private fun ReplyRow(reply: Comment, onLike: () -> Unit, onReply: () -> Unit) {
+private fun ReplyRow(
+    reply: Comment,
+    onLike: () -> Unit,
+    onReply: () -> Unit,
+    enabled: Boolean = true,
+) {
     val scheme = COUITheme.colorScheme
     Row(Modifier.padding(vertical = 3.dp)) {
         Avatar(reply.user?.avatar, 22.dp)
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                reply.user?.name.orEmpty(),
-                fontSize = 12.sp,
-                color = scheme.onSurfaceSecondary,
-                fontWeight = FontWeight.Medium,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    reply.user?.name.orEmpty(),
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceSecondary,
+                    fontWeight = FontWeight.Medium,
+                )
+                val membership = reply.user?.membership ?: Membership.None
+                if (membership != Membership.None) {
+                    Spacer(Modifier.width(4.dp))
+                    MemberBadge(membership, compact = true)
+                }
+            }
             Spacer(Modifier.height(2.dp))
             WeiboText(
                 html = reply.textHtml,
@@ -833,7 +868,10 @@ private fun ReplyRow(reply: Comment, onLike: () -> Unit, onReply: () -> Unit) {
                     modifier = Modifier
                         .testTag("reply_reply")
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable(onClick = onReply)
+                        .then(
+                            if (enabled) Modifier.clickable(onClick = onReply)
+                            else Modifier.alpha(0.38f),
+                        )
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
                 Spacer(Modifier.width(2.dp))
@@ -847,7 +885,10 @@ private fun ReplyRow(reply: Comment, onLike: () -> Unit, onReply: () -> Unit) {
                                 alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
                             )
                         )
-                        .clickable(onClick = onLike)
+                        .then(
+                            if (enabled) Modifier.clickable(onClick = onLike)
+                            else Modifier.alpha(0.38f),
+                        )
                         .padding(horizontal = 7.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

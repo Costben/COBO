@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.HotItem
+import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
@@ -55,6 +56,7 @@ import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.VerifiedBadge
 import com.cobo.app.ui.components.fmtCount
@@ -512,6 +514,10 @@ private fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifi
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (user.membership != Membership.None) {
+                    Spacer(Modifier.width(4.dp))
+                    MemberBadge(user.membership, compact = true)
+                }
                 if (user.verified) {
                     Spacer(Modifier.width(4.dp))
                     VerifiedBadge()

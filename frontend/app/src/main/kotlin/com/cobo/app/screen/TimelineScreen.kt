@@ -71,6 +71,8 @@ enum class FeedFilter(val label: String, val emptyText: String) {
 
 class FeedStore(
     private val cid: String,
+    /** 只读的流：卡片照常展示，但不给点赞 / 评论 / 转发。 */
+    val readOnly: Boolean = false,
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
         App.repo.container(cid, sinceId = cursor, force = force)
     },
@@ -180,6 +182,7 @@ class FeedStore(
     }
 
     suspend fun like(index: Int) {
+        if (readOnly) return
         val status = items.getOrNull(index) ?: return
         runCatching { App.repo.like(status.id, status.liked) }
             .onSuccess {
@@ -341,16 +344,17 @@ private fun TimelinePage(
                 StatusCard(
                     status = status,
                     modifier = Modifier.expandOrigin(origin).testTag("feed_card_$index"),
-                    onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                    onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
                     onUser = { nav.push(Route.Profile(it.id)) },
                     onImage = { urls, i -> nav.push(Route.Images(urls, i)) },
                     onVideo = { nav.push(Route.Video(it.url, it.title)) },
                     onLike = { scope.launch { store.like(index) } },
-                    onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                    onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                    onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                    onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                    actionsEnabled = !store.readOnly,
                     onOpenQuoted = { quoted, quotedOrigin ->
                         quotedOrigin.attachToRow(listState, status.id, topBar)
-                        nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
+                        nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
                     },
                 )
             }

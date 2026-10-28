@@ -44,6 +44,7 @@ import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
+import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
@@ -59,6 +60,7 @@ import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
@@ -377,12 +379,19 @@ private fun ProfileHeader(user: User?, onFollow: (() -> Unit)?, tag: FollowTag? 
                         FollowTagBadge(tag)
                         Spacer(Modifier.height(2.dp))
                     }
-                    Text(
-                        user?.name ?: "加载中…",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            user?.name ?: "加载中…",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                        val membership = user?.membership ?: Membership.None
+                        if (membership != Membership.None) {
+                            Spacer(Modifier.width(6.dp))
+                            MemberBadge(membership)
+                        }
+                    }
                     if (user?.verified == true) {
                         Text("已认证", fontSize = 11.sp, color = scheme.primary)
                     }

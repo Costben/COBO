@@ -106,7 +106,7 @@ fun Modifier.expandOrigin(origin: ExpandOrigin): Modifier =
 sealed interface Route {
     data object Main : Route
     data class Login(val addAccount: Boolean = false, val fresh: Boolean = false) : Route
-    data class Detail(val id: String, val mid: String) : Route
+    data class Detail(val id: String, val mid: String, val readOnly: Boolean = false) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
     data object Search : Route

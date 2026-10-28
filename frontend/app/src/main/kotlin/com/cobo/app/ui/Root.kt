@@ -500,7 +500,7 @@ private fun RouteContent(route: Route, nav: NavState) {
     when (route) {
         Route.Main -> MainShell(nav)
         is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh)
-        is Route.Detail -> DetailScreen(nav, route.id, route.mid)
+        is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
         Route.Search -> SearchScreen(nav)

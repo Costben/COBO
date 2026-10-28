@@ -25,12 +25,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.cobo.app.data.Membership
 import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshTexts
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -75,6 +77,41 @@ fun VerifiedBadge(modifier: Modifier = Modifier, size: Dp = 14.dp) {
         Text("✓", fontSize = (size.value * 0.64f).sp, color = scheme.onPrimary)
     }
 }
+
+/** 微博会员的红标：VIP / SVIP 两种，和微博客户端的两种标识一一对应。 */
+@Composable
+fun MemberBadge(
+    membership: Membership,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    if (membership == Membership.None) return
+    val svip = membership == Membership.Svip
+    val shape = RoundedCornerShape(if (compact) 4.dp else 5.dp)
+    Box(
+        modifier = modifier
+            .height(if (compact) 15.dp else 16.dp)
+            .clip(shape)
+            .background(if (svip) MemberSvipRed else MemberVipRed)
+            .padding(horizontal = if (compact) 4.dp else 5.dp)
+            .testTag(if (svip) "vip_badge_svip" else "vip_badge_vip"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (svip) "SVIP" else "VIP",
+            fontSize = if (compact) 8.sp else 9.sp,
+            lineHeight = if (compact) 8.sp else 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+/** 微博会员的品牌红；超级会员用更深的一档，两者并排也能一眼分开。 */
+private val MemberVipRed = Color(0xFFE6162D)
+private val MemberSvipRed = Color(0xFFC4000B)
 
 @Composable
 fun LoadingState(modifier: Modifier = Modifier) {
@@ -147,18 +184,21 @@ fun ActionIcon(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     tint: Color = COUITheme.colorScheme.onSurfaceSecondary,
+    /** 只读流里按钮留着给人看计数，但不响应点击。 */
+    enabled: Boolean = true,
 ) {
+    val color = if (enabled) tint else tint.copy(alpha = 0.38f)
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(icon, text.ifBlank { null }, Modifier.size(17.dp), tint = tint)
+        Icon(icon, text.ifBlank { null }, Modifier.size(17.dp), tint = color)
         if (text.isNotBlank()) {
-            Text(text, fontSize = 12.sp, color = tint)
+            Text(text, fontSize = 12.sp, color = color)
         }
     }
 }
