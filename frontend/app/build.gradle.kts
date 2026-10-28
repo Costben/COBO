@@ -44,7 +44,7 @@ android {
 
 dependencies {
     val coui = "io.github.suqi8.coui.kmp"
-    val couiVersion = "1.2.0-d5374d89-SNAPSHOT"
+    val couiVersion = "1.2.0-8ccd2ea0-SNAPSHOT"
 
     implementation("$coui:coui-ui:$couiVersion")
     implementation("$coui:coui-icons:$couiVersion")
