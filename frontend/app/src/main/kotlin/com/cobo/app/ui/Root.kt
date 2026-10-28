@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -30,13 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -87,6 +85,8 @@ import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.squircle.SquircleShape
+import io.github.suqi8.coui.kmp.squircle.addSquircleRect
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.COUIPopupUtils.Companion.COUIPopupHost
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
@@ -334,6 +334,11 @@ private fun RouteLayer(
     val top = nav.stack.lastOrNull()
     val topProgress: () -> Float = { top?.progress?.value ?: 1f }
     val slide = top != null && !top.expand
+    // ColorOS draws the screen corners as an Lp superellipse (hwui "G2", n≈2.5), not a circular
+    // arc. A RoundedCornerShape parts from that curve by 0.0718 * radius along the diagonal —
+    // 11px at this device's 150px corner — so the four corners showed a crescent of window
+    // background. SquircleShape traces the same silhouette.
+    val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
 
     val layer = Modifier
         .fillMaxSize()
@@ -354,7 +359,7 @@ private fun RouteLayer(
                     belowTop -> -topProgress() * widthPx / RouteParallaxDivisor
                     else -> 0f
                 }
-                shape = RoundedCornerShape(screenCorner)
+                shape = cornerShape
                 clip = true
             }
         }
@@ -529,12 +534,15 @@ private class ExpandShape(
         density: Density,
     ): Outline {
         val height = heightPx.coerceIn(0f, size.height)
-        return Outline.Rounded(
-            RoundRect(
-                rect = Rect(0f, 0f, size.width, height),
-                cornerRadius = CornerRadius(radiusPx),
-            )
+        // Same smooth-corner silhouette as the resting frame: a circular corner here would
+        // pull away from the screen's squircle for the last stretch of the growth.
+        val path = Path()
+        path.addSquircleRect(
+            width = size.width,
+            height = height,
+            cornerRadius = radiusPx,
         )
+        return Outline.Generic(path)
     }
 }
 
