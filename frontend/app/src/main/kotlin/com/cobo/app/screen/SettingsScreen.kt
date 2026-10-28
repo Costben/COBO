@@ -74,6 +74,7 @@ fun SettingsScreen(nav: NavState) {
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
+    val guest = App.repo.guest
     var pickLocalFollow by remember { mutableStateOf(false) }
 
     // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
@@ -162,32 +163,39 @@ fun SettingsScreen(nav: NavState) {
                         summary = "${App.store.history().size} 条记录",
                         onClick = { nav.push(Route.History) },
                     )
-                    HorizontalDivider()
-                    ArrowPreference(
-                        title = "收藏",
-                        modifier = Modifier.testTag("settings_favorites"),
-                        summary = "查看收藏的微博",
-                        onClick = { nav.push(Route.Container("230267", "收藏")) },
-                    )
+                    // 收藏和附近挂在账号上，访客身份拿不到，纯本地模式不给入口。
+                    if (!guest) {
+                        HorizontalDivider()
+                        ArrowPreference(
+                            title = "收藏",
+                            modifier = Modifier.testTag("settings_favorites"),
+                            summary = "查看收藏的微博",
+                            onClick = { nav.push(Route.Container("230267", "收藏")) },
+                        )
+                    }
                     HorizontalDivider()
                     ArrowPreference(
                         title = "话题 / 超话",
                         modifier = Modifier.testTag("settings_topic"),
                         summary = "按话题浏览",
+                        cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.None,
                         onClick = { nav.push(Route.Topic()) },
                     )
-                    HorizontalDivider()
-                    ArrowPreference(
-                        title = "附近",
-                        modifier = Modifier.testTag("settings_nearby"),
-                        summary = "基于当前位置",
-                        cardListPosition = CardListPosition.Tail,
-                        onClick = { nav.push(Route.Nearby) },
-                    )
+                    if (!guest) {
+                        HorizontalDivider()
+                        ArrowPreference(
+                            title = "附近",
+                            modifier = Modifier.testTag("settings_nearby"),
+                            summary = "基于当前位置",
+                            cardListPosition = CardListPosition.Tail,
+                            onClick = { nav.push(Route.Nearby) },
+                        )
+                    }
                 }
             }
 
-            item {
+            // 纯本地模式一律用访客身份取数，没有账号可选。
+            if (!guest) item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     insideMargin = PaddingValues(0.dp),
@@ -269,13 +277,26 @@ fun SettingsScreen(nav: NavState) {
                         onClick = { about = true },
                     )
                     HorizontalDivider()
-                    ArrowPreference(
-                        title = "退出登录",
-                        modifier = Modifier.testTag("settings_logout"),
-                        summary = "清除本地会话",
-                        cardListPosition = CardListPosition.Tail,
-                        onClick = { logout = true },
-                    )
+                    if (guest) {
+                        ArrowPreference(
+                            title = "退出纯本地模式",
+                            modifier = Modifier.testTag("settings_leave_local"),
+                            summary = "回到登录页，本地关注名单保留",
+                            cardListPosition = CardListPosition.Tail,
+                            onClick = {
+                                App.settings.applyLocalMode(false)
+                                nav.reset(Route.Login())
+                            },
+                        )
+                    } else {
+                        ArrowPreference(
+                            title = "退出登录",
+                            modifier = Modifier.testTag("settings_logout"),
+                            summary = "清除本地会话",
+                            cardListPosition = CardListPosition.Tail,
+                            onClick = { logout = true },
+                        )
+                    }
                 }
             }
 

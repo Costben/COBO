@@ -65,6 +65,8 @@ import com.cobo.app.R
 import com.cobo.app.data.FeedPage
 import com.cobo.app.screen.FeedFilter
 import com.cobo.app.screen.FeedStore
+import com.cobo.app.screen.LocalHome
+import com.cobo.app.screen.LocalMessagesPlaceholder
 import com.cobo.app.screen.MessagesScreen
 import com.cobo.app.screen.ProfileContent
 import com.cobo.app.screen.TimelineScreen
@@ -111,10 +113,15 @@ fun MainShell(nav: NavState) {
     // by whatever has to be placed clear of it.
     val topBarBounds = remember { TopBarBounds() }
 
+    // 纯本地模式：没有账号可读关注流，首页只剩「本地关注」和「推荐」两段，筛选菜单也收起来。
+    // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
+    val guest = remember { App.repo.guest }
+    val feedKinds = if (guest) listOf(FollowPage, RecommendPage) else listOf(CirclePage, FollowPage, RecommendPage)
+
     var filterIndex by remember {
         mutableIntStateOf(App.settings.feedFilter.coerceIn(0, FeedFilter.entries.lastIndex))
     }
-    val filter = FeedFilter.entries[filterIndex]
+    val filter = if (guest) FeedFilter.Local else FeedFilter.entries[filterIndex]
     val friendsStore = remember {
         FeedStore("friends") { cursor, force -> App.repo.friends(cursor, force) }
     }
@@ -139,16 +146,32 @@ fun MainShell(nav: NavState) {
             },
         )
     }
-    val recommendStore = remember { FeedStore("102803") }
+    val recommendStore = remember { FeedStore("102803", readOnly = guest) }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
+    val feedStores = feedKinds.map {
+        when (it) {
+            CirclePage -> circleStore
+            FollowPage -> followStore
+            else -> recommendStore
+        }
+    }
+    val feedEmptyTexts = feedKinds.map {
+        when (it) {
+            CirclePage -> "好友圈还没有内容"
+            FollowPage -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else filter.emptyText
+            else -> "这里还没有微博"
+        }
+    }
 
+    // 记住的是哪一段（好友圈 / 关注 / 推荐），不是第几页：纯本地模式少一段，页码对不上。
     val feedPager = rememberPagerState(
-        initialPage = App.settings.feedTab.coerceIn(CirclePage, RecommendPage),
-        pageCount = { RecommendPage + 1 },
+        initialPage = feedKinds.indexOf(App.settings.feedTab).takeIf { it >= 0 }
+            ?: feedKinds.indexOf(FollowPage),
+        pageCount = { feedKinds.size },
     )
     LaunchedEffect(feedPager.currentPage) {
-        App.settings.applyFeedTab(feedPager.currentPage)
+        App.settings.applyFeedTab(feedKinds[feedPager.currentPage])
     }
 
     // The top bar floats over the lists; the first row starts below it and later rows scroll under.
@@ -183,15 +206,23 @@ fun MainShell(nav: NavState) {
                             0 -> TimelineScreen(
                                 nav = nav,
                                 pagerState = feedPager,
-                                circleStore = circleStore,
+                                stores = feedStores,
+                                emptyTexts = feedEmptyTexts,
                                 followStore = followStore,
                                 recommendStore = recommendStore,
                                 topInset = feedTopBarHeight,
-                                followEmptyText = filter.emptyText,
                                 onScrollOffset = { feedCollapse = it },
                             )
-                            1 -> MessagesScreen(nav, topBarHeight)
-                            else -> ProfileContent(
+                            1 -> if (guest) {
+                                LocalMessagesPlaceholder(nav, topBarHeight)
+                            } else {
+                                MessagesScreen(nav, topBarHeight)
+                            }
+                            else -> if (guest) LocalHome(
+                                nav = nav,
+                                topInset = topBarHeight,
+                                extraBottom = FloatingBarContentGap,
+                            ) else ProfileContent(
                                 nav = nav,
                                 uid = null,
                                 modifier = Modifier.fillMaxSize(),
@@ -223,6 +254,8 @@ fun MainShell(nav: NavState) {
                     tab = page,
                     nav = nav,
                     feedPager = feedPager,
+                    feedKinds = feedKinds,
+                    guest = guest,
                     filter = filter,
                     collapsePx = feedCollapse,
                     onFilterSelected = { selected ->
@@ -234,7 +267,7 @@ fun MainShell(nav: NavState) {
                         ) {
                             scope.launch { filterStores[selected]?.refresh() }
                         }
-                        scope.launch { feedPager.animateScrollToPage(FollowPage) }
+                        scope.launch { feedPager.animateScrollToPage(feedKinds.indexOf(FollowPage)) }
                     },
                     modifier = Modifier.reportTopBarBottom(topBarBounds),
                 )
@@ -250,7 +283,9 @@ fun MainShell(nav: NavState) {
                     if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
                 },
                 onFeedTop = { App.requestFeedTop() },
-                onPublish = { nav.push(Route.Publish()) },
+                onPublish = {
+                    if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
+                },
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -285,6 +320,8 @@ private fun MainTopBar(
     tab: Int,
     nav: NavState,
     feedPager: PagerState,
+    feedKinds: List<Int>,
+    guest: Boolean,
     filter: FeedFilter,
     collapsePx: Float,
     onFilterSelected: (FeedFilter) -> Unit,
@@ -293,6 +330,8 @@ private fun MainTopBar(
     when (tab) {
         0 -> FeedHeader(
             feedPager = feedPager,
+            feedKinds = feedKinds,
+            filterMenu = !guest,
             filter = filter,
             collapsePx = collapsePx,
             onFilterSelected = onFilterSelected,
@@ -304,11 +343,13 @@ private fun MainTopBar(
             title = "消息",
             modifier = modifier,
             actions = {
-                SearchBarActionButton(
-                    text = "通知",
-                    onClick = { nav.push(Route.Web("https://m.weibo.cn/message/", "通知")) },
-                    modifier = Modifier.testTag("top_notice"),
-                )
+                if (!guest) {
+                    SearchBarActionButton(
+                        text = "通知",
+                        onClick = { nav.push(Route.Web("https://m.weibo.cn/message/", "通知")) },
+                        modifier = Modifier.testTag("top_notice"),
+                    )
+                }
             },
         )
 
@@ -391,6 +432,10 @@ internal val FeedTitleRowHeight = 44.dp
 @Composable
 private fun FeedHeader(
     feedPager: PagerState,
+    /** 每一页对应哪一段：[CirclePage] / [FollowPage] / [RecommendPage]。 */
+    feedKinds: List<Int>,
+    /** 「关注」那段带不带筛选下拉；纯本地模式只有本地关注一种，不给。 */
+    filterMenu: Boolean,
     filter: FeedFilter,
     collapsePx: Float,
     onFilterSelected: (FeedFilter) -> Unit,
@@ -464,6 +509,8 @@ private fun FeedHeader(
             ) {
                 FeedTabs(
                     pager = feedPager,
+                    kinds = feedKinds,
+                    filterMenu = filterMenu,
                     filter = filter,
                     filterMenuExpanded = filterMenuExpanded,
                     onFilterMenuDismiss = { filterMenuExpanded = false },
@@ -488,6 +535,8 @@ private val FeedTabPressSpring = spring<Float>(dampingRatio = 1f, stiffness = 43
 @Composable
 private fun FeedTabs(
     pager: PagerState,
+    kinds: List<Int>,
+    filterMenu: Boolean,
     filter: FeedFilter,
     filterMenuExpanded: Boolean,
     onFilterMenuDismiss: () -> Unit,
@@ -502,10 +551,10 @@ private fun FeedTabs(
     val dark = scheme.background.luminance() < 0.5f
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
-    val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, 2f)
-    // 中间那一格显示当前选中的分类（全部 / 原创微博 / 特别关注 …），左右两格固定。
-    val labels = listOf(FeedTabLabels[CirclePage], filter.label, FeedTabLabels[RecommendPage])
-    val interactions = remember { List(FeedTabLabels.size) { MutableInteractionSource() } }
+    val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, kinds.lastIndex.toFloat())
+    // 「关注」那一格显示当前选中的分类（全部 / 原创微博 / 特别关注 …），其余格固定。
+    val labels = kinds.map { if (it == FollowPage) filter.label else FeedTabLabels[it] }
+    val interactions = remember(kinds.size) { List(kinds.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
     val indicatorScale by animateFloatAsState(
         targetValue = if (pressed.getOrNull(pager.currentPage)?.value == true) 0.96f else 1f,
@@ -516,7 +565,7 @@ private fun FeedTabs(
     // 用 sp 折算，系统字体放大时格子跟着变宽，不会被截断。
     val density = LocalDensity.current
     val segmentWidth = with(density) { (4 * 13).sp.toDp() } + 2.dp + 10.dp + 22.dp
-    val containerWidth = segmentWidth * FeedTabLabels.size + 8.dp
+    val containerWidth = segmentWidth * kinds.size + 8.dp
     BoxWithConstraints(
         modifier
             // Opaque 40dp capsule, the same height as the search action in the header row.
@@ -545,20 +594,22 @@ private fun FeedTabs(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             labels.forEachIndexed { index, label ->
+                val menu = filterMenu && kinds[index] == FollowPage
                 FeedTabSegment(
                     label = label,
                     index = index,
+                    tag = FeedTabTags[kinds[index]],
                     page = page,
                     interactionSource = interactions[index],
                     pressed = pressed[index].value,
                     modifier = Modifier.weight(1f),
-                    showArrow = index == FollowPage,
+                    showArrow = menu,
                     onClick = {
                         onSelect(index)
-                        if (index == FollowPage) onFilterClick()
+                        if (menu) onFilterClick()
                     },
                 ) {
-                    if (index == FollowPage) {
+                    if (menu) {
                         WindowListPopup(
                             show = filterMenuExpanded,
                             popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
@@ -593,6 +644,7 @@ private fun FeedTabs(
 private fun FeedTabSegment(
     label: String,
     index: Int,
+    tag: String,
     page: Float,
     interactionSource: MutableInteractionSource,
     pressed: Boolean,
@@ -620,7 +672,7 @@ private fun FeedTabSegment(
                 indication = null,
                 onClick = onClick,
             )
-            .testTag(FeedTabTags[index]),
+            .testTag(tag),
         contentAlignment = Alignment.Center,
     ) {
         Row(

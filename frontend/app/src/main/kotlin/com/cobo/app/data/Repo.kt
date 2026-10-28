@@ -34,6 +34,12 @@ private const val SPECIAL_DIRECT_USERS = 5
 /** 一轮拼流最多花多久；到点就用已有结果返回，避免下拉头长时间挂着。 */
 private const val SPECIAL_REFRESH_BUDGET_MS = 15_000L
 
+/** 访客身份被拒后多久内不再重领：真要登录的接口也回 -100，不能每次都去领一个新的。 */
+private const val VISITOR_RETRY_MS = 60_000L
+
+private const val GUEST_BLOCKED = "纯本地模式看不了这里，登录后可用"
+private const val LOGIN_REQUIRED = "纯本地模式不能这样操作，登录后可用"
+
 /** 「本地关注」每轮并发拉几个人的主页时间线：并发再高容易被微博限流。 */
 private const val TAG_FEED_CONCURRENCY = 4
 
@@ -98,12 +104,66 @@ class Repo(private val context: Context, private val store: Store) {
     @Volatile
     private var cachedConfigAt: Long = 0L
 
-    fun cookie(): String? = session?.cookie
+    /** 访客 cookie：没登录时所有只读请求都带它，见 [get]。 */
+    @Volatile
+    private var visitorCookie: String? = store.visitorCookie()
+
+    @Volatile
+    private var visitorAt: Long = 0L
+
+    private val visitorLock = Mutex()
+
+    /** 读数据用的 cookie：登录了就是账号的，纯本地模式下是访客的（可能还没领到）。 */
+    fun cookie(): String? = session?.cookie ?: visitorCookie
 
     fun hasSession(): Boolean = !session?.cookie.isNullOrBlank()
 
+    /** 纯本地模式：没有登录账号，只读浏览，关注全靠本机标记。 */
+    val guest: Boolean get() = !hasSession()
+
+    /** 写操作只认登录账号的 cookie，访客身份发出去只会被拒。 */
+    private fun loginCookie(): String = session?.cookie ?: throw ApiException(LOGIN_REQUIRED)
+
+    /**
+     * 只读请求的统一入口。登录态直接走 [Api.get]；纯本地模式下换上访客 cookie，
+     * 被拒（HTTP 432 或 `ok:-100`）就重领一次访客身份再试，还不行说明这个接口确实要登录。
+     */
+    private suspend fun get(url: String, cookie: String?, force: Boolean = false): JSONObject {
+        if (session != null || (cookie != null && cookie != visitorCookie)) return Api.get(url, cookie, force)
+        val first = cookie ?: visitorFor(stale = null)
+        val root = try {
+            Api.get(url, first, force)
+        } catch (e: ApiHttpException) {
+            if (e.code != 432) throw e
+            null
+        }
+        if (root != null && root.optInt("ok", 1) != -100) return root
+        val fresh = visitorFor(stale = first)
+        if (fresh == first) throw ApiException(GUEST_BLOCKED)
+        val retry = Api.get(url, fresh, force = true)
+        if (retry.optInt("ok", 1) == -100) throw ApiException(GUEST_BLOCKED)
+        return retry
+    }
+
+    /** 拿一个可用的访客 cookie；[stale] 是刚被拒的那个，只有它还是当前值时才重领，且一分钟内只领一次。 */
+    private suspend fun visitorFor(stale: String?): String = visitorLock.withLock {
+        val current = visitorCookie
+        if (current != null && current != stale) return@withLock current
+        if (current != null && System.currentTimeMillis() - visitorAt < VISITOR_RETRY_MS) return@withLock current
+        val fresh = Api.genVisitor()
+        store.saveVisitorCookie(fresh)
+        visitorCookie = fresh
+        visitorAt = System.currentTimeMillis()
+        fresh
+    }
+
+    fun enterLocalMode() {
+        App.settings.applyLocalMode(true)
+    }
+
     fun updateSession(cookie: String, uid: String) {
         App.cache.clear()
+        App.settings.applyLocalMode(false)
         store.saveSession(cookie, uid)
         session = store.session()
         cachedConfig = null
@@ -137,7 +197,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun config(force: Boolean = false): Config {
-        val cookie = cookie() ?: return Config("", "", false)
+        val cookie = session?.cookie ?: return Config("", "", false)
         return configFor(cookie, force)
     }
 
@@ -148,6 +208,7 @@ class Repo(private val context: Context, private val store: Store) {
         if (!cfg.loggedIn || cfg.uid.isBlank()) return null
         val user = runCatching { profileFor(cookie, cfg.uid, force = true) }.getOrNull()
         App.cache.clear()
+        App.settings.applyLocalMode(false)
         store.saveSession(cookie, cfg.uid)
         session = store.session()
         cachedConfig = cfg
@@ -173,7 +234,7 @@ class Repo(private val context: Context, private val store: Store) {
         params["containerid"] = cid
         if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
         params.putAll(extra)
-        val root = Api.get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie, force)
+        val root = get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie, force)
         val page = parseCards(root)
         if (page.items.isEmpty() && root.optInt("ok", 1) != 1) {
             val message = root.str("msg", "加载失败")
@@ -311,7 +372,7 @@ class Repo(private val context: Context, private val store: Store) {
      * 没选、或那个账号已经被删掉，就回到当前登录账号。
      */
     private fun localFollowCookie(): String? =
-        pickLocalFollowCookie(App.settings.localFollowUid, store.accounts(), cookie())
+        if (guest) cookie() else pickLocalFollowCookie(App.settings.localFollowUid, store.accounts(), cookie())
 
     /**
      * 把一组人的微博拼成一条流。
@@ -382,7 +443,7 @@ class Repo(private val context: Context, private val store: Store) {
                     "https://m.weibo.cn/api/container/getIndex",
                     linkedMapOf<String, String?>("containerid" to "231093_-_selfgroupfollow_-_$gid", "page" to "1"),
                 )
-                collectUserIds(Api.get(url, cookie(), force), ids)
+                collectUserIds(get(url, cookie(), force), ids)
             }
             if (ids.isEmpty()) {
                 runCatching {
@@ -443,7 +504,7 @@ class Repo(private val context: Context, private val store: Store) {
     ): FeedPage {
         val params = LinkedHashMap<String, String?>()
         if (!maxId.isNullOrBlank()) params["max_id"] = maxId
-        val root = Api.get(Api.url(base, params), cookie, force)
+        val root = get(Api.url(base, params), cookie, force)
         val data = root.optJSONObject("data")
         if (data == null) {
             if (root.optInt("ok", 1) == 1) return FeedPage(emptyList(), null)
@@ -465,7 +526,7 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun hot(force: Boolean = false): List<HotItem> {
         val cookie = cookie()
         val cid = "106003type=25&t=3&disable_hot=1&filter_type=realtimehot"
-        val root = Api.get(
+        val root = get(
             Api.url(
                 "https://m.weibo.cn/api/container/getIndex",
                 mapOf("containerid" to cid),
@@ -525,7 +586,7 @@ class Repo(private val context: Context, private val store: Store) {
         params["containerid"] = cid
         params["page_type"] = "searchall"
         params["page"] = page.coerceAtLeast(1).toString()
-        val root = Api.get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
+        val root = get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
         val items = parse(root)
         if (items.isEmpty() && root.optInt("ok", 1) != 1) {
             val message = root.str("msg", "搜索失败")
@@ -536,7 +597,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun detail(id: String, force: Boolean = false): Status? {
-        val root = Api.get(
+        val root = get(
             Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
             cookie(),
             force,
@@ -576,7 +637,7 @@ class Repo(private val context: Context, private val store: Store) {
             // The chronological list is the plain status page's comment API: a page number per
             // request and `data.max` as the last page, where the hot list hands back a cursor.
             params["page"] = page.coerceAtLeast(1).toString()
-            val root = Api.get(
+            val root = get(
                 Api.url("https://m.weibo.cn/api/comments/show", params),
                 cookie(),
                 force,
@@ -602,7 +663,7 @@ class Repo(private val context: Context, private val store: Store) {
             params["max_id"] = maxId
             params["max_id_type"] = maxIdType.toString()
         }
-        val root = Api.get(
+        val root = get(
             Api.url("https://m.weibo.cn/comments/hotflow", params),
             cookie(),
             force,
@@ -634,7 +695,7 @@ class Repo(private val context: Context, private val store: Store) {
         params["cid"] = cid
         params["max_id"] = maxId ?: "0"
         params["max_id_type"] = maxIdType.toString()
-        val root = Api.get(
+        val root = get(
             Api.url("https://m.weibo.cn/comments/hotFlowChild", params),
             cookie(),
             force,
@@ -664,7 +725,7 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun uidForName(name: String): String? {
         val q = java.net.URLEncoder.encode(name, "UTF-8")
-        val root = Api.get(
+        val root = get(
             Api.url(
                 "https://m.weibo.cn/api/container/getIndex",
                 mapOf("containerid" to "100103type=3&q=$q"),
@@ -687,7 +748,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     private suspend fun postJson(url: String, form: Map<String, String>): JSONObject {
-        val cookie = cookie() ?: throw ApiException("未登录")
+        val cookie = loginCookie()
         var st = st()
         var root = try {
             Api.post(url, form + ("st" to st), cookie, st)
@@ -750,7 +811,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun follow(uid: String, follow: Boolean): Boolean {
-        val cookie = cookie() ?: throw ApiException("未登录")
+        val cookie = loginCookie()
         val url = if (follow) {
             "https://m.weibo.cn/api/friendships/create"
         } else {
@@ -828,7 +889,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun uploadImage(uri: Uri): String {
-        val cookie = cookie() ?: throw ApiException("未登录")
+        val cookie = loginCookie()
         val st = st()
         val resolver = context.contentResolver
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
@@ -854,7 +915,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun messages(page: Int, force: Boolean = false): List<MessageItem> {
-        val root = Api.get(
+        val root = get(
             Api.url("https://m.weibo.cn/message/msglist", mapOf("page" to page.toString())),
             cookie(),
             force,
@@ -901,7 +962,7 @@ class Repo(private val context: Context, private val store: Store) {
                 "is_continuous" to if (sinceId != null) "1" else null,
             ),
         )
-        val root = Api.get(url, cookie(), force)
+        val root = get(url, cookie(), force)
         if (root.optInt("ok", 1) == 0) {
             // errno 要带出去：20003 是对方注销，界面据此不再给「重试」。
             throw ApiException(root.str("msg", "聊天记录加载失败"), root.str("errno"))
@@ -958,7 +1019,7 @@ class Repo(private val context: Context, private val store: Store) {
 
     /** 上传私信图片，返回 `fids`。 */
     suspend fun uploadChatImage(uid: String, uri: Uri): String {
-        val cookie = cookie() ?: throw ApiException("未登录")
+        val cookie = loginCookie()
         val resolver = context.contentResolver
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw ApiException("无法读取图片")
@@ -993,7 +1054,7 @@ class Repo(private val context: Context, private val store: Store) {
         extra = mapOf("tuid" to uid),
     )
 
-    suspend fun profileFor(cookie: String, uid: String, force: Boolean = false): User? {
+    suspend fun profileFor(cookie: String?, uid: String, force: Boolean = false): User? {
         val url = Api.url(
             "https://m.weibo.cn/api/container/getIndex",
             mapOf("type" to "uid", "value" to uid),
@@ -1001,25 +1062,22 @@ class Repo(private val context: Context, private val store: Store) {
         fun pick(root: JSONObject): User? =
             User.from(root.optJSONObject("data")?.optJSONObject("userInfo"))
 
-        pick(Api.get(url, cookie, force))?.let { return it }
+        pick(get(url, cookie, force))?.let { return it }
 
         // 缓存里可能躺着早先的失败响应（`ok:0`、登录墙，或者没有 userInfo 的旧结构），
         // 那样主页会一直显示 0 关注 0 粉丝。命中空壳就强制回源一次，再试 containerid 形式。
         if (!force) {
-            pick(Api.get(url, cookie, true))?.let { return it }
+            pick(get(url, cookie, true))?.let { return it }
             val alt = Api.url(
                 "https://m.weibo.cn/api/container/getIndex",
                 mapOf("containerid" to "100505$uid"),
             )
-            return pick(Api.get(alt, cookie, true))
+            return pick(get(alt, cookie, true))
         }
         return null
     }
 
-    suspend fun profile(uid: String, force: Boolean = false): User? {
-        val cookie = cookie() ?: return null
-        return profileFor(cookie, uid, force)
-    }
+    suspend fun profile(uid: String, force: Boolean = false): User? = profileFor(cookie(), uid, force)
 
     suspend fun ownUid(): String =
         session?.uid?.takeIf { it.isNotBlank() } ?: config().uid

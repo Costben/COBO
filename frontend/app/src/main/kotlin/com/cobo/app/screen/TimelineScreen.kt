@@ -199,16 +199,14 @@ class FeedStore(
 fun TimelineScreen(
     nav: NavState,
     pagerState: PagerState,
-    circleStore: FeedStore,
+    /** One store per pager page, in the order of the header segments. */
+    stores: List<FeedStore>,
+    emptyTexts: List<String>,
     followStore: FeedStore,
     recommendStore: FeedStore,
     topInset: Dp,
-    followEmptyText: String,
     onScrollOffset: (Float) -> Unit,
 ) {
-    // Page order matches the header segments: 0 = 好友圈, 1 = 关注, 2 = 推荐.
-    val stores = listOf(circleStore, followStore, recommendStore)
-    val emptyTexts = listOf("好友圈还没有内容", followEmptyText, "这里还没有微博")
     // The list states live here so the bottom accessory can send every page back to the top.
     val listStates = remember { List(stores.size) { LazyListState() } }
     val refreshScope = rememberCoroutineScope()

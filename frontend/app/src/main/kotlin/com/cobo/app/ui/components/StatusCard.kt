@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.cobo.app.App
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
@@ -63,8 +64,8 @@ fun StatusCard(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     showActions: Boolean = true,
-    /** 只读流（本地关注）：计数照常显示，但点赞 / 评论 / 转发都不响应。 */
-    actionsEnabled: Boolean = true,
+    /** 只读流（本地关注、纯本地模式）：计数照常显示，但点赞 / 评论 / 转发都不响应。 */
+    actionsEnabled: Boolean = !App.repo.guest,
     onRepost: () -> Unit = {},
     onComment: () -> Unit = {},
     /** Opens the quoted post when it is tapped; the frame grows from and returns into that block. */

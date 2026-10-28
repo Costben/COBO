@@ -63,6 +63,10 @@ class Settings(context: Context) {
     var localFollowUid by mutableStateOf(sp.getString("local_follow_uid", "").orEmpty())
         private set
 
+    /** 用户在登录页选了「不登录，纯本地浏览」；有登录账号时以账号为准，这条不起作用。 */
+    var localMode by mutableStateOf(sp.getBoolean("local_mode", false))
+        private set
+
     /** 启动时自动查更新，默认开。 */
     var autoCheckUpdate by mutableStateOf(sp.getBoolean("auto_check_update", true))
         private set
@@ -130,6 +134,11 @@ class Settings(context: Context) {
     fun applyLocalFollowUid(uid: String) {
         localFollowUid = uid
         sp.edit().putString("local_follow_uid", uid).apply()
+    }
+
+    fun applyLocalMode(value: Boolean) {
+        localMode = value
+        sp.edit().putBoolean("local_mode", value).apply()
     }
 
     fun applyUpdateCheckedAt(value: Long) {

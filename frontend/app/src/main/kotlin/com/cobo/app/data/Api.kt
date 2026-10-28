@@ -133,6 +133,36 @@ object Api {
         execute(Request.Builder().url(url).weiboHeaders(cookie, st).post(body).build())
     }
 
+    /**
+     * 向微博领一个访客身份，返回可直接塞进 Cookie 头的 `SUB=…; SUBP=…`。
+     * m.weibo.cn 的只读接口不带 cookie 一律 HTTP 432，带上它就能像未登录的网页版一样读。
+     */
+    suspend fun genVisitor(): String = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("https://visitor.passport.weibo.cn/visitor/genvisitor2")
+            .header("User-Agent", WEB_UA)
+            .header("Referer", "https://m.weibo.cn/")
+            .post(
+                FormBody.Builder()
+                    .add("cb", "visitor_gray_callback")
+                    .add("tid", "")
+                    .add("from", "weibo")
+                    .build()
+            )
+            .build()
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw ApiHttpException(response.code, text)
+            // 回的是 JSONP：visitor_gray_callback({...})
+            val json = text.substringAfter('(', "").substringBeforeLast(')', "")
+            val data = runCatching { JSONObject(json).optJSONObject("data") }.getOrNull()
+            val sub = data?.str("sub").orEmpty()
+            val subp = data?.str("subp").orEmpty()
+            if (sub.isBlank()) throw ApiException("领取访客身份失败")
+            if (subp.isBlank()) "SUB=$sub" else "SUB=$sub; SUBP=$subp"
+        }
+    }
+
     fun jsonRequestUrl(base: String, params: Map<String, String?> = emptyMap()) = url(base, params)
 
     @Suppress("unused")

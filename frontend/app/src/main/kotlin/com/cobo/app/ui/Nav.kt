@@ -148,7 +148,7 @@ class NavEntry(
 @Stable
 class NavState {
     val stack = mutableStateListOf<NavEntry>(
-        NavEntry(if (App.repo.hasSession()) Route.Main else Route.Login())
+        NavEntry(if (App.repo.hasSession() || App.settings.localMode) Route.Main else Route.Login())
     )
 
     private var host: CoroutineScope? = null

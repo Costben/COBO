@@ -49,6 +49,17 @@ class Store(private val context: Context) {
 
     fun clearSession() = file("session.json").delete()
 
+    /** 纯本地模式用的访客 cookie（SUB / SUBP），不对应任何账号，单独存一份免得每次启动重领。 */
+    fun visitorCookie(): String? {
+        val f = file("visitor.json")
+        if (!f.exists()) return null
+        return runCatching { JSONObject(f.readText()).str("cookie") }.getOrNull()?.ifBlank { null }
+    }
+
+    fun saveVisitorCookie(cookie: String) {
+        write("visitor.json", JSONObject().put("cookie", cookie).put("savedAt", System.currentTimeMillis()))
+    }
+
     fun accounts(): List<Account> {
         val arr = readArray("accounts.json")
         val out = ArrayList<Account>()
