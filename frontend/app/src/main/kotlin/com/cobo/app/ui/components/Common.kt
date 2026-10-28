@@ -177,8 +177,6 @@ fun fmtCount(value: Int): String {
     return if (wan >= 100) "${wan.toInt()}万" else String.format("%.1f万", wan)
 }
 
-val RefreshTexts = listOf("下拉刷新", "松开刷新", "刷新中…", "刷新完成")
-
 val FullPageRefreshTexts = FullPagePullToRefreshTexts(
     pulling = "下拉刷新",
     thresholdReached = "松开刷新",

@@ -60,7 +60,8 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
-import com.cobo.app.ui.components.RefreshTexts
+import com.cobo.app.ui.components.FullPageRefreshHoldMillis
+import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.Button
@@ -69,7 +70,8 @@ import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
-import io.github.suqi8.coui.kmp.basic.PullToRefresh
+import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
+import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
@@ -219,7 +221,7 @@ fun ProfileContent(
             }
     }
 
-    PullToRefresh(
+    FullPagePullToRefresh(
         isRefreshing = refreshing,
         onRefresh = {
             scope.launch {
@@ -229,7 +231,9 @@ fun ProfileContent(
         },
         modifier = modifier,
         contentPadding = PaddingValues(top = topInset),
-        refreshTexts = RefreshTexts,
+        colors = fullPagePullToRefreshColors(backgroundColor = pageContainerColor()),
+        refreshTexts = FullPageRefreshTexts,
+        completeHoldDurationMillis = FullPageRefreshHoldMillis,
     ) {
         LazyColumn(
             state = listState,
