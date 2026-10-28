@@ -1,6 +1,7 @@
 package com.cobo.app.ui
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -51,12 +52,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -242,36 +245,28 @@ fun MainShell(nav: NavState) {
             LocalBackdrop provides backdrop,
             LocalEdgeToEdge provides true,
         ) {
-            // The bar fades with its page; a hard swap would leave the old title sitting over the
-            // incoming page for the length of the cross-fade.
-            Crossfade(
-                targetState = tab,
-                animationSpec = tween(MainTabFadeMillis),
-                modifier = Modifier.align(Alignment.TopCenter),
-                label = "mainTabBar",
-            ) { page ->
-                MainTopBar(
-                    tab = page,
-                    nav = nav,
-                    feedPager = feedPager,
-                    feedKinds = feedKinds,
-                    guest = guest,
-                    filter = filter,
-                    collapsePx = feedCollapse,
-                    onFilterSelected = { selected ->
-                        filterIndex = selected.ordinal
-                        App.settings.applyFeedFilter(selected.ordinal)
-                        // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
-                        if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
-                            selected == FeedFilter.Local
-                        ) {
-                            scope.launch { filterStores[selected]?.refresh() }
-                        }
-                        scope.launch { feedPager.animateScrollToPage(feedKinds.indexOf(FollowPage)) }
-                    },
-                    modifier = Modifier.reportTopBarBottom(topBarBounds),
-                )
-            }
+            MainTopBar(
+                tab = tab,
+                nav = nav,
+                feedPager = feedPager,
+                feedKinds = feedKinds,
+                guest = guest,
+                filter = filter,
+                collapsePx = feedCollapse,
+                bounds = topBarBounds,
+                onFilterSelected = { selected ->
+                    filterIndex = selected.ordinal
+                    App.settings.applyFeedFilter(selected.ordinal)
+                    // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
+                    if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
+                        selected == FeedFilter.Local
+                    ) {
+                        scope.launch { filterStores[selected]?.refresh() }
+                    }
+                    scope.launch { feedPager.animateScrollToPage(feedKinds.indexOf(FollowPage)) }
+                },
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+            )
         }
 
         CompositionLocalProvider(LocalBackdrop provides backdrop) {
@@ -312,9 +307,18 @@ private suspend fun originalFeed(cursor: String?, force: Boolean): FeedPage {
 
 private val FloatingBarContentGap = 50.dp
 
-/** Cross-fade length for a bottom-bar tab switch. The page and its bar fade together. */
+/** Cross-fade length for a bottom-bar tab switch. */
 private const val MainTabFadeMillis = 220
 
+/**
+ * The floating bar over the three tabs.
+ *
+ * The material is one platform backdrop blur for the whole bar, never two. Two of them fading
+ * against each other made the incoming one blur the outgoing one's veil as well: that band under
+ * the title darkened to more than either tab shows at rest, then snapped back the frame the old
+ * layer was dropped — the flash the tab switch used to have. So only the content cross-fades here,
+ * and the material's height follows the tab instead (the feed wears an extra segment row).
+ */
 @Composable
 private fun MainTopBar(
     tab: Int,
@@ -324,8 +328,81 @@ private fun MainTopBar(
     guest: Boolean,
     filter: FeedFilter,
     collapsePx: Float,
+    bounds: TopBarBounds,
     onFilterSelected: (FeedFilter) -> Unit,
     modifier: Modifier = Modifier,
+) {
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val pageBarHeight = statusBarTop + FeedTitleRowHeight
+    val feedBarHeight = pageBarHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
+    val collapsed = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
+    // 只有微博页会把标题行折进状态栏。切走时把这个折叠量收回 0，材质才不会停在上一页的位置。
+    // 折叠时上移的只有材质：内容的折叠轨迹一直是按「栏顶 = 0」写的（标题往上折、分段行往下贴），
+    // 原来材质和内容是一层套一层，两个等量反向的偏移互相抵消；这里内容已经移出材质节点，
+    // 就不要再给它补偏移，否则折叠量会被算两遍。
+    // 两个动画量都在布局/绘制阶段才读（下面的 lambda 里），否则每一帧都会把整条栏重新组合一遍。
+    val feedWeight = animateFloatAsState(
+        targetValue = if (tab == 0) 1f else 0f,
+        animationSpec = tween(MainTabFadeMillis),
+        label = "mainBarFeedWeight",
+    )
+    val materialShift = { (collapsed * titleHeightPx * feedWeight.value).roundToInt() }
+    val materialHeight = animateDpAsState(
+        targetValue = if (tab == 0) feedBarHeight else pageBarHeight,
+        animationSpec = tween(MainTabFadeMillis),
+        label = "mainBarMaterialHeight",
+    )
+    Box(modifier) {
+        AppBarBlurOverlay(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(0, -materialShift()) }
+                .reportTopBarBottom(bounds),
+            containerColor = pageContainerColor(),
+            scrollFraction = { 1f },
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .layout { measurable, constraints ->
+                        val height = materialHeight.value.roundToPx()
+                        val placeable = measurable.measure(
+                            Constraints.fixed(constraints.maxWidth, height)
+                        )
+                        layout(placeable.width, height) { placeable.place(0, 0) }
+                    }
+            )
+        }
+        Crossfade(
+            targetState = tab,
+            animationSpec = tween(MainTabFadeMillis),
+            label = "mainBarContent",
+        ) { page ->
+            BarContent(
+                tab = page,
+                nav = nav,
+                feedPager = feedPager,
+                feedKinds = feedKinds,
+                guest = guest,
+                filter = filter,
+                collapsed = collapsed,
+                onFilterSelected = onFilterSelected,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BarContent(
+    tab: Int,
+    nav: NavState,
+    feedPager: PagerState,
+    feedKinds: List<Int>,
+    guest: Boolean,
+    filter: FeedFilter,
+    collapsed: Float,
+    onFilterSelected: (FeedFilter) -> Unit,
 ) {
     when (tab) {
         0 -> FeedHeader(
@@ -333,15 +410,13 @@ private fun MainTopBar(
             feedKinds = feedKinds,
             filterMenu = !guest,
             filter = filter,
-            collapsePx = collapsePx,
+            collapsed = collapsed,
             onFilterSelected = onFilterSelected,
             onSearch = { nav.push(Route.Search) },
-            modifier = modifier,
         )
 
         1 -> PageTitleBar(
             title = "消息",
-            modifier = modifier,
             actions = {
                 if (!guest) {
                     SearchBarActionButton(
@@ -355,7 +430,6 @@ private fun MainTopBar(
 
         else -> PageTitleBar(
             title = "我",
-            modifier = modifier,
             actions = {
                 HighlightedIconButton(
                     onClick = { nav.push(Route.Settings) },
@@ -376,41 +450,34 @@ private fun MainTopBar(
 @Composable
 private fun PageTitleBar(
     title: String,
-    modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    AppBarBlurOverlay(
-        modifier = modifier.fillMaxWidth(),
-        containerColor = pageContainerColor(),
-        scrollFraction = { 1f },
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
-        ) {
-            Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
-                Text(
-                    title,
-                    color = COUITheme.colorScheme.onSurface,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 16.dp, bottom = 6.dp),
-                )
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = TopAppBarDefaults.ActionIconPadding),
-                    horizontalArrangement = Arrangement.spacedBy(
-                        TopAppBarDefaults.ActionMenuItemSpacing,
-                        Alignment.End,
-                    ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = actions,
-                )
-            }
+        Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
+            Text(
+                title,
+                color = COUITheme.colorScheme.onSurface,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 6.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = TopAppBarDefaults.ActionIconPadding),
+                horizontalArrangement = Arrangement.spacedBy(
+                    TopAppBarDefaults.ActionMenuItemSpacing,
+                    Alignment.End,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
+            )
         }
     }
 }
@@ -437,92 +504,74 @@ private fun FeedHeader(
     /** 「关注」那段带不带筛选下拉；纯本地模式只有本地关注一种，不给。 */
     filterMenu: Boolean,
     filter: FeedFilter,
-    collapsePx: Float,
+    collapsed: Float,
     onFilterSelected: (FeedFilter) -> Unit,
     onSearch: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     val scheme = COUITheme.colorScheme
     val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
-    val collapsed = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
     var filterMenuExpanded by remember { mutableStateOf(false) }
-    // 「消息」和「我」两页共用 PageTitleBar：固定尺寸、材质常驻、整条栏在滚动中一帧都不重排。
-    // 这条顶栏以前是把标题行的高度动画掉，材质节点跟着每帧改尺寸 —— 平台渐变模糊采的是窗口内容，
-    // 节点一改尺寸就采到自己上一帧的输出，于是变黑 / 抖动。这里改成和 PageTitleBar 一模一样：
-    // 栏的高度、材质的大小和透明度都不动，折叠只是画的时候把内容往上挪。
-    // 材质整块跟着分段行往上平移（只改位置不改尺寸），模糊→透明的渐变带才会贴着分段行的下沿；
-    // 内容反向平移回原位，标题和按钮的折叠轨迹不受影响。
-    val materialShift = (collapsed * titleHeightPx).roundToInt()
-    AppBarBlurOverlay(
-        modifier = modifier
+    Column(
+        Modifier
             .fillMaxWidth()
-            .offset { IntOffset(0, -materialShift) },
-        containerColor = pageContainerColor(),
-        scrollFraction = { 1f },
+            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
     ) {
-        Column(
-            Modifier
-                .offset { IntOffset(0, materialShift) }
-                .fillMaxWidth()
-                .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
-        ) {
-            Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
-                // Only the title folds away under the status bar; clipping the whole row cut the
-                // search button's halo off in a straight line.
-                Box(Modifier.fillMaxSize().clipToBounds()) {
-                    Box(Modifier.fillMaxSize().graphicsLayer {
-                        translationY = -collapsed * titleHeightPx
-                    }) {
-                        Text(
-                            stringResource(R.string.app_name),
-                            color = scheme.onSurface.copy(alpha = 1f - collapsed),
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(start = 16.dp, bottom = 6.dp),
-                        )
+        Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
+            // Only the title folds away under the status bar; clipping the whole row cut the
+            // search button's halo off in a straight line.
+            Box(Modifier.fillMaxSize().clipToBounds()) {
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    translationY = -collapsed * titleHeightPx
+                }) {
+                    Text(
+                        stringResource(R.string.app_name),
+                        color = scheme.onSurface.copy(alpha = 1f - collapsed),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 6.dp),
+                    )
+                }
+            }
+            HighlightedIconButton(
+                onClick = onSearch,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = TopAppBarDefaults.ActionIconPadding)
+                    .couiTopAppBarActionItem()
+                    .graphicsLayer {
+                        // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
+                        translationY = -collapsed * titleHeightPx / 2f
+                        alpha = 1f - collapsed
                     }
-                }
-                HighlightedIconButton(
-                    onClick = onSearch,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = TopAppBarDefaults.ActionIconPadding)
-                        .couiTopAppBarActionItem()
-                        .graphicsLayer {
-                            // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
-                            translationY = -collapsed * titleHeightPx / 2f
-                            alpha = 1f - collapsed
-                        }
-                        .testTag("top_search"),
-                ) {
-                    Icon(COUIIcons.Basic.Search, "搜索", Modifier.size(24.dp))
-                }
-            }
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-                    .graphicsLayer { translationY = -collapsed * titleHeightPx },
+                    .testTag("top_search"),
             ) {
-                FeedTabs(
-                    pager = feedPager,
-                    kinds = feedKinds,
-                    filterMenu = filterMenu,
-                    filter = filter,
-                    filterMenuExpanded = filterMenuExpanded,
-                    onFilterMenuDismiss = { filterMenuExpanded = false },
-                    onFilterSelected = {
-                        filterMenuExpanded = false
-                        onFilterSelected(it)
-                    },
-                    onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
-                    onFilterClick = { filterMenuExpanded = true },
-                    modifier = Modifier.align(Alignment.Center),
-                )
+                Icon(COUIIcons.Basic.Search, "搜索", Modifier.size(24.dp))
             }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+                .graphicsLayer { translationY = -collapsed * titleHeightPx },
+        ) {
+            FeedTabs(
+                pager = feedPager,
+                kinds = feedKinds,
+                filterMenu = filterMenu,
+                filter = filter,
+                filterMenuExpanded = filterMenuExpanded,
+                onFilterMenuDismiss = { filterMenuExpanded = false },
+                onFilterSelected = {
+                    filterMenuExpanded = false
+                    onFilterSelected(it)
+                },
+                onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
+                onFilterClick = { filterMenuExpanded = true },
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
     }
 }
