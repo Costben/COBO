@@ -60,6 +60,10 @@ class Settings(context: Context) {
     var autoCheckUpdate by mutableStateOf(sp.getBoolean("auto_check_update", true))
         private set
 
+    /** 接收预发布版本；关闭后更新检查只认正式版。默认开，和以前的更新行为一致。 */
+    var acceptPrerelease by mutableStateOf(sp.getBoolean("accept_prerelease", true))
+        private set
+
     /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -109,6 +113,11 @@ class Settings(context: Context) {
     fun applyAutoCheckUpdate(value: Boolean) {
         autoCheckUpdate = value
         sp.edit().putBoolean("auto_check_update", value).apply()
+    }
+
+    fun applyAcceptPrerelease(value: Boolean) {
+        acceptPrerelease = value
+        sp.edit().putBoolean("accept_prerelease", value).apply()
     }
 
     fun applyUpdateCheckedAt(value: Long) {

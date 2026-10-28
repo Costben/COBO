@@ -43,16 +43,25 @@ object Updater {
     }.getOrNull()?.takeIf { it.isNotBlank() } ?: "0.0.0"
 
     /** 拉 release 列表，返回比 [current] 新的最高版本；已经是最新时返回 null。 */
-    suspend fun latest(current: String): UpdateInfo? = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(ReleasesUrl)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "Cobo-Android")
-            .build()
-        val body = client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw ApiException("检查更新失败：HTTP ${response.code}")
-            response.body?.string().orEmpty()
+    suspend fun latest(current: String, includePrerelease: Boolean = true): UpdateInfo? =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(ReleasesUrl)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "Cobo-Android")
+                .build()
+            val body = client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw ApiException("检查更新失败：HTTP ${response.code}")
+                response.body?.string().orEmpty()
+            }
+            parseLatest(body, current, includePrerelease)
         }
+
+    /**
+     * 解析 release 列表。[includePrerelease] 为 false 时跳过预发布，只留正式版：
+     * GitHub 的 `prerelease` 标记和 `-pre` 后缀任一命中都算预发布。
+     */
+    internal fun parseLatest(body: String, current: String, includePrerelease: Boolean): UpdateInfo? {
         // 限流或出错时 GitHub 回的是对象而不是数组，把它的 message 直接抛出去。
         val text = body.trim()
         if (!text.startsWith("[")) {
@@ -66,6 +75,8 @@ object Updater {
             if (item.optBoolean("draft", false)) continue
             val version = item.str("tag_name").removePrefix("v").removePrefix("V")
             if (version.isBlank()) continue
+            val prerelease = item.optBoolean("prerelease", false) || version.contains('-')
+            if (!includePrerelease && prerelease) continue
             val info = UpdateInfo(
                 version = version,
                 notes = item.str("body").trim(),
@@ -78,11 +89,11 @@ object Updater {
                     }
                     ?.takeIf { it.isNotBlank() },
                 pageUrl = item.str("html_url"),
-                prerelease = item.optBoolean("prerelease", false),
+                prerelease = prerelease,
             )
             if (best == null || compareVersion(info.version, best.version) > 0) best = info
         }
-        best?.takeIf { compareVersion(it.version, current) > 0 }
+        return best?.takeIf { compareVersion(it.version, current) > 0 }
     }
 
     /**

@@ -92,7 +92,7 @@ object App {
         checkingUpdate = true
         try {
             val current = Updater.currentVersion(context)
-            val info = Updater.latest(current)
+            val info = Updater.latest(current, includePrerelease = settings.acceptPrerelease)
             settings.applyUpdateCheckedAt(System.currentTimeMillis())
             if (info == null) {
                 pendingUpdate = null

@@ -58,6 +58,7 @@ fun SettingsScreen(nav: NavState) {
     var darkMode by remember { mutableStateOf(App.settings.darkMode) }
     var fontScale by remember { mutableStateOf(App.settings.fontScale) }
     var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
+    var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -186,6 +187,18 @@ fun SettingsScreen(nav: NavState) {
                         title = "自动检查更新",
                         modifier = Modifier.testTag("settings_auto_update"),
                         summary = "启动时检查，有新版本弹窗提示",
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    HorizontalDivider()
+                    SwitchPreference(
+                        checked = acceptPrerelease,
+                        onCheckedChange = {
+                            acceptPrerelease = it
+                            App.settings.applyAcceptPrerelease(it)
+                        },
+                        title = "接收预发布版本",
+                        modifier = Modifier.testTag("settings_prerelease"),
+                        summary = "关闭后只提示正式版本",
                         cardListPosition = CardListPosition.Tail,
                     )
                 }
