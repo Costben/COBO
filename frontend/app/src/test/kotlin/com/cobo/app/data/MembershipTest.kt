@@ -18,8 +18,14 @@ class MembershipTest {
     }
 
     @Test
-    fun mbtypeTwo_isVip() {
-        assertEquals(Membership.Vip, User("1", "甲", "", mbtype = 2).membership)
+    fun mbtypeTwo_isExpired() {
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 2, mbrank = 3).membership)
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 2, mbrank = 3, svip = true).membership)
+    }
+
+    @Test
+    fun zeroRank_isNotMember() {
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 12).membership)
     }
 
     @Test
@@ -28,9 +34,9 @@ class MembershipTest {
     }
 
     @Test
-    fun svipWinsOverMbtype() {
-        assertEquals(Membership.Svip, User("1", "甲", "", mbtype = 12, svip = true).membership)
-        assertEquals(Membership.Svip, User("1", "甲", "", mbtype = 0, svip = true).membership)
+    fun svipOnlyCountsWhileActive() {
+        assertEquals(Membership.Svip, User("1", "甲", "", mbtype = 12, mbrank = 7, svip = true).membership)
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 0, svip = true).membership)
     }
 
     @Test

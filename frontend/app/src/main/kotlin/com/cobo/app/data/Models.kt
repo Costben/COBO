@@ -71,9 +71,10 @@ fun chatPlainText(html: String?): String {
 }
 
 /**
- * 微博会员。接口给的三个字段：`mbtype`（0 非会员，2 普通会员，12 年费会员）、
+ * 微博会员。接口给的三个字段：`mbtype`（0 从未开通，2 开通过但已过期，大于 2 为在期（实测 11 / 12，12 是年费））、
  * `mbrank`（会员等级 1–9）、`svip`（1 = 超级会员）。
- * 微博客户端自己只区分「会员 / 超级会员」两种标识，年费在界面上不单独标，这里也照办。
+ * 判定照抄 m.weibo.cn 前端：`mbtype > 2 && mbrank > 0` 才算在期，`svip` 只决定标成 SVIP 还是 VIP；
+ * 不在期时 `svip` 一律不看。年费在界面上不单独标，这里也照办。
  */
 enum class Membership { None, Vip, Svip }
 
@@ -96,9 +97,9 @@ data class User(
 ) {
     val membership: Membership
         get() = when {
+            mbtype <= 2 || mbrank <= 0 -> Membership.None
             svip -> Membership.Svip
-            mbtype > 0 -> Membership.Vip
-            else -> Membership.None
+            else -> Membership.Vip
         }
 
     companion object {
