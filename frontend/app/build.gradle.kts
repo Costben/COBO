@@ -44,7 +44,8 @@ android {
 
 dependencies {
     val coui = "io.github.suqi8.coui.kmp"
-    val couiVersion = "1.2.0-6711f706-SNAPSHOT"
+    // Rolling coordinate: ../coui republishes it on every commit (.githooks/publish-rolling-snapshot.sh).
+    val couiVersion = "1.2.0-SNAPSHOT"
 
     implementation("$coui:coui-ui:$couiVersion")
     implementation("$coui:coui-icons:$couiVersion")
