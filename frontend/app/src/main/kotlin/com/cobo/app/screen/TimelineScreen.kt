@@ -208,16 +208,16 @@ fun TimelineScreen(
     onScrollOffset: (Float) -> Unit,
 ) {
     // The list states live here so the bottom accessory can send every page back to the top.
-    val listStates = remember { List(stores.size) { LazyListState() } }
+    val listStates = remember(stores.size) { List(stores.size) { LazyListState() } }
     val refreshScope = rememberCoroutineScope()
-    val pullStates = remember {
+    val pullStates = remember(stores.size) {
         mutableStateListOf<FullPagePullToRefreshState?>().apply { repeat(stores.size) { add(null) } }
     }
     // The header folds its title row away one pixel per pixel scrolled; past the first item the
     // row is already gone, so a large sentinel collapses it fully.
     LaunchedEffect(pagerState, listStates) {
         snapshotFlow {
-            val state = listStates[pagerState.currentPage]
+            val state = listStates.getOrNull(pagerState.currentPage) ?: return@snapshotFlow 0f
             if (state.firstVisibleItemIndex > 0) Float.MAX_VALUE
             else state.firstVisibleItemScrollOffset.toFloat()
         }.collect { onScrollOffset(it) }
@@ -233,7 +233,7 @@ fun TimelineScreen(
             val store = currentStores.getOrNull(page) ?: return@collect
             // Smooth ride back to the first card, then the same pull the finger would do, so the
             // page slides down and the list stays put while it reloads.
-            listStates[page].glideToTop()
+            listStates.getOrNull(page)?.glideToTop()
             val pull = pullStates.getOrNull(page)
             if (pull != null) {
                 pull.startRefresh { refreshScope.launch { store.refresh() } }
@@ -253,14 +253,17 @@ fun TimelineScreen(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
     ) { page ->
+        val store = stores.getOrNull(page) ?: return@HorizontalPager
+        val emptyText = emptyTexts.getOrNull(page).orEmpty()
+        val listState = listStates.getOrNull(page) ?: return@HorizontalPager
         TimelinePage(
             nav = nav,
-            store = stores[page],
+            store = store,
             page = page,
             topInset = topInset,
-            emptyText = emptyTexts[page],
-            listState = listStates[page],
-            onPullState = { pullStates[page] = it },
+            emptyText = emptyText,
+            listState = listState,
+            onPullState = { if (page < pullStates.size) pullStates[page] = it },
         )
     }
 }

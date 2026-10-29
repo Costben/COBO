@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
+import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.pageContainerColor
@@ -76,6 +77,10 @@ fun SettingsScreen(nav: NavState) {
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
     val guest = App.repo.guest
     var pickLocalFollow by remember { mutableStateOf(false) }
+    var feedLeftTab by remember { mutableStateOf(App.settings.feedLeftTab) }
+    var feedRightTab by remember { mutableStateOf(App.settings.feedRightTab) }
+    var pickFeedLeft by remember { mutableStateOf(false) }
+    var pickFeedRight by remember { mutableStateOf(false) }
 
     // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
     val accounts = remember(localFollowUid) { App.store.accounts() }
@@ -133,6 +138,29 @@ fun SettingsScreen(nav: NavState) {
                         onClick = {
                             fontScale = App.settings.cycleFontScale()
                         },
+                    )
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    ArrowPreference(
+                        title = "微博左侧栏",
+                        modifier = Modifier.testTag("settings_feed_left_tab"),
+                        summary = feedLeftTab.label,
+                        cardListPosition = CardListPosition.Head,
+                        onClick = { pickFeedLeft = true },
+                    )
+                    HorizontalDivider()
+                    ArrowPreference(
+                        title = "微博右侧栏",
+                        modifier = Modifier.testTag("settings_feed_right_tab"),
+                        summary = feedRightTab.label,
+                        cardListPosition = CardListPosition.Tail,
+                        onClick = { pickFeedRight = true },
                     )
                 }
             }
@@ -377,6 +405,32 @@ fun SettingsScreen(nav: NavState) {
             },
         )
     }
+
+    if (pickFeedLeft) {
+        FeedTabPicker(
+            title = "微博左侧栏内容",
+            selected = feedLeftTab,
+            onDismiss = { pickFeedLeft = false },
+            onPick = { item ->
+                App.settings.applyFeedLeftTab(item)
+                feedLeftTab = item
+                pickFeedLeft = false
+            },
+        )
+    }
+
+    if (pickFeedRight) {
+        FeedTabPicker(
+            title = "微博右侧栏内容",
+            selected = feedRightTab,
+            onDismiss = { pickFeedRight = false },
+            onPick = { item ->
+                App.settings.applyFeedRightTab(item)
+                feedRightTab = item
+                pickFeedRight = false
+            },
+        )
+    }
 }
 
 /**
@@ -472,6 +526,75 @@ private fun LocalFollowOption(
         }
         if (selected) {
             Text("已选", fontSize = 13.sp, color = COUITheme.colorScheme.primary)
+        }
+    }
+}
+
+private data class FeedTabOptionItem(
+    val item: FeedTabItem,
+    val subtitle: String,
+)
+
+@Composable
+private fun FeedTabPicker(
+    title: String,
+    selected: FeedTabItem,
+    onDismiss: () -> Unit,
+    onPick: (FeedTabItem) -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<FeedTabItem?>(null) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+
+    WindowDialog(
+        show = show,
+        title = title,
+        summary = "中间栏固定为全部关注。左右两侧可设置不同或相同内容，也可设为隐藏；左右均隐藏时直接单页浏览。",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                val picked = result
+                if (picked != null) onPick(picked) else onDismiss()
+            }
+        },
+    ) {
+        Column {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                val options = listOf(
+                    FeedTabOptionItem(FeedTabItem.None, "不显示此栏"),
+                    FeedTabOptionItem(FeedTabItem.Circle, "互相关注的好友微博"),
+                    FeedTabOptionItem(FeedTabItem.Recommend, "热门推荐微博"),
+                    FeedTabOptionItem(FeedTabItem.Local, "按本机关注名单拉取"),
+                    FeedTabOptionItem(FeedTabItem.Original, "过滤转发，仅看原创"),
+                    FeedTabOptionItem(FeedTabItem.Special, "特别关注分组"),
+                    FeedTabOptionItem(FeedTabItem.Secret, "悄悄关注的人"),
+                    FeedTabOptionItem(FeedTabItem.Favorites, "已收藏的微博"),
+                )
+                options.forEach { opt ->
+                    LocalFollowOption(
+                        title = opt.item.label,
+                        subtitle = opt.subtitle,
+                        selected = opt.item == selected,
+                        tag = "feed_tab_option_${opt.item.key}",
+                        onClick = {
+                            result = opt.item
+                            show = false
+                        },
+                    )
+                }
+            }
+            DialogButtonBar(
+                negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
+                positive = null,
+            )
         }
     }
 }

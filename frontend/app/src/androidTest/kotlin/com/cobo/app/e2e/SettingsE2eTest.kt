@@ -30,6 +30,8 @@ class SettingsE2eTest : UiE2eTest() {
         listOf(
             "settings_dark",
             "settings_font",
+            "settings_feed_left_tab",
+            "settings_feed_right_tab",
             "settings_accounts",
             "settings_drafts",
             "settings_history",
@@ -117,5 +119,20 @@ class SettingsE2eTest : UiE2eTest() {
         waitAny(By.res("account_row_0"), By.text("还没有保存的账号"))
         back()
         waitText("设置")
+    }
+
+    @Test
+    fun feedTabSettings_opensAndChanges() {
+        openSettings()
+        scrollToTag("settings_feed_left_tab")
+        tapTag("settings_feed_left_tab")
+        waitText("微博左侧栏内容")
+        waitText("不显示此栏")
+        tapTag("feed_tab_option_none")
+        waitText("设置")
+        assertEquals(com.cobo.app.data.FeedTabItem.None, App.settings.feedLeftTab)
+
+        // 恢复默认设置
+        App.settings.applyFeedLeftTab(com.cobo.app.data.FeedTabItem.Circle)
     }
 }

@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.data.FeedPage
+import com.cobo.app.data.FeedTabItem
 import com.cobo.app.screen.FeedFilter
 import com.cobo.app.screen.FeedStore
 import com.cobo.app.screen.LocalHome
@@ -106,6 +107,43 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
+internal sealed class FeedTabSpec {
+    abstract val key: String
+    abstract val label: String
+    abstract val tag: String
+    abstract val emptyText: String
+    abstract val isFollow: Boolean
+
+    data class Custom(val item: FeedTabItem, val position: String, val guest: Boolean) : FeedTabSpec() {
+        override val key: String get() = "${position}_${item.key}"
+        override val label: String get() = item.label
+        override val tag: String get() = item.tag
+        override val isFollow: Boolean get() = false
+        override val emptyText: String get() = when (item) {
+            FeedTabItem.Circle -> "好友圈还没有内容"
+            FeedTabItem.Recommend -> "这里还没有微博"
+            FeedTabItem.Local -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有本地关注"
+            FeedTabItem.Original -> "还没有原创微博"
+            FeedTabItem.Special -> "特别关注还没有内容"
+            FeedTabItem.Secret -> "还没有悄悄关注的人"
+            FeedTabItem.Favorites -> "还没有收藏的微博"
+            FeedTabItem.None -> "这里还没有微博"
+        }
+    }
+
+    data class Follow(val filter: FeedFilter, val guest: Boolean) : FeedTabSpec() {
+        override val key: String get() = "follow"
+        override val label: String get() = if (guest) "本地关注" else filter.label
+        override val tag: String get() = "feed_tab_follow"
+        override val isFollow: Boolean get() = true
+        override val emptyText: String get() = if (guest) {
+            "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里"
+        } else {
+            filter.emptyText
+        }
+    }
+}
+
 @Composable
 fun MainShell(nav: NavState) {
     val tab = nav.mainTab
@@ -119,7 +157,8 @@ fun MainShell(nav: NavState) {
     // 纯本地模式：没有账号可读关注流，首页只剩「本地关注」和「推荐」两段，筛选菜单也收起来。
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
     val guest = remember { App.repo.guest }
-    val feedKinds = if (guest) listOf(FollowPage, RecommendPage) else listOf(CirclePage, FollowPage, RecommendPage)
+    val leftTab = App.settings.feedLeftTab
+    val rightTab = App.settings.feedRightTab
 
     var filterIndex by remember {
         mutableIntStateOf(App.settings.feedFilter.coerceIn(0, FeedFilter.entries.lastIndex))
@@ -152,38 +191,78 @@ fun MainShell(nav: NavState) {
     val recommendStore = remember { FeedStore("102803", readOnly = guest) }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
-    val feedStores = feedKinds.map {
-        when (it) {
-            CirclePage -> circleStore
-            FollowPage -> followStore
-            else -> recommendStore
-        }
+
+    fun storeFor(item: FeedTabItem): FeedStore = when (item) {
+        FeedTabItem.Circle -> circleStore
+        FeedTabItem.Recommend -> recommendStore
+        FeedTabItem.Local -> filterStores.getValue(FeedFilter.Local)
+        FeedTabItem.Original -> filterStores.getValue(FeedFilter.Original)
+        FeedTabItem.Special -> filterStores.getValue(FeedFilter.Special)
+        FeedTabItem.Secret -> filterStores.getValue(FeedFilter.Secret)
+        FeedTabItem.Favorites -> filterStores.getValue(FeedFilter.Favorites)
+        FeedTabItem.None -> friendsStore
     }
-    val feedEmptyTexts = feedKinds.map {
-        when (it) {
-            CirclePage -> "好友圈还没有内容"
-            FollowPage -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else filter.emptyText
-            else -> "这里还没有微博"
+
+    // 动态构建主页 Tab 列表：左栏（若非隐藏） + 中间固定全部关注栏 + 右栏（若非隐藏）
+    val feedTabs: List<FeedTabSpec> = remember(leftTab, rightTab, filter, guest) {
+        buildList {
+            if (leftTab != FeedTabItem.None) {
+                add(FeedTabSpec.Custom(leftTab, "left", guest))
+            }
+            add(FeedTabSpec.Follow(filter, guest))
+            if (rightTab != FeedTabItem.None) {
+                add(FeedTabSpec.Custom(rightTab, "right", guest))
+            }
         }
     }
 
-    // 记住的是哪一段（好友圈 / 关注 / 推荐），不是第几页：纯本地模式少一段，页码对不上。
+    val feedStores = feedTabs.map { spec ->
+        when (spec) {
+            is FeedTabSpec.Follow -> followStore
+            is FeedTabSpec.Custom -> storeFor(spec.item)
+        }
+    }
+    val feedEmptyTexts = feedTabs.map { it.emptyText }
+
+    val followIndex = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
+    val initialPage = feedTabs.indexOfFirst { it.key == App.settings.feedTabKey }.takeIf { it >= 0 }
+        ?: followIndex
+
     val feedPager = rememberPagerState(
-        initialPage = feedKinds.indexOf(App.settings.feedTab).takeIf { it >= 0 }
-            ?: feedKinds.indexOf(FollowPage),
-        pageCount = { feedKinds.size },
+        initialPage = initialPage.coerceIn(0, (feedTabs.size - 1).coerceAtLeast(0)),
+        pageCount = { feedTabs.size },
     )
-    LaunchedEffect(feedPager.currentPage) {
-        App.settings.applyFeedTab(feedKinds[feedPager.currentPage])
+    LaunchedEffect(feedPager.currentPage, feedTabs) {
+        val currentTab = feedTabs.getOrNull(feedPager.currentPage)
+        if (currentTab != null) {
+            App.settings.applyFeedTabKey(currentTab.key)
+            val legacyKind = when {
+                currentTab.isFollow -> 1
+                currentTab is FeedTabSpec.Custom && currentTab.item == FeedTabItem.Circle -> 0
+                else -> 2
+            }
+            App.settings.applyFeedTab(legacyKind)
+        }
     }
 
+    LaunchedEffect(feedTabs.size) {
+        if (feedPager.currentPage >= feedTabs.size) {
+            feedPager.scrollToPage(followIndex)
+        }
+    }
+
+    val feedHasTabs = feedTabs.size > 1
     // The top bar floats over the lists; the first row starts below it and later rows scroll under.
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // 消息 and 我 wear the feed's title row alone, so their bar is exactly one row tall.
     val topBarHeight = statusBarTop + FeedTitleRowHeight
     // The feed header is two rows: the title row folds away as the list scrolls, the segment row
     // stays pinned under the status bar.
-    val feedTopBarHeight = statusBarTop + FeedTitleRowHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val feedTopBarHeight = if (feedHasTabs) {
+        statusBarTop + FeedTitleRowHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+    } else {
+        topBarHeight
+    }
     var feedCollapse by remember { mutableFloatStateOf(0f) }
 
     Box(Modifier.fillMaxSize()) {
@@ -249,7 +328,7 @@ fun MainShell(nav: NavState) {
                 tab = tab,
                 nav = nav,
                 feedPager = feedPager,
-                feedKinds = feedKinds,
+                feedTabs = feedTabs,
                 guest = guest,
                 filter = filter,
                 collapsePx = feedCollapse,
@@ -263,7 +342,8 @@ fun MainShell(nav: NavState) {
                     ) {
                         scope.launch { filterStores[selected]?.refresh() }
                     }
-                    scope.launch { feedPager.animateScrollToPage(feedKinds.indexOf(FollowPage)) }
+                    val targetPage = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
+                    scope.launch { feedPager.animateScrollToPage(targetPage) }
                 },
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
             )
@@ -324,7 +404,7 @@ private fun MainTopBar(
     tab: Int,
     nav: NavState,
     feedPager: PagerState,
-    feedKinds: List<Int>,
+    feedTabs: List<FeedTabSpec>,
     guest: Boolean,
     filter: FeedFilter,
     collapsePx: Float,
@@ -334,7 +414,12 @@ private fun MainTopBar(
 ) {
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val pageBarHeight = statusBarTop + FeedTitleRowHeight
-    val feedBarHeight = pageBarHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val feedHasTabs = feedTabs.size > 1
+    val feedBarHeight = if (feedHasTabs) {
+        pageBarHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+    } else {
+        pageBarHeight
+    }
     val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
     val collapsed = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
     // 只有微博页会把标题行折进状态栏。切走时把这个折叠量收回 0，材质才不会停在上一页的位置。
@@ -383,7 +468,7 @@ private fun MainTopBar(
                 tab = page,
                 nav = nav,
                 feedPager = feedPager,
-                feedKinds = feedKinds,
+                feedTabs = feedTabs,
                 guest = guest,
                 filter = filter,
                 collapsed = collapsed,
@@ -398,7 +483,7 @@ private fun BarContent(
     tab: Int,
     nav: NavState,
     feedPager: PagerState,
-    feedKinds: List<Int>,
+    feedTabs: List<FeedTabSpec>,
     guest: Boolean,
     filter: FeedFilter,
     collapsed: Float,
@@ -407,7 +492,7 @@ private fun BarContent(
     when (tab) {
         0 -> FeedHeader(
             feedPager = feedPager,
-            feedKinds = feedKinds,
+            feedTabs = feedTabs,
             filterMenu = !guest,
             filter = filter,
             collapsed = collapsed,
@@ -499,9 +584,7 @@ internal val FeedTitleRowHeight = 44.dp
 @Composable
 private fun FeedHeader(
     feedPager: PagerState,
-    /** 每一页对应哪一段：[CirclePage] / [FollowPage] / [RecommendPage]。 */
-    feedKinds: List<Int>,
-    /** 「关注」那段带不带筛选下拉；纯本地模式只有本地关注一种，不给。 */
+    feedTabs: List<FeedTabSpec>,
     filterMenu: Boolean,
     filter: FeedFilter,
     collapsed: Float,
@@ -551,27 +634,29 @@ private fun FeedHeader(
                 Icon(COUIIcons.Basic.Search, "搜索", Modifier.size(24.dp))
             }
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-                .graphicsLayer { translationY = -collapsed * titleHeightPx },
-        ) {
-            FeedTabs(
-                pager = feedPager,
-                kinds = feedKinds,
-                filterMenu = filterMenu,
-                filter = filter,
-                filterMenuExpanded = filterMenuExpanded,
-                onFilterMenuDismiss = { filterMenuExpanded = false },
-                onFilterSelected = {
-                    filterMenuExpanded = false
-                    onFilterSelected(it)
-                },
-                onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
-                onFilterClick = { filterMenuExpanded = true },
-                modifier = Modifier.align(Alignment.Center),
-            )
+        if (feedTabs.size > 1) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+                    .graphicsLayer { translationY = -collapsed * titleHeightPx },
+            ) {
+                FeedTabs(
+                    pager = feedPager,
+                    feedTabs = feedTabs,
+                    filterMenu = filterMenu,
+                    filter = filter,
+                    filterMenuExpanded = filterMenuExpanded,
+                    onFilterMenuDismiss = { filterMenuExpanded = false },
+                    onFilterSelected = {
+                        filterMenuExpanded = false
+                        onFilterSelected(it)
+                    },
+                    onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
+                    onFilterClick = { filterMenuExpanded = true },
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
         }
     }
 }
@@ -584,7 +669,7 @@ private val FeedTabPressSpring = spring<Float>(dampingRatio = 1f, stiffness = 43
 @Composable
 private fun FeedTabs(
     pager: PagerState,
-    kinds: List<Int>,
+    feedTabs: List<FeedTabSpec>,
     filterMenu: Boolean,
     filter: FeedFilter,
     filterMenuExpanded: Boolean,
@@ -600,10 +685,12 @@ private fun FeedTabs(
     val dark = scheme.background.luminance() < 0.5f
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
-    val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(0f, kinds.lastIndex.toFloat())
-    // 「关注」那一格显示当前选中的分类（全部 / 原创微博 / 特别关注 …），其余格固定。
-    val labels = kinds.map { if (it == FollowPage) filter.label else FeedTabLabels[it] }
-    val interactions = remember(kinds.size) { List(kinds.size) { MutableInteractionSource() } }
+    val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(
+        0f,
+        (feedTabs.size - 1).coerceAtLeast(0).toFloat()
+    )
+    val labels = feedTabs.map { it.label }
+    val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
     val indicatorScale by animateFloatAsState(
         targetValue = if (pressed.getOrNull(pager.currentPage)?.value == true) 0.96f else 1f,
@@ -614,7 +701,7 @@ private fun FeedTabs(
     // 用 sp 折算，系统字体放大时格子跟着变宽，不会被截断。
     val density = LocalDensity.current
     val segmentWidth = with(density) { (4 * 13).sp.toDp() } + 2.dp + 10.dp + 22.dp
-    val containerWidth = segmentWidth * kinds.size + 8.dp
+    val containerWidth = segmentWidth * feedTabs.size + 8.dp
     BoxWithConstraints(
         modifier
             // Opaque 40dp capsule, the same height as the search action in the header row.
@@ -642,12 +729,12 @@ private fun FeedTabs(
             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            labels.forEachIndexed { index, label ->
-                val menu = filterMenu && kinds[index] == FollowPage
+            feedTabs.forEachIndexed { index, spec ->
+                val menu = filterMenu && spec.isFollow
                 FeedTabSegment(
-                    label = label,
+                    label = spec.label,
                     index = index,
-                    tag = FeedTabTags[kinds[index]],
+                    tag = spec.tag,
                     page = page,
                     interactionSource = interactions[index],
                     pressed = pressed[index].value,

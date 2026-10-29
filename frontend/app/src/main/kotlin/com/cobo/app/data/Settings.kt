@@ -10,6 +10,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONArray
 
+enum class FeedTabItem(val key: String, val label: String, val tag: String) {
+    None("none", "隐藏", "feed_tab_none"),
+    Circle("circle", "好友圈", "feed_tab_circle"),
+    Recommend("recommend", "推荐", "feed_tab_recommend"),
+    Local("local", "本地关注", "feed_tab_local"),
+    Original("original", "原创微博", "feed_tab_original"),
+    Special("special", "特别关注", "feed_tab_special"),
+    Secret("secret", "悄悄关注", "feed_tab_secret"),
+    Favorites("favorites", "收藏", "feed_tab_favorites"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?, default: FeedTabItem): FeedTabItem {
+            return entries.firstOrNull { it.key == key } ?: default
+        }
+    }
+}
+
 class Settings(context: Context) {
     private val sp = context.getSharedPreferences("app", Context.MODE_PRIVATE)
 
@@ -50,6 +68,22 @@ class Settings(context: Context) {
     var feedTab by mutableIntStateOf(
         sp.getInt("feed_tab_v3", (sp.getInt("feed_tab_v2", 0) + 1).coerceIn(0, 2))
     )
+        private set
+
+    /** 自定义微博页左侧栏浏览内容（默认好友圈，可设为隐藏或其他内容）。 */
+    var feedLeftTab by mutableStateOf(
+        FeedTabItem.fromKey(sp.getString("feed_left_tab", null), FeedTabItem.Circle)
+    )
+        private set
+
+    /** 自定义微博页右侧栏浏览内容（默认推荐，可设为隐藏或其他内容）。 */
+    var feedRightTab by mutableStateOf(
+        FeedTabItem.fromKey(sp.getString("feed_right_tab", null), FeedTabItem.Recommend)
+    )
+        private set
+
+    /** 记录当前停留的微博页栏标识（例如 "left_circle", "follow", "right_recommend"）。 */
+    var feedTabKey by mutableStateOf(sp.getString("feed_tab_key", "follow").orEmpty())
         private set
 
     // Index into FeedFilter.entries.
@@ -114,6 +148,21 @@ class Settings(context: Context) {
     fun applyFeedTab(value: Int) {
         feedTab = value.coerceIn(0, 2)
         sp.edit().putInt("feed_tab_v3", feedTab).apply()
+    }
+
+    fun applyFeedLeftTab(item: FeedTabItem) {
+        feedLeftTab = item
+        sp.edit().putString("feed_left_tab", item.key).apply()
+    }
+
+    fun applyFeedRightTab(item: FeedTabItem) {
+        feedRightTab = item
+        sp.edit().putString("feed_right_tab", item.key).apply()
+    }
+
+    fun applyFeedTabKey(key: String) {
+        feedTabKey = key
+        sp.edit().putString("feed_tab_key", key).apply()
     }
 
     fun applyFeedFilter(value: Int) {
