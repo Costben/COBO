@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -33,10 +34,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.data.Membership
+import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshTexts
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
 import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.icon.COUIIcons
@@ -202,6 +206,36 @@ fun ActionIcon(
         }
     }
 }
+
+/**
+ * 顶栏文字按钮：高度与 [BackIconButton] 的正圆一致（40dp）。
+ *
+ * 复用搜索栏「取消」那个 [SearchBarActionButton] 的形状与光效——同一份胶囊、同一圈焦散外光
+ * （裁在胶囊外侧，不会照亮内部）、同一套按下动效。底色换成 [HighlightedIconButton] 圆形材质的
+ * 那份取样色：两者在顶栏左右并排时深度一致，不会一边深一边浅。
+ */
+@Composable
+fun TopBarTextButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    SearchBarActionButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        containerColor = toolbarMaterialFill(),
+    )
+}
+
+/** 顶栏材质底色：和返回键的圆形底同一份材质，取它中心那一档。 */
+@Composable
+private fun toolbarMaterialFill(): Color =
+    // 圆形底是中心深、边沿浅的径向渐变，眼睛读的是它中间那一片；胶囊铺平取中心色，并排时看着一样深。
+    HighlightedIconButtonDefaults.fillCenter(COUITheme.colorScheme.background.luminance() < 0.5f)
+        .copy(alpha = HighlightedIconButtonDefaults.FillAlpha)
 
 @Composable
 fun BackIconButton(onClick: () -> Unit) {
