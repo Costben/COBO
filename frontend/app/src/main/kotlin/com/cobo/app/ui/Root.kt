@@ -32,11 +32,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -187,6 +189,12 @@ fun CoboRoot() {
                     .fillMaxSize()
                     .layerBackdrop(rootBackdrop)
             ) {
+                // 每页都按屏幕超级椭圆裁角，裁掉的那一圈是透明的。窗口占满屏幕时它正好落在屏幕
+                // 之外，看不见；下拉通知中心、控制中心会让窗口整块下沉缩小，那一圈就翻到屏幕里
+                // 侧来了，而栈里每一页裁的是同一个角，于是四角一路漏到下面那一层路由上去。
+                val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
+                val pageSurface = pageContainerColor()
+                Box(Modifier.fillMaxSize().background(pageSurface))
                 nav.stack.forEachIndexed { index, entry ->
                     key(entry.id) {
                         RouteLayer(
@@ -199,6 +207,21 @@ fun CoboRoot() {
                         )
                     }
                 }
+                // 所以四角补一层页面底色：只画在超级椭圆外侧，页面本身一个像素都不盖，窗口怎么
+                // 缩、缩到哪个大小，漏出来的都还是这一页的调子。
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .zIndex(3f)
+                        .drawBehind {
+                            val cut = when (val outline = cornerShape.createOutline(size, layoutDirection, this)) {
+                                is Outline.Generic -> outline.path
+                                is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
+                                else -> return@drawBehind
+                            }
+                            clipPath(cut, ClipOp.Difference) { drawRect(pageSurface) }
+                        },
+                )
             }
 
             // HUD 独立于菜单，菜单收起之后它还要自己活 1.6 秒。
