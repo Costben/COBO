@@ -236,7 +236,15 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         }
         status?.let { s ->
             App.store.addHistory(
-                HistoryItem(s.id, s.mid, s.plainText.take(120), s.user?.name.orEmpty(), System.currentTimeMillis())
+                HistoryItem(
+                    s.id,
+                    s.mid,
+                    s.plainText.take(120),
+                    s.user?.name.orEmpty(),
+                    System.currentTimeMillis(),
+                    // 列表里要按原样还原 emoji 与链接，纯文本留作兜底与裁剪后的短标题。
+                    s.textHtml.take(1000),
+                )
             )
         }
         loadComments(true, force = false)

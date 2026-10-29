@@ -141,7 +141,7 @@ class Store(private val context: Context) {
         val out = ArrayList<HistoryItem>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            out.add(HistoryItem(o.str("id"), o.str("mid"), o.str("text"), o.str("user"), o.optLong("time")))
+            out.add(HistoryItem(o.str("id"), o.str("mid"), o.str("text"), o.str("user"), o.optLong("time"), o.str("html")))
         }
         return out
     }
@@ -155,12 +155,24 @@ class Store(private val context: Context) {
                 .put("mid", item.mid)
                 .put("text", item.text)
                 .put("user", item.user)
+                .put("html", item.html)
                 .put("time", System.currentTimeMillis())
         )
         for (i in 0 until arr.length()) {
             if (out.length() >= 100) break
             val o = arr.optJSONObject(i) ?: continue
             if (o.str("id") == item.id) continue
+            out.put(o)
+        }
+        write("history.json", out)
+    }
+
+    fun removeHistory(id: String) {
+        val arr = readArray("history.json")
+        val out = JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.str("id") == id) continue
             out.put(o)
         }
         write("history.json", out)

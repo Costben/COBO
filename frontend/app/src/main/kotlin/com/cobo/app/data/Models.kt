@@ -412,7 +412,15 @@ data class Account(
 
 data class Draft(val text: String, val time: Long)
 
-data class HistoryItem(val id: String, val mid: String, val text: String, val user: String, val time: Long)
+data class HistoryItem(
+    val id: String,
+    val mid: String,
+    val text: String,
+    val user: String,
+    val time: Long,
+    /** 详情页正文的原始 HTML：历史列表靠它还原 emoji 与链接；旧记录没有这一项。 */
+    val html: String = "",
+)
 
 data class Session(val cookie: String, val uid: String, val savedAt: Long)
 
