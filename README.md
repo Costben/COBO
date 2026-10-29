@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="favicon.png" width="96" height="96" alt="Cobo" />
+
 # Cobo
 
 **第三方微博客户端** · Kotlin + Jetpack Compose · UI 基于 COUI（ColorOS 17 设计语言）
