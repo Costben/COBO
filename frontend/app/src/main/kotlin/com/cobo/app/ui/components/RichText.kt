@@ -2,6 +2,9 @@ package com.cobo.app.ui.components
 
 import android.text.Html
 import android.text.style.URLSpan
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -10,12 +13,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.LocalLinkHandler
 import io.github.suqi8.coui.kmp.basic.Text
@@ -170,4 +177,88 @@ fun WeiboText(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+private val EmojiImg = Regex("<img[^>]*?alt=\"([^\"]*)\"[^>]*?src=\"([^\"]*)\"[^>]*?>")
+
+/**
+ * 把正文切成「文本 / 表情图」两类片段。
+ *
+ * 微博的 emoji 是 `<img alt="[可爱]" src="...">`，交给 Html.fromHtml 只会剩一个 U+FFFC 占位符，
+ * [parseWeiboHtml] 又把它删掉 —— 纯表情正文就成了空白。这里先把 src 抽出来，按 1.2em 内联成图片，
+ * 其余片段仍走 [parseWeiboHtml]，链接和字形照旧。
+ */
+private fun splitEmoji(html: String): List<Pair<String?, String>> {
+    val out = ArrayList<Pair<String?, String>>()
+    var cursor = 0
+    EmojiImg.findAll(html).forEach { match ->
+        if (match.range.first > cursor) out.add(null to html.substring(cursor, match.range.first))
+        out.add(match.groupValues[2] to match.groupValues[1])
+        cursor = match.range.last + 1
+    }
+    if (cursor < html.length) out.add(null to html.substring(cursor))
+    return out
+}
+
+/**
+ * 带表情的微博富文本：链接可点，`<img>` 表情按行高比例内联成图片。
+ *
+ * 与 [WeiboText] 的区别只有表情：信息流那种「一屏几十条、每条都可能带十几张表情」的地方仍用
+ * [WeiboText]（表情直接丢掉），聊天和浏览历史这种单条正文用这个重载，表情才会真的显示出来。
+ *
+ * @param linkColor 超话菱形 / 视频三角这些链接前缀的字形色，默认主题主色。
+ * @param selectable 是否包一层 [SelectionContainer]。放在可左滑、可点进详情的列表行里时关掉，
+ *   免得长按选中和行手势互相抢。
+ */
+@Composable
+fun WeiboRichText(
+    html: String,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 15.sp,
+    lineHeight: TextUnit = 22.sp,
+    maxLines: Int = Int.MAX_VALUE,
+    color: Color = COUITheme.colorScheme.onSurface,
+    linkColor: Color = COUITheme.colorScheme.primary,
+    selectable: Boolean = true,
+) {
+    val linkHandler = LocalLinkHandler.current
+    val glyphColor = linkColor
+    val (text, inline) = remember(html, linkHandler, glyphColor) {
+        val inlineContent = LinkedHashMap<String, InlineTextContent>()
+        val builder = AnnotatedString.Builder()
+        var index = 0
+        splitEmoji(html).forEach { (url, value) ->
+            if (url == null) {
+                builder.append(parseWeiboHtml(value, linkHandler, glyphColor))
+            } else {
+                val id = "emoji_${index++}"
+                builder.appendInlineContent(id, value)
+                inlineContent[id] = InlineTextContent(
+                    // 一个 em 见方，不要更大：内联占位一旦高过字体自身的行盒，带表情的那一行就会
+                    // 被撑高，同列的卡片会因此比邻居高一截。
+                    Placeholder(1.0.em, 1.0.em, PlaceholderVerticalAlign.Center),
+                ) {
+                    AsyncImage(
+                        model = url,
+                        contentDescription = value,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        builder.toAnnotatedString() to inlineContent
+    }
+    val body: @Composable () -> Unit = {
+        Text(
+            text = text,
+            modifier = modifier,
+            color = color,
+            fontSize = fontSize,
+            lineHeight = lineHeight,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            inlineContent = inline,
+        )
+    }
+    if (selectable) SelectionContainer { body() } else body()
 }

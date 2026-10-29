@@ -30,9 +30,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.foundation.text.appendInlineContent
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -66,14 +63,9 @@ import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.WeiboRichText
 import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.unit.em
-import com.cobo.app.ui.LocalLinkHandler
-import com.cobo.app.ui.components.parseWeiboHtml
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -536,11 +528,11 @@ private fun ChatBubble(
                         }
                     }
 
-                    else -> ChatRichText(
+                    else -> WeiboRichText(
                         html = message.text,
                         color = if (mine) scheme.onPrimary else scheme.onSurface,
                         // 自己的气泡是主色底，链接/表情文字再用主色就看不清了，跟着正文走。
-                        glyph = if (mine) scheme.onPrimary else scheme.primary,
+                        linkColor = if (mine) scheme.onPrimary else scheme.primary,
                     )
                 }
             }
@@ -566,71 +558,6 @@ private fun ChatBubble(
 /** 纯文本落库前转成微博那套 HTML：`<` 转义，换行变 `<br/>`。 */
 private fun toChatHtml(plain: String): String =
     TextUtils.htmlEncode(plain).replace("\n", "<br/>")
-
-private val EmojiImg = Regex("<img[^>]*?alt=\"([^\"]*)\"[^>]*?src=\"([^\"]*)\"[^>]*?>")
-
-/**
- * 把正文切成「文本 / 表情图」两类片段。
- *
- * 微博私信的 emoji 是 `<img alt="[可爱]" src="...">`，直接交给 Html.fromHtml 只会剩一个
- * U+FFFC 占位符，[WeiboText] 又把它删掉 —— 纯表情消息就成了空气泡。这里把 src 抽出来，
- * 用 Compose 的 inline content 按 1em 渲染成图片。
- */
-private fun splitEmoji(html: String): List<Pair<String?, String>> {
-    val out = ArrayList<Pair<String?, String>>()
-    var cursor = 0
-    EmojiImg.findAll(html).forEach { match ->
-        if (match.range.first > cursor) out.add(null to html.substring(cursor, match.range.first))
-        out.add(match.groupValues[2] to match.groupValues[1])
-        cursor = match.range.last + 1
-    }
-    if (cursor < html.length) out.add(null to html.substring(cursor))
-    return out
-}
-
-@Composable
-private fun ChatRichText(
-    html: String,
-    color: Color,
-    glyph: Color,
-    modifier: Modifier = Modifier,
-) {
-    val linkHandler = LocalLinkHandler.current
-    val glyphColor = glyph
-    val (text, inline) = remember(html, linkHandler, glyphColor) {
-        val inlineContent = LinkedHashMap<String, InlineTextContent>()
-        val builder = AnnotatedString.Builder()
-        var index = 0
-        splitEmoji(html).forEach { (url, value) ->
-            if (url == null) {
-                builder.append(parseWeiboHtml(value, linkHandler, glyphColor))
-            } else {
-                val id = "emoji_${index++}"
-                builder.appendInlineContent(id, value)
-                inlineContent[id] = InlineTextContent(
-                    Placeholder(1.2.em, 1.2.em, PlaceholderVerticalAlign.Center),
-                ) {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = value,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-        builder.toAnnotatedString() to inlineContent
-    }
-    SelectionContainer {
-        Text(
-            text = text,
-            modifier = modifier,
-            color = color,
-            fontSize = 15.sp,
-            lineHeight = 22.sp,
-            inlineContent = inline,
-        )
-    }
-}
 
 private fun parseTime(raw: String?): Long? {
     if (raw.isNullOrBlank()) return null
