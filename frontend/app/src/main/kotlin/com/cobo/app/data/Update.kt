@@ -3,14 +3,19 @@ package com.cobo.app.data
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.core.content.FileProvider
 import com.cobo.app.App
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 
 /** 自动检查的节流窗口：启动时距上次检查不到这个间隔就跳过，免得每次冷启动都打一次接口。 */
 const val UpdateCheckInterval = 12 * 60 * 60 * 1000L
@@ -136,5 +141,94 @@ object Updater {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }.onFailure { App.toast("没有可用的浏览器") }
+    }
+
+    private val downloadClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * 在应用内下载 APK 到本地缓存。
+     * [onProgress] 回调当前进度（0f..1f，无法获取总大小时为 -1f）、已下字节数与总字节数。
+     */
+    suspend fun downloadApk(
+        context: Context,
+        url: String,
+        version: String,
+        onProgress: (progress: Float, currentBytes: Long, totalBytes: Long) -> Unit,
+    ): File = withContext(Dispatchers.IO) {
+        val dir = File(context.cacheDir, "updates").apply { mkdirs() }
+        val cleanVersion = version.trim().removePrefix("v").removePrefix("V")
+        val targetFile = File(dir, "Cobo-$cleanVersion.apk")
+        val tempFile = File(dir, "Cobo-$cleanVersion.tmp")
+
+        // 清理目录中的旧安装包
+        dir.listFiles()?.forEach { file ->
+            if (file.name != targetFile.name) file.delete()
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "Cobo-Android")
+            .build()
+
+        val response = downloadClient.newCall(request).execute()
+        if (!response.isSuccessful) throw IOException("下载失败：HTTP ${response.code}")
+        val body = response.body ?: throw IOException("下载失败：响应内容为空")
+        val totalBytes = body.contentLength()
+        var downloadedBytes = 0L
+
+        try {
+            tempFile.outputStream().use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(16 * 1024)
+                    var read: Int
+                    var lastEmit = 0L
+                    while (input.read(buffer).also { read = it } != -1) {
+                        coroutineContext.ensureActive()
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastEmit > 100 || (totalBytes > 0 && downloadedBytes == totalBytes)) {
+                            lastEmit = now
+                            val p = if (totalBytes > 0) downloadedBytes.toFloat() / totalBytes else -1f
+                            onProgress(p, downloadedBytes, totalBytes)
+                        }
+                    }
+                }
+            }
+            if (tempFile.exists()) {
+                if (targetFile.exists()) targetFile.delete()
+                tempFile.renameTo(targetFile)
+            }
+        } catch (t: Throwable) {
+            tempFile.delete()
+            throw t
+        }
+        targetFile
+    }
+
+    /** 调起系统安装器发起 APK 安装请求。 */
+    fun installApk(context: Context, file: File) {
+        if (!file.exists()) {
+            App.toast("安装包不存在")
+            return
+        }
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onFailure { t ->
+            App.toast("调起安装失败：${t.message}")
+        }
     }
 }

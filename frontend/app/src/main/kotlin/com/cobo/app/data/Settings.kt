@@ -109,6 +109,10 @@ class Settings(context: Context) {
     var acceptPrerelease by mutableStateOf(sp.getBoolean("accept_prerelease", true))
         private set
 
+    /** 应用内更新：开启后在应用内直接拉取 release 中的 APK 并发起安装请求。 */
+    var inAppUpdate by mutableStateOf(sp.getBoolean("in_app_update", false))
+        private set
+
     /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -178,6 +182,11 @@ class Settings(context: Context) {
     fun applyAcceptPrerelease(value: Boolean) {
         acceptPrerelease = value
         sp.edit().putBoolean("accept_prerelease", value).apply()
+    }
+
+    fun applyInAppUpdate(value: Boolean) {
+        inAppUpdate = value
+        sp.edit().putBoolean("in_app_update", value).apply()
     }
 
     fun applyLocalFollowUid(uid: String) {

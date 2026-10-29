@@ -71,6 +71,7 @@ fun SettingsScreen(nav: NavState) {
     var fontScale by remember { mutableStateOf(App.settings.fontScale) }
     var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
     var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
+    var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -272,6 +273,18 @@ fun SettingsScreen(nav: NavState) {
                         title = "接收预发布版本",
                         modifier = Modifier.testTag("settings_prerelease"),
                         summary = "关闭后只提示正式版本",
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    HorizontalDivider()
+                    SwitchPreference(
+                        checked = inAppUpdate,
+                        onCheckedChange = {
+                            inAppUpdate = it
+                            App.settings.applyInAppUpdate(it)
+                        },
+                        title = "应用内更新",
+                        modifier = Modifier.testTag("settings_in_app_update"),
+                        summary = "开启后在应用内拉取安装包并发起安装，无需跳转浏览器",
                         cardListPosition = CardListPosition.Tail,
                     )
                 }

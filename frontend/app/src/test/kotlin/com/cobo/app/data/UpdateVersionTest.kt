@@ -68,4 +68,33 @@ class UpdateVersionTest {
         assertNull(Updater.parseLatest(body, "1.0.5", includePrerelease = false))
         assertEquals("1.0.7-pre", Updater.parseLatest(body, "1.0.5", includePrerelease = true)?.version)
     }
+
+    @Test
+    fun parseApkUrlFromReleaseAssets() {
+        val body = """
+            [
+              {
+                "tag_name": "v1.0.12-pre",
+                "prerelease": true,
+                "html_url": "https://github.com/Costben/COBO/releases/tag/v1.0.12-pre",
+                "assets": [
+                  {
+                    "name": "source.zip",
+                    "browser_download_url": "https://github.com/.../source.zip"
+                  },
+                  {
+                    "name": "Cobo-1.0.12-pre.apk",
+                    "browser_download_url": "https://github.com/Costben/COBO/releases/download/v1.0.12-pre/Cobo-1.0.12-pre.apk"
+                  }
+                ]
+              }
+            ]
+        """.trimIndent()
+        val update = Updater.parseLatest(body, "1.0.11", includePrerelease = true)
+        assertEquals("1.0.12-pre", update?.version)
+        assertEquals(
+            "https://github.com/Costben/COBO/releases/download/v1.0.12-pre/Cobo-1.0.12-pre.apk",
+            update?.apkUrl,
+        )
+    }
 }
