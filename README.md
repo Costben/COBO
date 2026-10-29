@@ -42,7 +42,7 @@
 | :--- | :--- |
 | 语言 / UI | Kotlin 2.4 · Jetpack Compose 1.11 |
 | 设计系统 | [COUI](https://github.com/suqi8/coui)（ColorOS 17 组件库，本地快照） |
-| 构建 | AGP 9.3.1 · Gradle 9.6.1 · JDK 21 |
+| 构建 | AGP 9.3.1 · Gradle 9.8.2 · JDK 21 |
 | 网络 | OkHttp 4.12 |
 | 图片 | Coil 3.6 |
 | 视频 | Media3 ExoPlayer 1.11 |
@@ -70,7 +70,7 @@ Cobo COUI/
 │   │       └── ui/               # 导航、主题、组件
 │   ├── scripts/publish-coui.sh   # 发布本地 COUI 到本地 Maven 仓库
 │   ├── scripts/e2e.sh            # 真机端到端测试
-│   └── gradlew                   # Gradle 9.6.1
+│   └── gradlew                   # Gradle 9.8.2
 ├── docs/                         # 设计文档与截图
 └── README.md
 ```
