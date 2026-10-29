@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,7 +34,6 @@ import com.cobo.app.data.Account
 import com.cobo.app.data.Draft
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.ui.NavState
-import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
@@ -41,17 +41,24 @@ import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
+import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.NotificationSwipeBox
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
+import io.github.suqi8.coui.kmp.basic.rememberNotificationSwipeState
+import io.github.suqi8.coui.kmp.core.ExperimentalCOUIApi
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Add
 import io.github.suqi8.coui.kmp.icon.extended.Delete
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -181,11 +188,14 @@ fun HistoryScreen(nav: NavState) {
     }
 }
 
+@OptIn(ExperimentalCOUIApi::class)
 @Composable
 fun AccountsScreen(nav: NavState) {
     var accounts by remember { mutableStateOf(App.store.accounts()) }
     var currentCookie by remember { mutableStateOf(App.repo.cookie()) }
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
+    // 同一时间只展开一行，和通知栏一样：拉开新的一行，上一行自己收回去。
+    var openUid by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = pageContainerColor(),
@@ -211,25 +221,63 @@ fun AccountsScreen(nav: NavState) {
         ) {
             if (accounts.isEmpty()) {
                 item { EmptyState("还没有保存的账号") }
+            } else {
+                item {
+                    Text(
+                        "左滑账号可重新登录或删除",
+                        fontSize = 12.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
             }
             itemsIndexed(accounts, key = { _, account -> account.uid }) { index, account ->
                 val current = account.cookie == currentCookie
-                Card(
-                    modifier = Modifier.fillMaxWidth().testTag("account_row_$index"),
-                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                    onClick = {
-                        App.repo.updateSession(account.cookie, account.uid)
-                        currentCookie = account.cookie
-                        nav.reset(Route.Main)
+                val name = account.name.ifBlank { "微博账号" }
+                val swipe = rememberNotificationSwipeState()
+                val scope = rememberCoroutineScope()
+                LaunchedEffect(swipe.isRevealed) {
+                    if (swipe.isRevealed) openUid = account.uid
+                }
+                LaunchedEffect(openUid) {
+                    if (openUid != account.uid && swipe.isRevealed) swipe.close()
+                }
+                NotificationSwipeBox(
+                    onSettings = {
+                        openUid = null
+                        nav.push(Route.Login(addAccount = true, fresh = true, relogin = name))
                     },
+                    onDismiss = { pendingDelete = account },
+                    settingsIcon = COUIIcons.Refresh,
+                    dismissIcon = COUIIcons.Delete,
+                    modifier = Modifier.testTag("account_row_$index"),
+                    state = swipe,
+                    minHeight = 0.dp,
+                    containerColor = CardDefaults.defaultColors().color,
+                    settingsDescription = "重新登录",
+                    dismissDescription = "删除账号",
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (swipe.isRevealed) {
+                                    scope.launch { swipe.close() }
+                                } else {
+                                    App.repo.updateSession(account.cookie, account.uid)
+                                    currentCookie = account.cookie
+                                    nav.reset(Route.Main)
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Avatar(account.avatar, 40.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    account.name.ifBlank { "微博账号" },
+                                    name,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Medium,
                                 )
@@ -251,9 +299,6 @@ fun AccountsScreen(nav: NavState) {
                                 color = COUITheme.colorScheme.onSurfaceSecondary,
                             )
                         }
-                        HighlightedIconButton(onClick = { pendingDelete = account }) {
-                            Icon(COUIIcons.Delete, "删除", Modifier.size(20.dp))
-                        }
                     }
                 }
             }
@@ -265,7 +310,10 @@ fun AccountsScreen(nav: NavState) {
             title = "移除账号",
             message = "只删除本地保存的登录信息，不会影响微博账号本身。",
             confirmText = "移除",
-            onDismiss = { pendingDelete = null },
+            onDismiss = {
+                pendingDelete = null
+                openUid = null
+            },
             onConfirm = {
                 App.store.removeAccount(account.uid)
                 accounts = App.store.accounts()

@@ -65,12 +65,17 @@ fun WebScreen(nav: NavState, url: String, title: String) {
 }
 
 @Composable
-fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false) {
+fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relogin: String? = null) {
     val scope = rememberCoroutineScope()
     var canGoBack by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var saving by remember { mutableStateOf(false) }
-    var hint by remember { mutableStateOf("登录完成后会自动保存会话") }
+    var hint by remember {
+        mutableStateOf(
+            if (relogin != null) "请登录「$relogin」，完成后会更新这个账号的登录信息"
+            else "登录完成后会自动保存会话",
+        )
+    }
 
     BackHandler(enabled = canGoBack || nav.stack.size > 1) {
         if (canGoBack) webView?.goBack()
@@ -82,7 +87,7 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false) {
         topBar = {
             SmallTopAppBar(
                 color = pageContainerColor(),
-                title = if (addAccount) "添加账号" else "登录",
+                title = if (relogin != null) "重新登录" else if (addAccount) "添加账号" else "登录",
                 navigationIcon = {
                     BackIconButton {
                         if (canGoBack) webView?.goBack()

@@ -504,7 +504,7 @@ private fun ExpandLayer(
 private fun RouteContent(route: Route, nav: NavState) {
     when (route) {
         Route.Main -> MainShell(nav)
-        is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh)
+        is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh, route.relogin)
         is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
