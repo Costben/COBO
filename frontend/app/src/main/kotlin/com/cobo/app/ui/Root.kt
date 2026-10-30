@@ -61,6 +61,7 @@ import com.cobo.app.App
 import com.cobo.app.data.UpdateCheckInterval
 import com.cobo.app.data.Updater
 import com.cobo.app.screen.AccountsScreen
+import com.cobo.app.screen.ChangelogScreen
 import com.cobo.app.screen.ChatScreen
 import com.cobo.app.screen.ContainerScreen
 import com.cobo.app.screen.DetailScreen
@@ -259,6 +260,7 @@ private fun UpdatePrompt() {
     val info = App.pendingUpdate ?: return
     UpdateDialog(
         info = info,
+        preview = App.previewingUpdate,
         onDismiss = { App.dismissUpdate() },
         onSkip = {
             App.settings.applySkippedUpdate(info.version)
@@ -540,6 +542,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.History -> HistoryScreen(nav)
         Route.Accounts -> AccountsScreen(nav)
         Route.Settings -> SettingsScreen(nav)
+        Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)
         is Route.Topic -> TopicScreen(nav, route.name)
         is Route.Images -> ImageViewerScreen(nav, route.urls, route.index)

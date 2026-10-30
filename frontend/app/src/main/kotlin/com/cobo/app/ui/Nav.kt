@@ -119,6 +119,7 @@ sealed interface Route {
     data object History : Route
     data object Accounts : Route
     data object Settings : Route
+    data object Changelog : Route
     data object Nearby : Route
     data class Topic(val name: String = "") : Route
     data class Images(val urls: List<String>, val index: Int) : Route

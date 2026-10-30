@@ -76,8 +76,21 @@ object App {
     var pendingUpdate by mutableStateOf<UpdateInfo?>(null)
         private set
 
+    /**
+     * 这次更新提示是「预览」：从更新日志页手动放一遍，不参与跳过记录，也不影响版本判断。
+     */
+    var previewingUpdate by mutableStateOf(false)
+        private set
+
     fun dismissUpdate() {
         pendingUpdate = null
+        previewingUpdate = false
+    }
+
+    /** 把任意一版的更新提示原样放一遍，用来核对弹窗界面与下载速度。 */
+    fun previewUpdate(info: UpdateInfo) {
+        previewingUpdate = true
+        pendingUpdate = info
     }
 
     /**

@@ -252,6 +252,13 @@ fun SettingsScreen(nav: NavState) {
                         onClick = { scope.launch { App.checkUpdate(manual = true) } },
                     )
                     HorizontalDivider()
+                    ArrowPreference(
+                        title = "更新日志",
+                        modifier = Modifier.testTag("settings_changelog"),
+                        cardListPosition = CardListPosition.Middle,
+                        onClick = { nav.push(Route.Changelog) },
+                    )
+                    HorizontalDivider()
                     SwitchPreference(
                         checked = autoCheckUpdate,
                         onCheckedChange = {
