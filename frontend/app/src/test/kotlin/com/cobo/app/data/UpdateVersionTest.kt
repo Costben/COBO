@@ -97,4 +97,24 @@ class UpdateVersionTest {
             update?.apkUrl,
         )
     }
+
+    /** 更新日志页要的是整份列表：顺序照 GitHub 给的（新的在前），日期取自 published_at。 */
+    @Test
+    fun changelogKeepsEveryReleaseInOrder() {
+        val body = """
+            [
+              {"tag_name":"v1.0.13-pre","prerelease":true,"html_url":"x","assets":[],
+               "published_at":"2026-10-30T02:31:12Z","body":"- 浏览历史支持筛选"},
+              {"tag_name":"v1.0.12-pre","prerelease":true,"html_url":"x","assets":[],
+               "published_at":"2026-10-29T12:00:00Z","body":"- 应用内更新"}
+            ]
+        """.trimIndent()
+
+        val all = Updater.parseReleases(body, includePrerelease = true)
+        assertEquals(listOf("1.0.13-pre", "1.0.12-pre"), all.map { it.version })
+        assertEquals("2026-10-30", all[0].publishedAt.take(10))
+        assertTrue("正文没解析出来", all[0].notes.contains("浏览历史"))
+        // 关掉预发布时整份列表都应该空掉，而不是只留最后一版。
+        assertTrue(Updater.parseReleases(body, includePrerelease = false).isEmpty())
+    }
 }
