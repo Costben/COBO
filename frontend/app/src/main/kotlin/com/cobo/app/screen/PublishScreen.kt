@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.components.ActionIcon
@@ -105,40 +106,42 @@ fun PublishScreen(nav: NavState, draft: String) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "发微博",
-                navigationIcon = { BackIconButton { leave() } },
-                actions = {
-                    TextButton(
-                        text = if (publishing) "发布中…" else "发布",
-                        modifier = Modifier.testTag("publish_send"),
-                        enabled = !publishing && (text.isNotBlank() || images.isNotEmpty()),
-                        onClick = {
-                            scope.launch {
-                                publishing = true
-                                error = null
-                                try {
-                                    val ids = ArrayList<String>()
-                                    images.forEachIndexed { index, uri ->
-                                        progress = "上传图片 ${index + 1}/${images.size}"
-                                        ids.add(App.repo.uploadImage(uri))
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "发微博",
+                    navigationIcon = { BackIconButton { leave() } },
+                    actions = {
+                        TextButton(
+                            text = if (publishing) "发布中…" else "发布",
+                            modifier = Modifier.testTag("publish_send"),
+                            enabled = !publishing && (text.isNotBlank() || images.isNotEmpty()),
+                            onClick = {
+                                scope.launch {
+                                    publishing = true
+                                    error = null
+                                    try {
+                                        val ids = ArrayList<String>()
+                                        images.forEachIndexed { index, uri ->
+                                            progress = "上传图片 ${index + 1}/${images.size}"
+                                            ids.add(App.repo.uploadImage(uri))
+                                        }
+                                        progress = "正在发布…"
+                                        App.repo.publish(text.trim(), ids)
+                                        App.notifyPublished()
+                                        progress = ""
+                                        nav.pop()
+                                    } catch (t: Throwable) {
+                                        error = t.message ?: "发布失败"
+                                    } finally {
+                                        publishing = false
                                     }
-                                    progress = "正在发布…"
-                                    App.repo.publish(text.trim(), ids)
-                                    App.notifyPublished()
-                                    progress = ""
-                                    nav.pop()
-                                } catch (t: Throwable) {
-                                    error = t.message ?: "发布失败"
-                                } finally {
-                                    publishing = false
                                 }
-                            }
-                        },
-                    )
-                },
-            )
+                            },
+                        )
+                    },
+                )
+            }
         },
     ) { padding ->
         Column(

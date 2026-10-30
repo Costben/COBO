@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -23,7 +22,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -57,6 +55,8 @@ import com.cobo.app.data.ChatMessage
 import com.cobo.app.data.chatPlainText
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
@@ -108,8 +108,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
     val listState = rememberLazyListState()
     val density = LocalDensity.current
 
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
     val me = remember { App.repo.session?.uid.orEmpty() }
     // 最新在前，LazyColumn 用 reverseLayout 铺，index 0 落在最下面。
@@ -429,28 +428,30 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
             // 和「消息」页完全同一个材质：AppBarBlurOverlay（COUI 渐变玻璃，材质量到顶栏
             // +24dp 并向下淡出）。SmallTopAppBar 的均匀磨砂会在顶栏下缘留一条硬切线，
             // 这里把它的底色设成透明，只借它的标题 / 图标排版，材质由 overlay 画。
-            AppBarBlurOverlay(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-                containerColor = pageColor,
-                scrollFraction = { 1f },
-            ) {
-                SmallTopAppBar(
-                    title = peerName,
-                    color = Color.Transparent,
-                    showDivider = false,
-                    gradientGlass = false,
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                    actions = {
-                        Avatar(
-                            url = peer?.avatar,
-                            size = 28.dp,
-                            modifier = Modifier
-                                .padding(end = 12.dp)
-                                .clickable { nav.push(Route.Profile(uid)) }
-                                .testTag("chat_peer_avatar"),
-                        )
-                    },
-                )
+            PinnedBarDensity {
+                AppBarBlurOverlay(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = { 1f },
+                ) {
+                    SmallTopAppBar(
+                        title = peerName,
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            Avatar(
+                                url = peer?.avatar,
+                                size = 28.dp,
+                                modifier = Modifier
+                                    .padding(end = 12.dp)
+                                    .clickable { nav.push(Route.Profile(uid)) }
+                                    .testTag("chat_peer_avatar"),
+                            )
+                        },
+                    )
+                }
             }
         }
     }

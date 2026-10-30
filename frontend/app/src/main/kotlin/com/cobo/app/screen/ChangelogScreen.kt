@@ -31,6 +31,7 @@ import com.cobo.app.App
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
@@ -74,19 +75,21 @@ fun ChangelogScreen(nav: NavState) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "更新日志",
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = {
-                    HighlightedIconButton(
-                        onClick = { reload++ },
-                        modifier = Modifier.couiTopAppBarActionItem().testTag("changelog_reload"),
-                    ) {
-                        Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
-                    }
-                },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "更新日志",
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                    actions = {
+                        HighlightedIconButton(
+                            onClick = { reload++ },
+                            modifier = Modifier.couiTopAppBarActionItem().testTag("changelog_reload"),
+                        ) {
+                            Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         val list = releases

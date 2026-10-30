@@ -12,14 +12,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,6 +49,8 @@ import com.cobo.app.data.Account
 import com.cobo.app.data.Draft
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
@@ -106,11 +105,13 @@ fun DraftsScreen(nav: NavState) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "草稿箱",
-                navigationIcon = { BackIconButton { nav.pop() } },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "草稿箱",
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -190,8 +191,7 @@ fun HistoryScreen(nav: NavState) {
     val pageColor = pageContainerColor()
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     // 顶栏玻璃按滚动量渐显：停在这页顶上看不到玻璃带，往下滑 30dp 后才是完整的 24dp 距离。
     // 顶部那条“左滑记录可删除”提示正好落在带内，常显会被糊掉。
     val scrollBehavior = PinnedScrollBehavior()
@@ -268,6 +268,7 @@ fun HistoryScreen(nav: NavState) {
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
+            PinnedBarDensity {
             Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                 SmallTopAppBar(
                     title = "浏览历史",
@@ -328,6 +329,7 @@ fun HistoryScreen(nav: NavState) {
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -396,18 +398,20 @@ fun AccountsScreen(nav: NavState) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "账号管理",
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = {
-                    HighlightedIconButton(onClick = {
-                        nav.push(Route.Login(addAccount = true, fresh = true))
-                    }) {
-                        Icon(COUIIcons.Add, "添加账号", Modifier.size(24.dp))
-                    }
-                },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "账号管理",
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                    actions = {
+                        HighlightedIconButton(onClick = {
+                            nav.push(Route.Login(addAccount = true, fresh = true))
+                        }) {
+                            Icon(COUIIcons.Add, "添加账号", Modifier.size(24.dp))
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         LazyColumn(

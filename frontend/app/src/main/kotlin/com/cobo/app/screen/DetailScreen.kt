@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,7 +29,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -78,6 +75,8 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.TopBarBounds
@@ -264,8 +263,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     val scheme = COUITheme.colorScheme
     // The bar floats over the list the same way it does on the feed: the first card starts below it
     // and everything scrolled past runs underneath the glass.
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     val bottomBarHeight = 56.dp + navBottomPadding()
     // Rows dim only when the wait is long enough to show the header progress line; a cached or
     // quick response swaps the list with no visible flash at all.
@@ -457,39 +455,41 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
-            // 玻璃比顶栏往下多画 24dp 做渐隐，而正文卡片只在顶栏下留 8dp：常亮的话静止时卡片顶端
-            // 就被糊住。改成 COUI 原生的随滚动出现 —— 在顶部时透明，内容滚进顶栏底下 30dp 内淡入。
-            val density = LocalDensity.current
-            AppBarBlurOverlay(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-                containerColor = pageContainerColor(),
-                scrollFraction = {
-                    val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
-                    else listState.firstVisibleItemScrollOffset.toFloat()
-                    AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
-                },
-            ) {
-            SmallTopAppBar(
-                title = "微博正文",
-                modifier = Modifier.reportTopBarBottom(topBarBounds),
-                color = Color.Transparent,
-                showDivider = false,
-                gradientGlass = false,
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = {
-                    HighlightedIconButton(
-                        onClick = {
-                            scope.launch {
-                                status = runCatching { App.repo.detail(id, force = true) }.getOrNull()
-                                loadComments(true, force = true)
+            PinnedBarDensity {
+                // 玻璃比顶栏往下多画 24dp 做渐隐，而正文卡片只在顶栏下留 8dp：常亮的话静止时卡片顶端
+                // 就被糊住。改成 COUI 原生的随滚动出现 —— 在顶部时透明，内容滚进顶栏底下 30dp 内淡入。
+                val density = LocalDensity.current
+                AppBarBlurOverlay(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = {
+                        val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+                        else listState.firstVisibleItemScrollOffset.toFloat()
+                        AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+                    },
+                ) {
+                    SmallTopAppBar(
+                        title = "微博正文",
+                        modifier = Modifier.reportTopBarBottom(topBarBounds),
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            HighlightedIconButton(
+                                onClick = {
+                                    scope.launch {
+                                        status = runCatching { App.repo.detail(id, force = true) }.getOrNull()
+                                        loadComments(true, force = true)
+                                    }
+                                },
+                                modifier = Modifier.couiTopAppBarActionItem(),
+                            ) {
+                                Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
                             }
                         },
-                        modifier = Modifier.couiTopAppBarActionItem(),
-                    ) {
-                        Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
-                    }
-                },
-            )
+                    )
+                }
             }
         }
 

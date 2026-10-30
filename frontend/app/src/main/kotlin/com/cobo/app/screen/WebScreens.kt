@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
@@ -44,15 +45,17 @@ fun WebScreen(nav: NavState, url: String, title: String) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = title,
-                navigationIcon = {
-                    BackIconButton {
-                        if (canGoBack) webView?.goBack() else nav.pop()
-                    }
-                },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = title,
+                    navigationIcon = {
+                        BackIconButton {
+                            if (canGoBack) webView?.goBack() else nav.pop()
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         WeiboWebView(
@@ -85,16 +88,18 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = if (relogin != null) "重新登录" else if (addAccount) "添加账号" else "登录",
-                navigationIcon = {
-                    BackIconButton {
-                        if (canGoBack) webView?.goBack()
-                        else if (nav.stack.size > 1) nav.pop()
-                    }
-                },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = if (relogin != null) "重新登录" else if (addAccount) "添加账号" else "登录",
+                    navigationIcon = {
+                        BackIconButton {
+                            if (canGoBack) webView?.goBack()
+                            else if (nav.stack.size > 1) nav.pop()
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {

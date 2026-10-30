@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.cobo.app.App
 import com.cobo.app.data.Status
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
@@ -131,12 +132,14 @@ fun NearbyScreen(nav: NavState) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "附近",
-                navigationIcon = { BackIconButton { nav.pop() } },
-                actions = { TextButton(text = "重新定位", onClick = { locate() }) },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "附近",
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                    actions = { TextButton(text = "重新定位", onClick = { locate() }) },
+                )
+            }
         },
     ) { padding ->
         LazyColumn(

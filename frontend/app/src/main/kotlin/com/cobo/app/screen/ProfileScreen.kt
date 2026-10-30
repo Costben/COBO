@@ -51,6 +51,8 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.attachToRow
@@ -86,10 +88,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -119,8 +118,7 @@ fun ProfileScreen(nav: NavState, uid: String?) {
     val key = uid.orEmpty()
     val tag = FollowTags[key]
     val backdrop = rememberLayerBackdrop()
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样；和「我」页同一套材质。
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
@@ -130,21 +128,23 @@ fun ProfileScreen(nav: NavState, uid: String?) {
             LocalBackdrop provides backdrop,
             LocalEdgeToEdge provides true,
         ) {
-            AppBarBlurOverlay(
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-                containerColor = pageContainerColor(),
-                scrollFraction = { 1f },
-            ) {
-                SmallTopAppBar(
-                    title = "主页",
-                    color = Color.Transparent,
-                    showDivider = false,
-                    gradientGlass = false,
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                    actions = {
-                        ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
-                    },
-                )
+            PinnedBarDensity {
+                AppBarBlurOverlay(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = { 1f },
+                ) {
+                    SmallTopAppBar(
+                        title = "主页",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
+                        },
+                    )
+                }
             }
         }
     }

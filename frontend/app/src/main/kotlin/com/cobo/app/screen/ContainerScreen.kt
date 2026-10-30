@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
@@ -52,11 +53,13 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = title,
-                navigationIcon = { BackIconButton { nav.pop() } },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = title,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         },
     ) { padding ->
         FullPagePullToRefresh(

@@ -7,13 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +34,8 @@ import com.cobo.app.data.EditVersion
 import com.cobo.app.data.Pic
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
@@ -77,8 +76,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
     LaunchedEffect(mid) { load() }
 
     val scheme = COUITheme.colorScheme
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         Box(
@@ -134,14 +132,16 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
-            SmallTopAppBar(
-                title = "编辑记录",
-                modifier = Modifier.align(Alignment.TopCenter),
-                color = pageContainerColor(),
-                showDivider = false,
-                gradientGlass = true,
-                navigationIcon = { BackIconButton { nav.pop() } },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    title = "编辑记录",
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    color = pageContainerColor(),
+                    showDivider = false,
+                    gradientGlass = true,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         }
     }
 }

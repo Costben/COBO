@@ -253,13 +253,13 @@ fun MainShell(nav: NavState) {
 
     val feedHasTabs = feedTabs.size > 1
     // The top bar floats over the lists; the first row starts below it and later rows scroll under.
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // 栏钉在自己的密度上，页面按系统密度排版，所以这里要按像素换算回当前密度。
     // 消息 and 我 wear the feed's title row alone, so their bar is exactly one row tall.
-    val topBarHeight = statusBarTop + FeedTitleRowHeight
+    val topBarHeight = pinnedHeight(FeedTitleRowHeight)
     // The feed header is two rows: the title row folds away as the list scrolls, the segment row
     // stays pinned under the status bar.
     val feedTopBarHeight = if (feedHasTabs) {
-        statusBarTop + FeedTitleRowHeight + TopAppBarDefaults.SmallTopAppBarCenterHeight
+        pinnedHeight(FeedTitleRowHeight, TopAppBarDefaults.SmallTopAppBarCenterHeight)
     } else {
         topBarHeight
     }
@@ -324,45 +324,49 @@ fun MainShell(nav: NavState) {
             LocalBackdrop provides backdrop,
             LocalEdgeToEdge provides true,
         ) {
-            MainTopBar(
-                tab = tab,
-                nav = nav,
-                feedPager = feedPager,
-                feedTabs = feedTabs,
-                guest = guest,
-                filter = filter,
-                collapsePx = feedCollapse,
-                bounds = topBarBounds,
-                onFilterSelected = { selected ->
-                    filterIndex = selected.ordinal
-                    App.settings.applyFeedFilter(selected.ordinal)
-                    // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
-                    if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
-                        selected == FeedFilter.Local
-                    ) {
-                        scope.launch { filterStores[selected]?.refresh() }
-                    }
-                    val targetPage = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
-                    scope.launch { feedPager.animateScrollToPage(targetPage) }
-                },
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-            )
+            PinnedBarDensity {
+                MainTopBar(
+                    tab = tab,
+                    nav = nav,
+                    feedPager = feedPager,
+                    feedTabs = feedTabs,
+                    guest = guest,
+                    filter = filter,
+                    collapsePx = feedCollapse,
+                    bounds = topBarBounds,
+                    onFilterSelected = { selected ->
+                        filterIndex = selected.ordinal
+                        App.settings.applyFeedFilter(selected.ordinal)
+                        // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
+                        if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
+                            selected == FeedFilter.Local
+                        ) {
+                            scope.launch { filterStores[selected]?.refresh() }
+                        }
+                        val targetPage = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
+                        scope.launch { feedPager.animateScrollToPage(targetPage) }
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                )
+            }
         }
 
         CompositionLocalProvider(LocalBackdrop provides backdrop) {
-            FloatingBottomBar(
-                tab = tab,
-                onTab = nav::setTab,
-                // 刷新键跟随当前页：消息页刷消息，其余仍走微博回顶刷新。
-                onRefresh = {
-                    if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
-                },
-                onFeedTop = { App.requestFeedTop() },
-                onPublish = {
-                    if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
-                },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            PinnedBarDensity {
+                FloatingBottomBar(
+                    tab = tab,
+                    onTab = nav::setTab,
+                    // 刷新键跟随当前页：消息页刷消息，其余仍走微博回顶刷新。
+                    onRefresh = {
+                        if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
+                    },
+                    onFeedTop = { App.requestFeedTop() },
+                    onPublish = {
+                        if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
         }
     }
 }

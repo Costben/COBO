@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
@@ -34,11 +35,13 @@ fun TopicScreen(nav: NavState, initial: String = "") {
     Scaffold(
         containerColor = pageContainerColor(),
         topBar = {
-            SmallTopAppBar(
-                color = pageContainerColor(),
-                title = "话题 / 超话",
-                navigationIcon = { BackIconButton { nav.pop() } },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    color = pageContainerColor(),
+                    title = "话题 / 超话",
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         },
     ) { padding ->
         Column(
