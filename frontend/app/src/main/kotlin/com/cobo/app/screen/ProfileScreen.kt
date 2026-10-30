@@ -79,9 +79,9 @@ import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
-import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -177,7 +177,7 @@ private fun ProfileMoreAction(tag: FollowTag?, onSelect: (FollowTag?) -> Unit) {
                 }
             }
         }
-        WindowListPopup(
+        OverlayListPopup(
             show = expanded,
             popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
             onDismissRequest = { expanded = false },

@@ -100,9 +100,9 @@ import io.github.suqi8.coui.kmp.icon.extended.Home
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Settings
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
-import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -746,7 +746,7 @@ private fun FeedTabs(
                     },
                 ) {
                     if (menu) {
-                        WindowListPopup(
+                        OverlayListPopup(
                             show = filterMenuExpanded,
                             popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
                             onDismissRequest = onFilterMenuDismiss,

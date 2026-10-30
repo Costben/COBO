@@ -43,8 +43,8 @@ import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.layout.DialogDefaults
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.theme.COUITheme
-import io.github.suqi8.coui.kmp.window.WindowDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -52,8 +52,9 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * 输入弹窗。用 COUI 的 [WindowDialog]，面板是不透明背景，带窗口遮罩，
- * 避免深色下用半透明 surfaceContainer 拼卡片导致整块透明。
+ * 输入弹窗。和 COUI 示例里那张单行输入框一样用 [OverlayDialog]：面板是磨砂玻璃，
+ * 按钮栏是浮在面板上的半透明胶囊。用独立窗口的 WindowDialog 时采不到页面 backdrop，
+ * 玻璃会退回不透明底色，胶囊直接糊在面板上。
  */
 @Composable
 fun InputDialog(
@@ -69,7 +70,7 @@ fun InputDialog(
     var result by remember { mutableStateOf<String?>(null) }
     var settled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = title,
         outsideMargin = DpSize(16.dp, 8.dp),
@@ -124,7 +125,7 @@ fun ConfirmDialog(
     var confirmed by remember { mutableStateOf(false) }
     var settled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = title,
         summary = message,
@@ -240,7 +241,7 @@ fun UpdateDialog(
         }
     }
 
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = when {
             downloading -> "正在下载新版本"
@@ -250,7 +251,6 @@ fun UpdateDialog(
         summary = when {
             downloading -> "正在拉取安装包…"
             downloadError != null -> "请重试或前往浏览器下载"
-            preview -> "预览 · 仅用于查看界面与下载速度"
             info.prerelease -> "预发布版本"
             else -> "正式版本"
         },

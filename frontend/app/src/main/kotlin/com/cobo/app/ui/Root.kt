@@ -232,6 +232,10 @@ fun CoboRoot() {
             // 菜单走独立窗口宿主（见 SaveImagesMenu）：收起一开始就把触摸交还给页面，不必等它
             // 完全收回去才能滑屏。独立窗口采不到页面内容，菜单弹出时自己抓一帧页面当玻璃底；
             // 这块 backdrop 只给本窗口里别的玻璃控件用。
+            //
+            // 弹窗宿主也挂在这里：COUI 的 OverlayDialog 走 glass surface，采不到 backdrop 就退回
+            // 不透明底色，胶囊按钮的半透明白底会直接糊在面板上。挂进 backdrop 之后面板才真的是
+            // 磨砂玻璃，按钮才浮得起来。
             Box(
                 Modifier
                     .fillMaxSize()
@@ -245,8 +249,8 @@ fun CoboRoot() {
                         onDismiss = { saveTargets = null },
                         state = saveState,
                     )
+                    COUIPopupHost()
                 }
-                COUIPopupHost()
             }
 
             // 更新提示挂在根节点：自动检查与设置页的手动检查都往 App.pendingUpdate 里写。

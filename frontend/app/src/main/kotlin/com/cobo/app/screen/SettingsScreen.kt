@@ -56,10 +56,10 @@ import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
-import io.github.suqi8.coui.kmp.window.WindowDialog
 import kotlinx.coroutines.launch
 
 @Composable
@@ -465,7 +465,7 @@ fun SettingsScreen(nav: NavState) {
 }
 
 /**
- * 「本地关注」取数账号选择。COUI 没有现成的列表选择弹窗，这里用 [WindowDialog] 自己铺一列：
+ * 「本地关注」取数账号选择。COUI 没有现成的列表选择弹窗，这里用 [OverlayDialog] 自己铺一列：
  * 选中项先记下来，等窗口收完再交出去，避免和关闭动画抢时序。
  */
 @Composable
@@ -479,7 +479,7 @@ private fun LocalFollowPicker(
     var result by remember { mutableStateOf<String?>(null) }
     var settled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = "本地关注使用账号",
         summary = "本地关注的名单存在这台设备上，不跟账号走；这里只决定用谁的身份去拉那批人的内容。",
@@ -578,7 +578,7 @@ private fun FeedTabPicker(
     var settled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
 
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = title,
         summary = "中间栏固定为全部关注。左右两侧可设置不同或相同内容，也可设为隐藏；左右均隐藏时直接单页浏览。",
