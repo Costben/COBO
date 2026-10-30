@@ -16,7 +16,7 @@ for module in "${MODULES[@]}"; do
 done
 
 cd "$COUI"
-JAVA_HOME="$JAVA_HOME" ./gradlew "${TASKS[@]}" -x dokkaGenerate
+JAVA_HOME="$JAVA_HOME" ./gradlew "${TASKS[@]}" -ProllingSnapshot -x dokkaGenerate
 
 echo
 echo "COUI published to $COUI/build/repository/local"

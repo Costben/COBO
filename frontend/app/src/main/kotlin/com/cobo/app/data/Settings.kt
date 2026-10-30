@@ -12,6 +12,7 @@ import org.json.JSONArray
 
 enum class FeedTabItem(val key: String, val label: String, val tag: String) {
     None("none", "隐藏", "feed_tab_none"),
+    Follow("follow", "关注", "feed_tab_follow"),
     Circle("circle", "好友圈", "feed_tab_circle"),
     Recommend("recommend", "推荐", "feed_tab_recommend"),
     Local("local", "本地关注", "feed_tab_local"),
@@ -73,6 +74,12 @@ class Settings(context: Context) {
     /** 自定义微博页左侧栏浏览内容（默认好友圈，可设为隐藏或其他内容）。 */
     var feedLeftTab by mutableStateOf(
         FeedTabItem.fromKey(sp.getString("feed_left_tab", null), FeedTabItem.Circle)
+    )
+        private set
+
+    /** 自定义微博页中间栏浏览内容（默认关注，不可设为隐藏）。 */
+    var feedCenterTab by mutableStateOf(
+        FeedTabItem.fromKey(sp.getString("feed_center_tab", null), FeedTabItem.Follow)
     )
         private set
 
@@ -164,6 +171,12 @@ class Settings(context: Context) {
     fun applyFeedLeftTab(item: FeedTabItem) {
         feedLeftTab = item
         sp.edit().putString("feed_left_tab", item.key).apply()
+    }
+
+    fun applyFeedCenterTab(item: FeedTabItem) {
+        if (item == FeedTabItem.None) return
+        feedCenterTab = item
+        sp.edit().putString("feed_center_tab", item.key).apply()
     }
 
     fun applyFeedRightTab(item: FeedTabItem) {

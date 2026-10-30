@@ -32,6 +32,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_font",
             "settings_predictive_back",
             "settings_feed_left_tab",
+            "settings_feed_center_tab",
             "settings_feed_right_tab",
             "settings_accounts",
             "settings_drafts",

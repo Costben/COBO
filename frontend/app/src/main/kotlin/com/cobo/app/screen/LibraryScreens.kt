@@ -450,10 +450,13 @@ fun AccountsScreen(nav: NavState) {
                     onDismiss = { pendingDelete = account },
                     settingsIcon = COUIIcons.Refresh,
                     dismissIcon = null,
-                    modifier = Modifier.testTag("account_row_$index"),
+                    modifier = Modifier
+                        .animateItem(fadeInSpec = null, placementSpec = HistoryPlacementSpec, fadeOutSpec = null)
+                        .testTag("account_row_$index"),
                     state = swipe,
                     minHeight = 0.dp,
                     containerColor = CardDefaults.defaultColors().color,
+                    dismissOnFullSwipe = true,
                     settingsDescription = "重新登录",
                     dismissDescription = "删除账号",
                 ) {

@@ -79,8 +79,10 @@ fun SettingsScreen(nav: NavState) {
     val guest = App.repo.guest
     var pickLocalFollow by remember { mutableStateOf(false) }
     var feedLeftTab by remember { mutableStateOf(App.settings.feedLeftTab) }
+    var feedCenterTab by remember { mutableStateOf(App.settings.feedCenterTab) }
     var feedRightTab by remember { mutableStateOf(App.settings.feedRightTab) }
     var pickFeedLeft by remember { mutableStateOf(false) }
+    var pickFeedCenter by remember { mutableStateOf(false) }
     var pickFeedRight by remember { mutableStateOf(false) }
 
     // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
@@ -167,6 +169,14 @@ fun SettingsScreen(nav: NavState) {
                         summary = feedLeftTab.label,
                         cardListPosition = CardListPosition.Head,
                         onClick = { pickFeedLeft = true },
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "微博中间栏",
+                        modifier = Modifier.testTag("settings_feed_center_tab"),
+                        summary = feedCenterTab.label,
+                        cardListPosition = CardListPosition.Middle,
+                        onClick = { pickFeedCenter = true },
                     )
                     PreferenceDivider()
                     ArrowPreference(
@@ -455,6 +465,20 @@ fun SettingsScreen(nav: NavState) {
         )
     }
 
+    if (pickFeedCenter) {
+        FeedTabPicker(
+            title = "微博中间栏内容",
+            selected = feedCenterTab,
+            options = FeedTabItem.entries.filter { it != FeedTabItem.None },
+            onDismiss = { pickFeedCenter = false },
+            onPick = { item ->
+                App.settings.applyFeedCenterTab(item)
+                feedCenterTab = item
+                pickFeedCenter = false
+            },
+        )
+    }
+
     if (pickFeedRight) {
         FeedTabPicker(
             title = "微博右侧栏内容",
@@ -549,6 +573,7 @@ private fun LocalFollowPicker(
 private fun FeedTabPicker(
     title: String,
     selected: FeedTabItem,
+    options: List<FeedTabItem> = FeedTabItem.entries,
     onDismiss: () -> Unit,
     onPick: (FeedTabItem) -> Unit,
 ) {
@@ -581,7 +606,6 @@ private fun FeedTabPicker(
                 propagateMinConstraints = true,
             ) {
                 ListPopupColumn {
-                    val options = FeedTabItem.entries
                     options.forEachIndexed { index, opt ->
                         DropdownImpl(
                             item = DropdownItem(text = opt.label),

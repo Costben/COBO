@@ -82,6 +82,7 @@ import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBar
+import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButtonDefaults
 import io.github.suqi8.coui.kmp.basic.SearchBarDefaults
 import io.github.suqi8.coui.kmp.basic.SearchHistoryView
@@ -526,20 +527,15 @@ fun SearchScreen(nav: NavState) {
 /**
  * 搜索框右边的三点按钮：点开选这一搜是搜微博、用户还是话题。
  * 原来是「取消」，现在入口挪到这里，搜索框底下那排分类胶囊也就撤掉了。
+ * 使用 COUI 标准的 [SearchBarActionButton]，带完整的焦散光效、材质描边与触控动效。
  */
 @Composable
 private fun SearchScopeAction(tab: SearchTab, onPick: (SearchTab) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val fieldColor = SearchBarDefaults.searchBarColors().backgroundColor
     Box {
-        Box(
-            modifier = Modifier
-                .size(SearchBarActionButtonDefaults.Height)
-                .clip(CircleShape)
-                .background(fieldColor)
-                .clickable { expanded = true }
-                .testTag("search_scope"),
-            contentAlignment = Alignment.Center,
+        SearchBarActionButton(
+            onClick = { expanded = true },
+            modifier = Modifier.testTag("search_scope"),
         ) {
             Icon(COUIIcons.More, "搜索范围", Modifier.size(22.dp))
         }

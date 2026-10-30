@@ -12,6 +12,7 @@ class FeedTabCustomizationTest {
     @Test
     fun fromKey_resolvesKnownKeys() {
         assertEquals(FeedTabItem.None, FeedTabItem.fromKey("none", FeedTabItem.Circle))
+        assertEquals(FeedTabItem.Follow, FeedTabItem.fromKey("follow", FeedTabItem.Circle))
         assertEquals(FeedTabItem.Circle, FeedTabItem.fromKey("circle", FeedTabItem.Recommend))
         assertEquals(FeedTabItem.Recommend, FeedTabItem.fromKey("recommend", FeedTabItem.Circle))
         assertEquals(FeedTabItem.Local, FeedTabItem.fromKey("local", FeedTabItem.Circle))
@@ -124,18 +125,51 @@ class FeedTabCustomizationTest {
         assertEquals("好友圈", tabs[2].label)
     }
 
+    @Test
+    fun customCenter_supported() {
+        val left = FeedTabItem.None
+        val center = FeedTabItem.Recommend
+        val right = FeedTabItem.None
+        val filter = FeedFilter.Following
+
+        val tabs = buildTabs(left = left, center = center, right = right, filter = filter)
+        assertEquals(1, tabs.size)
+        assertEquals("推荐", tabs[0].label)
+        assertFalse(tabs[0].isFollow)
+    }
+
     private fun buildTabs(
         left: FeedTabItem,
         right: FeedTabItem,
         filter: FeedFilter,
         guest: Boolean = false,
+    ): List<FeedTabSpec> = buildTabs(left, FeedTabItem.Follow, right, filter, guest)
+
+    private fun buildTabs(
+        left: FeedTabItem,
+        center: FeedTabItem,
+        right: FeedTabItem,
+        filter: FeedFilter,
+        guest: Boolean = false,
     ): List<FeedTabSpec> = buildList {
         if (left != FeedTabItem.None) {
-            add(FeedTabSpec.Custom(left, "left", guest))
+            if (left == FeedTabItem.Follow) {
+                add(FeedTabSpec.Follow(filter, guest, "left"))
+            } else {
+                add(FeedTabSpec.Custom(left, "left", guest))
+            }
         }
-        add(FeedTabSpec.Follow(filter, guest))
+        if (center == FeedTabItem.Follow) {
+            add(FeedTabSpec.Follow(filter, guest, "center"))
+        } else {
+            add(FeedTabSpec.Custom(center, "center", guest))
+        }
         if (right != FeedTabItem.None) {
-            add(FeedTabSpec.Custom(right, "right", guest))
+            if (right == FeedTabItem.Follow) {
+                add(FeedTabSpec.Follow(filter, guest, "right"))
+            } else {
+                add(FeedTabSpec.Custom(right, "right", guest))
+            }
         }
     }
 }

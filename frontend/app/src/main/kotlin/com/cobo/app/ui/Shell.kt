@@ -120,6 +120,7 @@ internal sealed class FeedTabSpec {
         override val tag: String get() = item.tag
         override val isFollow: Boolean get() = false
         override val emptyText: String get() = when (item) {
+            FeedTabItem.Follow -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有关注的人"
             FeedTabItem.Circle -> "好友圈还没有内容"
             FeedTabItem.Recommend -> "这里还没有微博"
             FeedTabItem.Local -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有本地关注"
@@ -131,8 +132,8 @@ internal sealed class FeedTabSpec {
         }
     }
 
-    data class Follow(val filter: FeedFilter, val guest: Boolean) : FeedTabSpec() {
-        override val key: String get() = "follow"
+    data class Follow(val filter: FeedFilter, val guest: Boolean, val position: String = "center") : FeedTabSpec() {
+        override val key: String get() = if (position == "center") "follow" else "${position}_follow"
         override val label: String get() = if (guest) "本地关注" else filter.label
         override val tag: String get() = "feed_tab_follow"
         override val isFollow: Boolean get() = true
@@ -158,6 +159,7 @@ fun MainShell(nav: NavState) {
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
     val guest = remember { App.repo.guest }
     val leftTab = App.settings.feedLeftTab
+    val centerTab = App.settings.feedCenterTab
     val rightTab = App.settings.feedRightTab
 
     var filterIndex by remember {
@@ -193,6 +195,7 @@ fun MainShell(nav: NavState) {
     val followStore = filterStores.getValue(filter)
 
     fun storeFor(item: FeedTabItem): FeedStore = when (item) {
+        FeedTabItem.Follow -> followStore
         FeedTabItem.Circle -> circleStore
         FeedTabItem.Recommend -> recommendStore
         FeedTabItem.Local -> filterStores.getValue(FeedFilter.Local)
@@ -203,15 +206,27 @@ fun MainShell(nav: NavState) {
         FeedTabItem.None -> friendsStore
     }
 
-    // 动态构建主页 Tab 列表：左栏（若非隐藏） + 中间固定全部关注栏 + 右栏（若非隐藏）
-    val feedTabs: List<FeedTabSpec> = remember(leftTab, rightTab, filter, guest) {
+    // 动态构建主页 Tab 列表：左栏（若非隐藏） + 中间栏（不可隐藏） + 右栏（若非隐藏）
+    val feedTabs: List<FeedTabSpec> = remember(leftTab, centerTab, rightTab, filter, guest) {
         buildList {
             if (leftTab != FeedTabItem.None) {
-                add(FeedTabSpec.Custom(leftTab, "left", guest))
+                if (leftTab == FeedTabItem.Follow) {
+                    add(FeedTabSpec.Follow(filter, guest, "left"))
+                } else {
+                    add(FeedTabSpec.Custom(leftTab, "left", guest))
+                }
             }
-            add(FeedTabSpec.Follow(filter, guest))
+            if (centerTab == FeedTabItem.Follow) {
+                add(FeedTabSpec.Follow(filter, guest, "center"))
+            } else {
+                add(FeedTabSpec.Custom(centerTab, "center", guest))
+            }
             if (rightTab != FeedTabItem.None) {
-                add(FeedTabSpec.Custom(rightTab, "right", guest))
+                if (rightTab == FeedTabItem.Follow) {
+                    add(FeedTabSpec.Follow(filter, guest, "right"))
+                } else {
+                    add(FeedTabSpec.Custom(rightTab, "right", guest))
+                }
             }
         }
     }
