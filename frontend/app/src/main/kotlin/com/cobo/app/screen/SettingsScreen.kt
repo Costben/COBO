@@ -2,22 +2,16 @@ package com.cobo.app.screen
 
 import android.webkit.CookieManager
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -39,7 +33,9 @@ import com.cobo.app.data.Account
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
@@ -99,8 +95,7 @@ fun SettingsScreen(nav: NavState) {
     val pageColor = pageContainerColor()
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
-        TopAppBarDefaults.SmallTopAppBarCenterHeight
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop).background(pageColor)) {
@@ -116,6 +111,8 @@ fun SettingsScreen(nav: NavState) {
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            item { SectionTitle("显示与交互") }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -139,19 +136,11 @@ fun SettingsScreen(nav: NavState) {
                         title = "字号",
                         modifier = Modifier.testTag("settings_font"),
                         summary = "${(fontScale * 100).toInt()}%",
-                        cardListPosition = CardListPosition.Tail,
                         onClick = {
                             fontScale = App.settings.cycleFontScale()
                         },
                     )
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    insideMargin = PaddingValues(0.dp),
-                ) {
+                    PreferenceDivider()
                     SwitchPreference(
                         checked = predictiveBack,
                         onCheckedChange = {
@@ -160,10 +149,12 @@ fun SettingsScreen(nav: NavState) {
                         },
                         title = "预测性返回手势",
                         modifier = Modifier.testTag("settings_predictive_back"),
-                        cardListPosition = CardListPosition.Full,
+                        cardListPosition = CardListPosition.Tail,
                     )
                 }
             }
+
+            item { SectionTitle("微博") }
 
             item {
                 Card(
@@ -188,6 +179,8 @@ fun SettingsScreen(nav: NavState) {
                 }
             }
 
+            item { SectionTitle("账号与内容") }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -199,6 +192,16 @@ fun SettingsScreen(nav: NavState) {
                         cardListPosition = CardListPosition.Head,
                         onClick = { nav.push(Route.Accounts) },
                     )
+                    // 纯本地模式一律用访客身份取数，没有账号可选。
+                    if (!guest) {
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "本地关注使用账号",
+                            modifier = Modifier.testTag("settings_local_follow"),
+                            summary = localFollowSummary,
+                            onClick = { pickLocalFollow = true },
+                        )
+                    }
                     PreferenceDivider()
                     ArrowPreference(
                         title = "草稿箱",
@@ -241,21 +244,7 @@ fun SettingsScreen(nav: NavState) {
                 }
             }
 
-            // 纯本地模式一律用访客身份取数，没有账号可选。
-            if (!guest) item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    insideMargin = PaddingValues(0.dp),
-                ) {
-                    ArrowPreference(
-                        title = "本地关注使用账号",
-                        modifier = Modifier.testTag("settings_local_follow"),
-                        summary = localFollowSummary,
-                        cardListPosition = CardListPosition.Full,
-                        onClick = { pickLocalFollow = true },
-                    )
-                }
-            }
+            item { SectionTitle("更新") }
 
             item {
                 Card(
@@ -312,6 +301,8 @@ fun SettingsScreen(nav: NavState) {
                 }
             }
 
+            item { SectionTitle("其他") }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -336,15 +327,24 @@ fun SettingsScreen(nav: NavState) {
                         title = "关于",
                         modifier = Modifier.testTag("settings_about"),
                         summary = "Cobo · COUI 前端",
+                        cardListPosition = CardListPosition.Tail,
                         onClick = { about = true },
                     )
-                    PreferenceDivider()
+                }
+            }
+
+            // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起。
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
                     if (guest) {
                         ArrowPreference(
                             title = "退出纯本地模式",
                             modifier = Modifier.testTag("settings_leave_local"),
                             summary = "回到登录页，本地关注名单保留",
-                            cardListPosition = CardListPosition.Tail,
+                            cardListPosition = CardListPosition.Full,
                             onClick = {
                                 App.settings.applyLocalMode(false)
                                 nav.reset(Route.Login())
@@ -355,7 +355,7 @@ fun SettingsScreen(nav: NavState) {
                             title = "退出登录",
                             modifier = Modifier.testTag("settings_logout"),
                             summary = "清除本地会话",
-                            cardListPosition = CardListPosition.Tail,
+                            cardListPosition = CardListPosition.Full,
                             onClick = { logout = true },
                         )
                     }
@@ -390,14 +390,16 @@ fun SettingsScreen(nav: NavState) {
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
-            SmallTopAppBar(
-                title = "设置",
-                modifier = Modifier.align(Alignment.TopCenter),
-                color = pageColor,
-                showDivider = false,
-                gradientGlass = true,
-                navigationIcon = { BackIconButton { nav.pop() } },
-            )
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    title = "设置",
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    color = pageColor,
+                    showDivider = false,
+                    gradientGlass = true,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         }
     }
 
@@ -468,7 +470,7 @@ fun SettingsScreen(nav: NavState) {
 }
 
 /**
- * 「本地关注」取数账号选择。COUI 没有现成的列表选择弹窗，这里用 [OverlayDialog] 自己铺一列：
+ * 「本地关注」取数账号选择。和 [FeedTabPicker] 同一套弹窗：胶囊高亮能按住上下拖着换项，
  * 选中项先记下来，等窗口收完再交出去，避免和关闭动画抢时序。
  */
 @Composable
@@ -485,7 +487,6 @@ private fun LocalFollowPicker(
     OverlayDialog(
         show = show,
         title = "本地关注使用账号",
-        summary = "本地关注的名单存在这台设备上，不跟账号走；这里只决定用谁的身份去拉那批人的内容。",
         outsideMargin = DpSize(16.dp, 8.dp),
         onDismissRequest = { show = false },
         onDismissFinished = {
@@ -497,71 +498,49 @@ private fun LocalFollowPicker(
         },
     ) {
         Column {
-            Column(
+            Box(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 320.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(max = 320.dp),
+                propagateMinConstraints = true,
             ) {
-                LocalFollowOption(
-                    title = "跟随当前账号",
-                    subtitle = "切账号后跟着变",
-                    selected = selectedUid.isBlank(),
-                    tag = "local_follow_follow_current",
-                    onClick = {
-                        result = ""
-                        show = false
-                    },
-                )
-                accounts.forEach { account ->
-                    LocalFollowOption(
-                        title = account.name.ifBlank { "UID ${account.uid}" },
-                        subtitle = "UID ${account.uid}",
-                        selected = account.uid == selectedUid,
-                        tag = "local_follow_option_${account.uid}",
-                        onClick = {
-                            result = account.uid
+                ListPopupColumn {
+                    val optionCount = accounts.size + 1
+                    DropdownImpl(
+                        item = DropdownItem(text = "跟随当前账号"),
+                        optionSize = optionCount,
+                        isSelected = selectedUid.isBlank(),
+                        index = 0,
+                        modifier = Modifier.testTag("local_follow_follow_current"),
+                        groupKey = "local-follow-accounts",
+                        onSelectedIndexChange = {
+                            result = ""
                             show = false
                         },
                     )
+                    accounts.forEachIndexed { i, account ->
+                        DropdownImpl(
+                            item = DropdownItem(
+                                text = account.name.ifBlank { "UID ${account.uid}" },
+                                summary = if (account.name.isBlank()) null else "UID ${account.uid}",
+                            ),
+                            optionSize = optionCount,
+                            isSelected = account.uid == selectedUid,
+                            index = i + 1,
+                            modifier = Modifier.testTag("local_follow_option_${account.uid}"),
+                            groupKey = "local-follow-accounts",
+                            onSelectedIndexChange = {
+                                result = accounts[it - 1].uid
+                                show = false
+                            },
+                        )
+                    }
                 }
             }
             DialogButtonBar(
                 negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
                 positive = null,
             )
-        }
-    }
-}
-
-@Composable
-private fun LocalFollowOption(
-    title: String,
-    subtitle: String = "",
-    selected: Boolean,
-    tag: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(tag)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                fontSize = 15.sp,
-                color = if (selected) COUITheme.colorScheme.primary else COUITheme.colorScheme.onBackground,
-            )
-            if (subtitle.isNotEmpty()) {
-                Text(subtitle, fontSize = 12.sp, color = COUITheme.colorScheme.onSurfaceSecondary)
-            }
-        }
-        if (selected) {
-            Text("已选", fontSize = 13.sp, color = COUITheme.colorScheme.primary)
         }
     }
 }
@@ -625,4 +604,15 @@ private fun FeedTabPicker(
             )
         }
     }
+}
+
+/** 卡片组上面的小标题。左边对齐到卡片里的文字，而不是卡片边缘。 */
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        fontSize = 13.sp,
+        color = COUITheme.colorScheme.onSurfaceSecondary,
+        modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp),
+    )
 }
