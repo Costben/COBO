@@ -1,21 +1,30 @@
 package com.cobo.app.screen
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -35,6 +44,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,6 +59,7 @@ import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.CoboPredictiveBackHandler
+import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
@@ -61,16 +73,28 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.VerifiedBadge
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
-import io.github.suqi8.coui.kmp.basic.ChipTabData
-import io.github.suqi8.coui.kmp.basic.ChipTabGroup
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.InputField
-import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
+import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBar
-import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
+import io.github.suqi8.coui.kmp.basic.SearchBarActionButtonDefaults
+import io.github.suqi8.coui.kmp.basic.SearchBarDefaults
 import io.github.suqi8.coui.kmp.basic.SearchHistoryView
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.More
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
+import io.github.suqi8.coui.kmp.blur.LocalBackdrop
+import io.github.suqi8.coui.kmp.blur.layerBackdrop
+import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import kotlinx.coroutines.launch
 
 /**
@@ -121,7 +145,6 @@ fun SearchScreen(nav: NavState) {
     val weibo = remember { SearchTabItems<Status>() }
     val users = remember { SearchTabItems<User>() }
     val topics = remember { SearchTabItems<TopicItem>() }
-    val searchTabs = remember { SearchTab.entries.map { ChipTabData(it.label) } }
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -206,14 +229,12 @@ fun SearchScreen(nav: NavState) {
         val q = keyword.trim()
         if (q.isEmpty()) return
         App.settings.pushSearchHistory(q)
-        // 从热搜 / 历史发起的新搜索回到「微博」；在结果页换关键词则留在当前分类。
-        val keepTab = submitted.isNotBlank()
+        // 搜哪一类由顶栏菜单决定，搜索前后都跟着它走：先选了「用户」再搜，出来的就是用户。
         weibo.reset()
         users.reset()
         topics.reset()
         submitted = q
-        if (!keepTab) tab = SearchTab.Weibo
-        load(if (keepTab) tab else SearchTab.Weibo, reset = true, force = true)
+        load(tab, reset = true, force = true)
     }
 
     fun selectTab(next: SearchTab) {
@@ -244,83 +265,41 @@ fun SearchScreen(nav: NavState) {
             }
     }
 
-    Scaffold(containerColor = pageContainerColor()) { padding ->
+    val backdrop = rememberLayerBackdrop()
+    // 顶栏那一行实测的高度。结果列表按它让出顶部留白，内容才能从玻璃底下滚过去。
+    var barHeight by remember { mutableIntStateOf(0) }
+    val pageDensity = LocalDensity.current
+
+    Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         val scheme = COUITheme.colorScheme
-        SearchBar(
-            expanded = expanded,
-            onExpandedChange = { isExpanded ->
-                // Fallback if SearchBar's own back handler wins: leave the page instead of
-                // showing an empty collapsed bar.
-                if (isExpanded) fieldFocused = true else nav.pop()
-            },
-            modifier = Modifier.padding(padding).fillMaxSize(),
-            inputField = {
-                InputField(
-                    query = query,
-                    onQueryChange = { query = it },
-                    onSearch = { keyword ->
-                        scope.launch { runSearch(keyword) }
-                    },
-                    expanded = expanded,
-                    onExpandedChange = { fieldFocused = it },
-                    modifier = Modifier
-                        .testTag("search_input")
-                        // The IME search action fires onSearch; a hardware or emulated
-                        // Enter has to be caught here or it just moves the cursor.
-                        .onPreviewKeyEvent { event ->
-                            val enter = event.key == Key.Enter ||
-                                event.key == Key.NumPadEnter
-                            if (event.type == KeyEventType.KeyDown && enter) {
-                                scope.launch { runSearch(query) }
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    label = "搜索微博 / 用户 / 话题",
-                )
-            },
-            outsideEndAction = {
-                SearchBarActionButton(
-                    text = "取消",
-                    onClick = {
-                        query = ""
-                        submitted = ""
-                        fieldFocused = false
-                        nav.pop()
-                    },
-                )
-            },
-        ) {
+        // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样。
+        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             Column(Modifier.fillMaxSize()) {
-                if (submitted.isBlank() && history.isNotEmpty()) {
-                    SearchHistoryView(
-                        items = history.toList(),
-                        onItemClick = { keyword ->
-                            query = keyword
-                            scope.launch { runSearch(keyword) }
-                        },
-                        onDeleteClick = { App.settings.clearSearchHistory() },
-                        title = "搜索历史",
-                        deleteIconDescription = "清空搜索历史",
-                    )
-                }
-                if (submitted.isNotBlank()) {
-                    ChipTabGroup(
-                        tabs = searchTabs,
-                        selectedIndex = tab.ordinal,
-                        onSelectedChange = { selectTab(SearchTab.entries[it]) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 2.dp),
-                    )
-                }
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 8.dp + navBottomPadding()),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 12.dp,
+                        top = with(pageDensity) { barHeight.toDp() } + 8.dp,
+                        end = 12.dp,
+                        bottom = 8.dp + navBottomPadding(),
+                    ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (submitted.isBlank() && history.isNotEmpty()) {
+                        item {
+                            SearchHistoryView(
+                                items = history.toList(),
+                                onItemClick = { keyword ->
+                                    query = keyword
+                                    scope.launch { runSearch(keyword) }
+                                },
+                                onDeleteClick = { App.settings.clearSearchHistory() },
+                                title = "搜索历史",
+                                deleteIconDescription = "清空搜索历史",
+                            )
+                        }
+                    }
                     if (submitted.isBlank()) {
                         item {
                             Text(
@@ -469,12 +448,124 @@ fun SearchScreen(nav: NavState) {
                 }
             }
         }
+
+        // 顶栏材质：ColorOS 那一套从上到下渐隐的高斯模糊，内容从玻璃底下滚过去。
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                AppBarBlurOverlay(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .onSizeChanged { barHeight = it.height },
+                    containerColor = pageContainerColor(),
+                    scrollFraction = { 1f },
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.statusBars),
+                    ) {
+                        SearchBar(
+                            expanded = expanded,
+                            onExpandedChange = { isExpanded ->
+                                // Fallback if SearchBar's own back handler wins: leave the page
+                                // instead of showing an empty collapsed bar.
+                                if (isExpanded) fieldFocused = true else nav.pop()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            inputField = {
+                                InputField(
+                                    query = query,
+                                    onQueryChange = { query = it },
+                                    onSearch = { keyword ->
+                                        scope.launch { runSearch(keyword) }
+                                    },
+                                    expanded = expanded,
+                                    onExpandedChange = { fieldFocused = it },
+                                    modifier = Modifier
+                                        .testTag("search_input")
+                                        // The IME search action fires onSearch; a hardware or
+                                        // emulated Enter has to be caught here or it just moves
+                                        // the cursor.
+                                        .onPreviewKeyEvent { event ->
+                                            val enter = event.key == Key.Enter ||
+                                                event.key == Key.NumPadEnter
+                                            if (event.type == KeyEventType.KeyDown && enter) {
+                                                scope.launch { runSearch(query) }
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                    label = "搜索微博 / 用户 / 话题",
+                                )
+                            },
+                            // 原来的「取消」换成了三点：搜索哪一类由这个菜单决定。
+                            outsideEndAction = {
+                                SearchScopeAction(
+                                    tab = tab,
+                                    onPick = { next -> selectTab(next) },
+                                )
+                            },
+                        ) {}
+                    }
+                }
+            }
+        }
     }
 
     // SearchBar installs its own back handler while expanded. Registering the navigator's
     // handler after it keeps the predictive gesture: the page follows the finger instead of
     // the bar collapsing without an animation.
     key(expanded) { CoboPredictiveBackHandler(nav) }
+}
+
+/**
+ * 搜索框右边的三点按钮：点开选这一搜是搜微博、用户还是话题。
+ * 原来是「取消」，现在入口挪到这里，搜索框底下那排分类胶囊也就撤掉了。
+ */
+@Composable
+private fun SearchScopeAction(tab: SearchTab, onPick: (SearchTab) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val fieldColor = SearchBarDefaults.searchBarColors().backgroundColor
+    Box {
+        Box(
+            modifier = Modifier
+                .size(SearchBarActionButtonDefaults.Height)
+                .clip(CircleShape)
+                .background(fieldColor)
+                .clickable { expanded = true }
+                .testTag("search_scope"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(COUIIcons.More, "搜索范围", Modifier.size(22.dp))
+        }
+        OverlayListPopup(
+            show = expanded,
+            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+            onDismissRequest = { expanded = false },
+        ) {
+            val dismiss = LocalDismissState.current
+            ListPopupColumn {
+                SearchTab.entries.forEachIndexed { index, item ->
+                    DropdownImpl(
+                        item = DropdownItem(text = item.label),
+                        optionSize = SearchTab.entries.size,
+                        isSelected = item == tab,
+                        index = index,
+                        groupKey = "search_scope",
+                        onSelectedIndexChange = {
+                            onPick(item)
+                            dismiss?.invoke()
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
