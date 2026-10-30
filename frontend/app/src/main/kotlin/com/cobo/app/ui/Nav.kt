@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -38,6 +39,22 @@ const val ExpandEnterMillis = 420
 const val ExpandExitMillis = 220
 const val RouteSlideMillis = 320
 const val RouteParallaxDivisor = 4f
+
+/**
+ * The viewer's own growth out of a thumbnail and back into it. Both ways run at the same rate:
+ * a shorter way back read as the picture snapping shut instead of folding away.
+ */
+const val ImageZoomMillis = 420
+
+/**
+ * How far the route being shown is into its own entrance, for a page that draws that entrance
+ * itself instead of being moved by the host. 0 is "not there yet", 1 is settled. Meant for layer
+ * and draw blocks, so a running transition never recomposes the page.
+ */
+@Stable
+class RouteTransition(val progress: () -> Float, val exiting: () -> Boolean)
+
+val LocalRouteTransition = staticCompositionLocalOf<RouteTransition?> { null }
 
 /**
  * The bounds of the card a detail page grows from. Captured by [expandOrigin] on the
@@ -142,6 +159,13 @@ class NavEntry(
 
     val expand: Boolean get() = route is Route.Detail && origin?.bounds != null
 
+    /**
+     * The viewer grows out of the thumbnail that was tapped rather than sliding in from the right.
+     * It draws that growth itself, so it needs the entry's own progress (see [LocalRouteTransition])
+     * and the host must leave the page where it is.
+     */
+    val growsFromImage: Boolean get() = route is Route.Images
+
     private companion object {
         var nextId = 0
     }
@@ -177,14 +201,16 @@ class NavState {
             withFrameNanos { }
             val expand = entry.expand
             if (!expand) entry.fade.snapTo(1f)
+            val millis = when {
+                expand -> ExpandEnterMillis
+                entry.growsFromImage -> ImageZoomMillis
+                else -> RouteSlideMillis
+            }
             coroutineScope {
                 launch {
                     entry.progress.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(
-                            if (expand) ExpandEnterMillis else RouteSlideMillis,
-                            easing = ExpandEasing,
-                        ),
+                        animationSpec = tween(millis, easing = ExpandEasing),
                     )
                 }
                 if (expand) {
@@ -218,12 +244,17 @@ class NavState {
             // before the frame starts shrinking, or the card would come back drawn over the bar.
             alignCardBelowBar(entry.origin)
             val expand = entry.expand
+            val millis = when {
+                expand -> ExpandExitMillis
+                entry.growsFromImage -> ImageZoomMillis
+                else -> RouteSlideMillis
+            }
             coroutineScope {
                 launch {
                     entry.progress.animateTo(
                         targetValue = 0f,
                         animationSpec = tween(
-                            if (expand) ExpandExitMillis else RouteSlideMillis,
+                            millis,
                             easing = if (expand) LinearEasing else ExpandEasing,
                         ),
                     )

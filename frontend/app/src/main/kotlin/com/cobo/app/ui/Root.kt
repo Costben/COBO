@@ -168,12 +168,15 @@ fun CoboRoot() {
     // 玻璃菜单要有一层能采样的底：把整摞路由录进 backdrop，菜单浮在上面做模糊和外发光。
     // 录制节点和读 backdrop 的节点必须是兄弟，否则菜单会把自己模糊过的样子再采一遍。
     val rootBackdrop = rememberLayerBackdrop { drawContent() }
+    // 缩略图把自己的屏幕位置登记在这里，看图页才能从被点的那张长出来、再缩回去。
+    val imageOrigins = remember { ImageOrigins() }
 
     // 顶栏和底栏在各自的节点里钉密度（见 [PinnedBarDensity]），页面内容跟随系统「显示大小」。
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
     CompositionLocalProvider(
         LocalLinkHandler provides linkHandler,
         LocalImageSaver provides imageSaver,
+        LocalImageOrigins provides imageOrigins,
     ) {
         BoxWithConstraints(
             Modifier
@@ -373,7 +376,9 @@ private fun RouteLayer(
     val belowTop = index == lastIndex - 1
     val top = nav.stack.lastOrNull()
     val topProgress: () -> Float = { top?.progress?.value ?: 1f }
-    val slide = top != null && !top.expand
+    // The viewer draws its own growth out of the thumbnail, so the host must leave it in place
+    // instead of sliding it in from the right.
+    val slide = top != null && !top.expand && !top.growsFromImage
     // ColorOS draws the screen corners as an Lp superellipse (hwui "G2", n≈2.5), not a circular
     // arc. A RoundedCornerShape parts from that curve by 0.0718 * radius along the diagonal —
     // 11px at this device's 150px corner — so the four corners showed a crescent of window
@@ -404,13 +409,23 @@ private fun RouteLayer(
             }
         }
 
-    Box(layer) {
-        if (entry.expand) {
-            ExpandLayer(entry, screenCorner, progress, { entry.fade.value }) {
+    // The viewer reads its own entrance curve through this; everything else is moved by the host.
+    val transition = remember(entry) {
+        RouteTransition(
+            progress = progress,
+            exiting = { entry.exiting || entry.previewing },
+        )
+    }
+
+    CompositionLocalProvider(LocalRouteTransition provides transition) {
+        Box(layer) {
+            if (entry.expand) {
+                ExpandLayer(entry, screenCorner, progress, { entry.fade.value }) {
+                    RouteContent(entry.route, nav)
+                }
+            } else {
                 RouteContent(entry.route, nav)
             }
-        } else {
-            RouteContent(entry.route, nav)
         }
     }
 }

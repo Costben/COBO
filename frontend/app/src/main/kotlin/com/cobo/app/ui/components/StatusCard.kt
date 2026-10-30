@@ -42,6 +42,7 @@ import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
 import com.cobo.app.ui.expandOrigin
+import com.cobo.app.ui.imageOrigin
 import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.rememberExpandOrigin
 import io.github.suqi8.coui.kmp.basic.Card
@@ -240,6 +241,8 @@ fun ImageGrid(
         } else {
             1.45f
         }
+        // 真实的宽高比（不是裁切后的格子比例）交给看图页，它才能把第一帧摆得和这张缩略图一模一样。
+        val aspect = if (pic.width > 0 && pic.height > 0) pic.width.toFloat() / pic.height else null
         val precise = rememberPreciseClickState()
         AsyncImage(
             model = pic.large,
@@ -248,6 +251,7 @@ fun ImageGrid(
             modifier = Modifier
                 .fillMaxWidth(if (compact) 0.72f else 0.86f)
                 .aspectRatio(ratio)
+                .imageOrigin(urls[0], 10.dp, aspect = aspect, model = pic.large)
                 .clip(RoundedCornerShape(10.dp))
                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                 .preciseClickAnchor(precise)
@@ -268,10 +272,18 @@ fun ImageGrid(
                     val index = row * columns + col
                     if (index < pics.size) {
                         val precise = rememberPreciseClickState()
+                        val pic = pics[index]
+                        val shown = pic.thumb.ifBlank { pic.large }
+                        val aspect = if (pic.width > 0 && pic.height > 0) {
+                            pic.width.toFloat() / pic.height
+                        } else {
+                            null
+                        }
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .aspectRatio(1f)
+                                .imageOrigin(urls[index], 8.dp, aspect = aspect, model = shown)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                                 .preciseClickAnchor(precise)
@@ -281,7 +293,7 @@ fun ImageGrid(
                                 ),
                         ) {
                             AsyncImage(
-                                model = pics[index].thumb.ifBlank { pics[index].large },
+                                model = shown,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),

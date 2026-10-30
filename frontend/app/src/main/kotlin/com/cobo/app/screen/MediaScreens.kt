@@ -21,6 +21,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -35,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -46,31 +49,64 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GraphicsLayerScope
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.fastAny
+import androidx.compose.ui.util.fastForEach
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -85,7 +121,10 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.size.Size
+import com.cobo.app.ui.LocalImageOrigins
+import com.cobo.app.ui.LocalRouteTransition
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.ThumbBounds
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
@@ -104,12 +143,41 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Download
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
+
+private const val MaxZoom = 5f
+private const val DoubleTapZoom = 2.5f
+
+// A picture narrower than this (width over height) is a long strip. Fitted inside the screen it
+// would shrink to a sliver, so it rests at the screen's width and is scrolled up and down, and it
+// is decoded at that width so the detail is there when it is zoomed.
+private const val LongImageAspect = 9f / 22f
+
+// A flick down a long strip carries on after the finger is lifted; below this speed it is just a
+// slow drag and stops where it is.
+private const val FlingMinVelocity = 350f
+
+// Pinching below the resting size is allowed so the picture does not feel walled in, but only by
+// this much and only at this fraction of the pinch's pace; letting go springs it back.
+private const val MinZoom = 0.5f
+private const val ReboundResistance = 0.5f
+
+// Ceiling on a long strip's decoded pixels, so that a very long one cannot exhaust the heap.
+private const val MaxDecodePixels = 12_000_000
+
+// Below this the picture counts as unzoomed, so float residue from pinching never blocks a swipe.
+private const val ZoomEpsilon = 0.01f
+
+// Double tap and toggle zoom animation duration.
+private const val ZoomMillis = 220
 
 // One height for every control in the viewer's top bar: a 38 dp circle next to a 32 dp pill
 // reads as a big dot and a small one, which is exactly what it looked like.
@@ -269,6 +337,12 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
+    val transition = LocalRouteTransition.current
+    val origins = LocalImageOrigins.current
+    val density = LocalDensity.current.density
+    val frame = remember { ViewerFrame() }
+    // 这条曲线只在宿主自己驱动进场时才有；没有它（比如直接渲染）就当作已经落定。
+    val progress: () -> Float = remember(transition) { transition?.progress ?: { 1f } }
 
     var chrome by remember { mutableStateOf(true) }
     var original by remember { mutableStateOf(false) }
@@ -300,17 +374,48 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
 
     val backdrop = rememberLayerBackdrop()
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().onPlaced { frame.host = it }) {
+        // 下面那一页要一直看得见，黑色底随进度一起压上来：画面是从缩略图长出来的，
+        // 而不是盖着一整块黑屏直接跳出来。
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black, alpha = progress()) })
+
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize().layerBackdrop(backdrop),
+            pageSpacing = 16.dp,
+            beyondViewportPageCount = 1,
+            modifier = Modifier
+                .fillMaxSize()
+                .layerBackdrop(backdrop)
+                // 整层按「缩略图那一块」到「整屏」插值：缩放 + 平移 + 裁剪窗口，
+                // 于是进度 0 时正好是缩略图的居中裁切，1 时是原样铺满。
+                .graphicsLayer {
+                    val p = progress()
+                    if (p >= 1f) {
+                        settle()
+                        return@graphicsLayer
+                    }
+                    val url = urls.getOrNull(pagerState.currentPage)
+                    val host = frame.host
+                    // 放大之后画面已经不在缩略图那一块里了，这时不再做映射。
+                    val live = if (url != null && host != null && !frame.zoomed) {
+                        origins.boundsOf(url, host, density)?.also { frame.thumbs[url] = it }
+                    } else {
+                        null
+                    }
+                    val thumb = live ?: url?.takeIf { !frame.zoomed }?.let { frame.thumbs[it] }
+                    openFrame(p, thumb, url?.let { frame.aspects[it] ?: thumb?.aspect })
+                },
         ) { page ->
             // Only the visible page decodes at full resolution; preloading neighbours that way
             // would hold several full-size bitmaps at once.
             Box(Modifier.fillMaxSize().preciseClickAnchor(precise)) {
                 ZoomableImage(
                     url = urls[page],
+                    thumbModel = origins.modelOf(urls[page]),
                     original = original && page == pagerState.currentPage,
+                    isCurrent = pagerState.currentPage == page,
+                    isSettledElsewhere = pagerState.settledPage != page,
+                    frame = frame,
                     onTap = { chrome = !chrome },
                     onLongPress = {
                         if (!saver.saving) {
@@ -330,6 +435,11 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // 顶栏只在进场后半段出现、退场开头就消失，不会跟着画面一起缩小。
+                        .graphicsLayer {
+                            alpha = ((progress() - ChromeFadeStart) / (1f - ChromeFadeStart))
+                                .coerceIn(0f, 1f)
+                        }
                         .align(Alignment.TopCenter)
                         // Drawn before the insets and the bar's own padding, so the ramp starts at
                         // the very top of the screen and runs [ScrimTail] past the controls.
@@ -412,82 +522,413 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
 @Composable
 private fun ZoomableImage(
     url: String,
+    thumbModel: String?,
     original: Boolean,
+    isCurrent: Boolean,
+    isSettledElsewhere: Boolean,
+    frame: ViewerFrame,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var box by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    // Whether the picture has been put at its resting position yet; until the box and the shape are
+    // both known there is nothing to place it against.
+    var placed by remember(url) { mutableStateOf(false) }
+    // The animation running after the fingers leave: a flick's carry-on, or a rebound from a pinch
+    // that went under the resting size.
+    val glide = remember { mutableStateOf<Job?>(null) }
+    val remote = url.startsWith("http://") || url.startsWith("https://")
+    var loaded by remember(url) { mutableStateOf(false) }
+    // 整图自己的不透明度，让它盖着缩略图淡进来，而不是硬切一下。
+    var reveal by remember(url) { mutableFloatStateOf(0f) }
 
-    // Coil decodes at layout size by default, which is why a pinch looks soft. Asking for the
-    // full bitmap is what makes zooming actually reveal detail.
-    val model: Any = remember(url, original, context) {
-        if (original) {
-            ImageRequest.Builder(context)
-                .data(originalSize(url))
-                .size(Size.ORIGINAL)
-                .build()
+    // A long strip is decoded at the screen's width rather than fitted to it, so zooming in shows
+    // detail instead of a stretched handful of pixels.
+    val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val decodeSize = frame.aspects[url]?.takeIf { it < LongImageAspect }?.let { aspect ->
+        val width = screenWidthPx.coerceAtLeast(1)
+        val height = (width / aspect).toInt().coerceAtLeast(1)
+        coil3.size.Size(width, minOf(height, (MaxDecodePixels / width).coerceAtLeast(1)))
+    }
+
+    val model: Any = remember(url, original, context, decodeSize) {
+        val targetUrl = if (original) originalSize(url) else url
+        ImageRequest.Builder(context)
+            .data(targetUrl.takeIf { remote } ?: targetUrl)
+            .apply {
+                if (original) {
+                    size(coil3.size.Size.ORIGINAL)
+                } else if (decodeSize != null) {
+                    size(decodeSize)
+                }
+            }
+            .build()
+    }
+
+    // The picture as laid out at rest; a picture whose shape is not known yet fills the box.
+    fun shown(): ComposeSize {
+        val aspect = frame.aspects[url] ?: return ComposeSize(box.width.toFloat(), box.height.toFloat())
+        return restSize(box.width.toFloat(), box.height.toFloat(), aspect)
+    }
+
+    // How far the picture may be dragged from centre: what overhangs the box, or nothing. A long
+    // strip overhangs the box above and below, which is what lets it scroll.
+    fun limit(at: Float): Offset {
+        val size = shown()
+        return Offset(
+            max(0f, (size.width * at - box.width) / 2f),
+            max(0f, (size.height * at - box.height) / 2f),
+        )
+    }
+
+    fun clamp(value: Offset, at: Float): Offset {
+        val max = limit(at)
+        return Offset(value.x.coerceIn(-max.x, max.x), value.y.coerceIn(-max.y, max.y))
+    }
+
+    // A long picture rests showing its top edge, so it is read from the start; every other picture
+    // rests centred, with nothing to scroll.
+    fun restPosition(): Offset = Offset(0f, limit(1f).y)
+
+    // Zooming by [by] about [focus] keeps the point under it where it is.
+    fun zoomedOffset(from: Offset, by: Float, focus: Offset): Offset {
+        val centre = Offset(box.width / 2f, box.height / 2f)
+        return from * by + (focus - centre) * (1f - by)
+    }
+
+    fun toggleZoom(focus: Offset) {
+        val startScale = scale
+        val startOffset = offset
+        val targetScale = if (startScale > 1f + ZoomEpsilon) 1f else DoubleTapZoom
+        // Coming back to rest keeps a long strip where it was scrolled to instead of jumping to
+        // its top; for everything else there is only the centre to return to.
+        val targetOffset = if (targetScale == 1f) {
+            clamp(startOffset, 1f)
         } else {
-            url
+            clamp(zoomedOffset(startOffset, targetScale / startScale, focus), targetScale)
+        }
+        scope.launch {
+            animate(0f, 1f, animationSpec = tween(ZoomMillis)) { t, _ ->
+                scale = lerp(startScale, targetScale, t)
+                offset = Offset(lerp(startOffset.x, targetOffset.x, t), lerp(startOffset.y, targetOffset.y, t))
+            }
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onLongPress = { onLongPress() },
-                    onDoubleTap = {
-                        if (scale > 1f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                        } else {
-                            scale = 2.2f
-                        }
-                    },
-                )
-            }
-            .pointerInput(Unit) {
-                // Only pinch and zoomed panning consume touches. An unconsumed horizontal drag at
-                // 1x has to reach the pager, or the gallery can never change page.
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pressed = event.changes.count { it.pressed }
-                        if (pressed >= 2) {
-                            val zoom = event.calculateZoom()
-                            val pan = event.calculatePan()
-                            scale = (scale * zoom).coerceIn(1f, 4f)
-                            offset = if (scale > 1f) offset + pan else Offset.Zero
-                            event.changes.forEach { it.consume() }
-                        } else if (pressed == 1 && scale > 1f) {
-                            offset += event.calculatePan()
-                            event.changes.forEach { it.consume() }
-                        }
-                        if (event.changes.none { it.pressed }) break
-                    }
+    // A flick runs on after the finger, the way a scroll view's does; a slow drag stops where it is
+    // let go.
+    fun flingBy(velocity: Float) {
+        val max = limit(scale).y
+        if (max <= 0f || abs(velocity) < FlingMinVelocity) return
+        glide.value?.cancel()
+        glide.value = scope.launch {
+            AnimationState(initialValue = offset.y, initialVelocity = velocity)
+                .animateDecay(exponentialDecay(frictionMultiplier = 1.2f)) {
+                    offset = Offset(offset.x, value.coerceIn(-max, max))
+                    if (value <= -max || value >= max) cancelAnimation()
                 }
-            },
-    ) {
-        AsyncImage(
-            model = model,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
+        }
+    }
+
+    // Pinched under the resting size, the picture goes straight back to it once the fingers leave:
+    // a spring, but a critically damped one, so it never overshoots and comes back a second time.
+    fun rebound() {
+        val from = scale
+        if (from >= 1f - ZoomEpsilon) return
+        glide.value?.cancel()
+        glide.value = scope.launch {
+            val settleBack = spring<Float>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium,
+            )
+            animate(from, 1f, animationSpec = settleBack) { value, _ ->
+                scale = value
+                offset = clamp(offset, value)
+            }
+        }
+    }
+
+    // The picture is put at its resting position as soon as its shape and the box are both known,
+    // and pushed back inside the box whenever the shape the decoder reports refines the one the
+    // address carried.
+    LaunchedEffect(isCurrent, box, frame.aspects[url]) {
+        if (box == IntSize.Zero || frame.aspects[url] == null) return@LaunchedEffect
+        if (isCurrent && !placed) {
+            offset = restPosition()
+            placed = true
+        } else if (placed) {
+            offset = clamp(offset, scale)
+        }
+    }
+
+    // Swiping to another picture puts this one back at rest. The page being swiped to is current
+    // before it is settled too, so it is left alone until it is the one being left behind.
+    LaunchedEffect(isCurrent, isSettledElsewhere) {
+        if (isSettledElsewhere && !isCurrent) {
+            glide.value?.cancel()
+            scale = 1f
+            offset = Offset.Zero
+            placed = false
+        }
+    }
+
+    // 只有屏幕上的这一页说了算：放大之后不再把画面映射回缩略图。
+    LaunchedEffect(isCurrent) {
+        if (isCurrent) snapshotFlow { scale > 1f + ZoomEpsilon }.collect { frame.zoomed = it }
+    }
+    LaunchedEffect(loaded) {
+        if (loaded) animate(0f, 1f, animationSpec = tween(LoadFadeMillis)) { value, _ -> reveal = value }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
                 .fillMaxSize()
+                .onSizeChanged { box = it }
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                     translationX = offset.x
                     translationY = offset.y
                 },
+        ) {
+            // The picture rests at the size it shows at. A long strip is taller than this box and
+            // overhangs it, which is what the gesture layer below scrolls; every other picture
+            // rests fitted inside the box.
+            val rest = shown()
+            val resting = if (rest.height > box.height + 0.5f) {
+                Modifier.requiredSize(
+                    with(density) { rest.width.toDp() },
+                    with(density) { rest.height.toDp() },
+                )
+            } else {
+                Modifier.fillMaxSize()
+            }
+            Box(Modifier.align(Alignment.Center).then(resting)) {
+                // 信息流里那张图先顶上：从缩略图长出来的那几帧里，看到的必须是这张照片本身，
+                // 而不是一块空框。整图到了再盖上去淡入，缩略图就一直垫在下面。
+                if (thumbModel != null && (!loaded || reveal < 1f)) {
+                    AsyncImage(
+                        model = thumbModel,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                AsyncImage(
+                    model = model,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = reveal },
+                    onSuccess = { state ->
+                        loaded = true
+                        val picture = state.painter.intrinsicSize
+                        if (picture.width > 0f && picture.height > 0f) {
+                            frame.aspects[url] = picture.width / picture.height
+                        }
+                    },
+                )
+            }
+        }
+
+        // Gestures sit above the picture, so neither can swallow a swipe.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onDoubleTap = { toggleZoom(it) },
+                        onLongPress = { onLongPress() },
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectZoomAndPan(
+                        onStart = { glide.value?.cancel() },
+                        onRelease = { velocity, taken ->
+                            if (scale < 1f - ZoomEpsilon) rebound() else if (taken) flingBy(velocity.y)
+                        },
+                    ) { focus, pan, zoom, pointers ->
+                        val current = scale
+                        val target = (current * zoom).coerceIn(MinZoom, MaxZoom)
+                        // Shrinking past the resting size only creeps along, so the picture can go
+                        // under the screen's width but feels held; letting go springs it back.
+                        val next = if (target < current && current <= 1f) {
+                            current + (target - current) * ReboundResistance
+                        } else {
+                            target
+                        }
+                        val moved = clamp(zoomedOffset(offset, next / current, focus) + pan, next)
+                        // A one-finger drag belongs to the picture only where it can actually
+                        // travel — up and down a long strip, or around a zoomed one. Across a
+                        // picture with nothing to show there, the swipe is the pager's.
+                        if (pointers == 1) {
+                            val across = abs(pan.x) >= abs(pan.y)
+                            val travels = if (across) moved.x != offset.x else moved.y != offset.y
+                            if (!travels) return@detectZoomAndPan false
+                        }
+                        scale = next
+                        offset = moved
+                        true
+                    }
+                },
         )
     }
 }
+
+/**
+ * Pinch and drag detection that only consumes what it uses. [onGesture] gets the centroid, the pan,
+ * the zoom factor and the number of fingers down, and returns whether it took the movement; when it
+ * did not, the pointer events stay free for a parent such as the pager. [onStart] runs as the
+ * fingers land; [onRelease] once they are all up, with the speed the last one left at and whether
+ * the gesture took anything at all.
+ */
+private suspend fun PointerInputScope.detectZoomAndPan(
+    onStart: () -> Unit = {},
+    onRelease: (velocity: Velocity, taken: Boolean) -> Unit = { _, _ -> },
+    onGesture: (focus: Offset, pan: Offset, zoom: Float, pointers: Int) -> Boolean,
+) {
+    awaitEachGesture {
+        var zoom = 1f
+        var pan = Offset.Zero
+        var pastTouchSlop = false
+        var taken = false
+        val tracker = VelocityTracker()
+        val touchSlop = viewConfiguration.touchSlop
+        val down = awaitFirstDown(requireUnconsumed = false)
+        tracker.addPosition(down.uptimeMillis, down.position)
+        onStart()
+        do {
+            val event = awaitPointerEvent()
+            event.changes.fastForEach { tracker.addPosition(it.uptimeMillis, it.position) }
+            val canceled = event.changes.fastAny { it.isConsumed }
+            if (!canceled) {
+                val zoomChange = event.calculateZoom()
+                val panChange = event.calculatePan()
+                if (!pastTouchSlop) {
+                    zoom *= zoomChange
+                    pan += panChange
+                    val zoomMotion = abs(1f - zoom) * event.calculateCentroidSize(useCurrent = false)
+                    if (zoomMotion > touchSlop || pan.getDistance() > touchSlop) pastTouchSlop = true
+                }
+                if (pastTouchSlop && (zoomChange != 1f || panChange != Offset.Zero)) {
+                    val pointers = event.changes.count { it.pressed }
+                    val focus = event.calculateCentroid(useCurrent = false)
+                    if (onGesture(focus, panChange, zoomChange, pointers)) {
+                        taken = true
+                        event.changes.fastForEach { change: PointerInputChange ->
+                            if (change.positionChanged()) change.consume()
+                        }
+                    }
+                }
+            }
+        } while (!canceled && event.changes.fastAny { it.pressed })
+        onRelease(tracker.calculateVelocity(), taken)
+    }
+}
+
+/** 顶栏进场只在最后这一段出现，退场开头就消失，不跟着画面一起缩。 */
+private const val ChromeFadeStart = 0.6f
+
+/** 整图淡入、缩略图淡出用掉的时长，两边都不会硬切。 */
+private const val LoadFadeMillis = 200
+
+/** 一页图画自己的进场要用到、又不属于任何一页的东西。 */
+@Stable
+private class ViewerFrame {
+    var host: LayoutCoordinates? = null
+
+    /** 屏幕上这张图是否已经放大。 */
+    var zoomed by mutableStateOf(false)
+
+    /** 每张图自己的宽高比，等它解码出来才知道。 */
+    val aspects = mutableStateMapOf<String, Float>()
+
+    /** 每张缩略图最后一次出现的位置，页面不再组合时（比如滚走了）退场还要用它。 */
+    val thumbs = HashMap<String, ThumbBounds>()
+}
+
+private fun GraphicsLayerScope.settle() {
+    alpha = 1f
+    scaleX = 1f
+    scaleY = 1f
+    translationX = 0f
+    translationY = 0f
+    shape = RectangleShape
+    clip = false
+}
+
+/**
+ * 把整层从缩略图摆到整屏。画面本来就停在它最终落定的位置（居中、按原比例），
+ * 所以绕中心放大到刚好盖住缩略图、再裁成缩略图那一块，得到的正是缩略图的居中裁切；
+ * 中间每一帧都是这两步的同一个插值。没有缩略图、或者还不知道图片本身的比例时，
+ * 只淡入并轻微放大，绝不从一块错误的位置长出来。
+ */
+private fun GraphicsLayerScope.openFrame(progress: Float, thumb: ThumbBounds?, aspect: Float?) {
+    if (size.width <= 0f || size.height <= 0f) {
+        settle()
+        return
+    }
+    val source = thumb?.rect
+    val rest = (aspect ?: source?.let { it.width / it.height })
+        ?.let { restSize(size.width, size.height, it) }
+    if (source == null || rest == null || rest.height > size.height + 0.5f) {
+        settle()
+        alpha = progress
+        scaleX = lerp(0.92f, 1f, progress)
+        scaleY = scaleX
+        return
+    }
+    val width = size.width
+    val height = size.height
+    val cover = max(source.width / rest.width, source.height / rest.height)
+    val scale = lerp(cover, 1f, progress)
+    alpha = 1f
+    transformOrigin = TransformOrigin.Center
+    scaleX = scale
+    scaleY = scale
+    translationX = lerp(source.center.x, width / 2f, progress) - width / 2f
+    translationY = lerp(source.center.y, height / 2f, progress) - height / 2f
+    // 可见窗口在图层自己的坐标里，是被缩放放大了的，所以要按缩放折算回去。
+    shape = CenteredWindow(
+        width = lerp(source.width, width, progress) / scale,
+        height = lerp(source.height, height, progress) / scale,
+        radius = lerp(thumb.cornerRadius, 0f, progress) / scale,
+    )
+    clip = true
+}
+
+private class CenteredWindow(
+    private val width: Float,
+    private val height: Float,
+    private val radius: Float,
+) : Shape {
+    override fun createOutline(
+        size: ComposeSize,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val left = (size.width - width) / 2f
+        val top = (size.height - height) / 2f
+        return Outline.Rounded(RoundRect(left, top, left + width, top + height, CornerRadius(radius)))
+    }
+}
+
+/** 一张比例为 [aspect]（宽比高）的图放在盒子里、完整放得下时的尺寸。 */
+private fun fitSize(boxWidth: Float, boxHeight: Float, aspect: Float): ComposeSize =
+    if (aspect > boxWidth / boxHeight) {
+        ComposeSize(boxWidth, boxWidth / aspect)
+    } else {
+        ComposeSize(boxHeight * aspect, boxHeight)
+    }
+
+private fun restSize(boxWidth: Float, boxHeight: Float, aspect: Float): ComposeSize =
+    if (aspect < LongImageAspect) ComposeSize(boxWidth, boxWidth / aspect) else fitSize(boxWidth, boxHeight, aspect)
 
 /** The control bar PlayerView draws at the bottom; gestures must not cover it. */
 private val ControllerStrip = 84.dp

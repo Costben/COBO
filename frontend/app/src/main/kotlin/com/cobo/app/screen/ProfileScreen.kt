@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +58,7 @@ import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.rememberExpandOrigin
+import com.cobo.app.ui.imageOrigin
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.components.Avatar
@@ -490,6 +492,9 @@ private fun ProfileHeader(
     // 头像和昵称压在封面上；有封面图时整体压暗一层，文字统一用白色保证看得清。
     val onCoverColor = if (hasCover) Color.White else scheme.onSurface
     val pagerState = rememberPagerState { covers.size }
+    // 封面在列表里只露中间一条，真实宽高比要等图片解码完才知道。记下来交给看图页，
+    // 点开时才能从这一条长出来，而不是从整张图的居中位置凭空出现。
+    val coverAspects = remember(covers) { mutableStateMapOf<Int, Float>() }
     Column(Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
@@ -534,8 +539,15 @@ private fun ProfileHeader(
                         model = covers[page],
                         contentDescription = "封面",
                         contentScale = ContentScale.Crop,
+                        onSuccess = { state ->
+                            val size = state.painter.intrinsicSize
+                            if (size.width > 0f && size.height > 0f) {
+                                coverAspects[page] = size.width / size.height
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxSize()
+                            .imageOrigin(covers[page], 0.dp, aspect = coverAspects[page])
                             .clickable { onCover(covers, page) },
                     )
                 }
