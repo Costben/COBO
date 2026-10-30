@@ -29,10 +29,10 @@ import com.cobo.app.ui.NavState
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
+import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListPosition
-import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.cardListPositionOf
 import io.github.suqi8.coui.kmp.basic.TextButton
@@ -123,7 +123,7 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
             item {
                 Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                     uids.forEachIndexed { index, uid ->
-                        if (index > 0) HorizontalDivider()
+                        if (index > 0) PreferenceDivider()
                         LocalFollowRow(
                             user = users[uid],
                             uid = uid,
@@ -144,7 +144,7 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
                     cardListPosition = CardListPosition.Head,
                     onClick = { nav.push(Route.History) },
                 )
-                HorizontalDivider()
+                PreferenceDivider()
                 ArrowPreference(
                     title = "话题 / 超话",
                     modifier = Modifier.testTag("local_topic"),

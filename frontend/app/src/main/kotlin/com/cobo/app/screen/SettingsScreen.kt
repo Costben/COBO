@@ -43,10 +43,10 @@ import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
+import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListPosition
-import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -131,7 +131,7 @@ fun SettingsScreen(nav: NavState) {
                             darkMode = App.settings.cycleDarkMode()
                         },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "字号",
                         modifier = Modifier.testTag("settings_font"),
@@ -174,7 +174,7 @@ fun SettingsScreen(nav: NavState) {
                         cardListPosition = CardListPosition.Head,
                         onClick = { pickFeedLeft = true },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "微博右侧栏",
                         modifier = Modifier.testTag("settings_feed_right_tab"),
@@ -193,18 +193,17 @@ fun SettingsScreen(nav: NavState) {
                     ArrowPreference(
                         title = "账号管理",
                         modifier = Modifier.testTag("settings_accounts"),
-                        summary = "多账号切换",
                         cardListPosition = CardListPosition.Head,
                         onClick = { nav.push(Route.Accounts) },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "草稿箱",
                         modifier = Modifier.testTag("settings_drafts"),
                         summary = "${App.store.drafts().size} 条草稿",
                         onClick = { nav.push(Route.Drafts) },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "浏览历史",
                         modifier = Modifier.testTag("settings_history"),
@@ -213,28 +212,25 @@ fun SettingsScreen(nav: NavState) {
                     )
                     // 收藏和附近挂在账号上，访客身份拿不到，纯本地模式不给入口。
                     if (!guest) {
-                        HorizontalDivider()
+                        PreferenceDivider()
                         ArrowPreference(
                             title = "收藏",
                             modifier = Modifier.testTag("settings_favorites"),
-                            summary = "查看收藏的微博",
                             onClick = { nav.push(Route.Container("230267", "收藏")) },
                         )
                     }
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "话题 / 超话",
                         modifier = Modifier.testTag("settings_topic"),
-                        summary = "按话题浏览",
                         cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.None,
                         onClick = { nav.push(Route.Topic()) },
                     )
                     if (!guest) {
-                        HorizontalDivider()
+                        PreferenceDivider()
                         ArrowPreference(
                             title = "附近",
                             modifier = Modifier.testTag("settings_nearby"),
-                            summary = "基于当前位置",
                             cardListPosition = CardListPosition.Tail,
                             onClick = { nav.push(Route.Nearby) },
                         )
@@ -270,14 +266,14 @@ fun SettingsScreen(nav: NavState) {
                         cardListPosition = CardListPosition.Head,
                         onClick = { scope.launch { App.checkUpdate(manual = true) } },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "更新日志",
                         modifier = Modifier.testTag("settings_changelog"),
                         cardListPosition = CardListPosition.Middle,
                         onClick = { nav.push(Route.Changelog) },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     SwitchPreference(
                         checked = autoCheckUpdate,
                         onCheckedChange = {
@@ -286,10 +282,9 @@ fun SettingsScreen(nav: NavState) {
                         },
                         title = "自动检查更新",
                         modifier = Modifier.testTag("settings_auto_update"),
-                        summary = "启动时检查，有新版本弹窗提示",
                         cardListPosition = CardListPosition.Middle,
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     SwitchPreference(
                         checked = acceptPrerelease,
                         onCheckedChange = {
@@ -298,10 +293,9 @@ fun SettingsScreen(nav: NavState) {
                         },
                         title = "接收预发布版本",
                         modifier = Modifier.testTag("settings_prerelease"),
-                        summary = "关闭后只提示正式版本",
                         cardListPosition = CardListPosition.Middle,
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     SwitchPreference(
                         checked = inAppUpdate,
                         onCheckedChange = {
@@ -310,7 +304,6 @@ fun SettingsScreen(nav: NavState) {
                         },
                         title = "应用内更新",
                         modifier = Modifier.testTag("settings_in_app_update"),
-                        summary = "开启后在应用内拉取安装包并发起安装，无需跳转浏览器",
                         cardListPosition = CardListPosition.Tail,
                     )
                 }
@@ -324,7 +317,6 @@ fun SettingsScreen(nav: NavState) {
                     ArrowPreference(
                         title = "清理缓存",
                         modifier = Modifier.testTag("settings_clear_cache"),
-                        summary = "图片与已保存的内容",
                         cardListPosition = CardListPosition.Head,
                         onClick = {
                             runCatching {
@@ -336,14 +328,14 @@ fun SettingsScreen(nav: NavState) {
                             message = "已清理图片与内容缓存"
                         },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "关于",
                         modifier = Modifier.testTag("settings_about"),
                         summary = "Cobo · COUI 前端",
                         onClick = { about = true },
                     )
-                    HorizontalDivider()
+                    PreferenceDivider()
                     if (guest) {
                         ArrowPreference(
                             title = "退出纯本地模式",

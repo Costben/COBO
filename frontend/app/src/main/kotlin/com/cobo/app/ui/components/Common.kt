@@ -30,15 +30,18 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.data.Membership
+import io.github.suqi8.coui.kmp.basic.BasicComponentDefaults
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshTexts
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
+import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.Text
@@ -242,6 +245,19 @@ fun BackIconButton(onClick: () -> Unit) {
     HighlightedIconButton(onClick = onClick) {
         Icon(COUIIcons.Back, "返回", Modifier.size(24.dp))
     }
+}
+
+/**
+ * 设置卡片里分隔两行的细线。
+ *
+ * COUI 的 [HorizontalDivider] 是整宽画到卡片边缘的，而 ColorOS 17 的设置卡片里分割线只从
+ * 行标题的左缘起画、右侧留同样的内缩。标题的左缘就是 [BasicComponentDefaults.InsideMargin]
+ * 的横向值，这里直接取它，将来 COUI 改了这个常量分割线会自己跟上。
+ */
+@Composable
+fun PreferenceDivider() {
+    val inset = BasicComponentDefaults.InsideMargin.calculateLeftPadding(LayoutDirection.Ltr)
+    HorizontalDivider(Modifier.padding(horizontal = inset))
 }
 
 @Composable
