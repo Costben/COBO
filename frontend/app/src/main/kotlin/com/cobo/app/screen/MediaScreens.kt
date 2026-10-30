@@ -121,6 +121,7 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.size.Size
+import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalRouteTransition
 import com.cobo.app.ui.NavState
@@ -368,8 +369,15 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
 
     ViewerSystemBars(visible = chrome)
 
-    BackHandler {
-        if (menu) menu = false else nav.pop()
+    // 长按菜单打开时，优先拦截返回键以收起菜单
+    BackHandler(enabled = menu) {
+        menu = false
+    }
+
+    // 菜单未展开时，受设置中「预测性返回手势」开关控制：
+    // 开启时跟手随侧滑进度实时缩放退出，关闭时按普通返回抬手退出。
+    if (!menu) {
+        CoboPredictiveBackHandler(nav)
     }
 
     val backdrop = rememberLayerBackdrop()
@@ -1008,7 +1016,7 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
         onDispose { player.release() }
     }
 
-    BackHandler { nav.pop() }
+    CoboPredictiveBackHandler(nav)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(

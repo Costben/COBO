@@ -244,11 +244,13 @@ class NavState {
             // before the frame starts shrinking, or the card would come back drawn over the bar.
             alignCardBelowBar(entry.origin)
             val expand = entry.expand
-            val millis = when {
+            val baseMillis = when {
                 expand -> ExpandExitMillis
                 entry.growsFromImage -> ImageZoomMillis
                 else -> RouteSlideMillis
             }
+            val remaining = entry.progress.value.coerceIn(0f, 1f)
+            val millis = (baseMillis * remaining).toInt().coerceAtLeast(1)
             coroutineScope {
                 launch {
                     entry.progress.animateTo(
@@ -263,7 +265,7 @@ class NavState {
                     launch {
                         entry.fade.animateTo(
                             targetValue = 0f,
-                            animationSpec = tween(ExpandExitMillis, easing = LinearEasing),
+                            animationSpec = tween(millis, easing = LinearEasing),
                         )
                     }
                 }
