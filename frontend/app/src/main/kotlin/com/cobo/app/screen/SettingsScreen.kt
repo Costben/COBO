@@ -47,6 +47,9 @@ import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListPosition
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -534,7 +537,7 @@ private fun LocalFollowPicker(
 @Composable
 private fun LocalFollowOption(
     title: String,
-    subtitle: String,
+    subtitle: String = "",
     selected: Boolean,
     tag: String,
     onClick: () -> Unit,
@@ -553,18 +556,15 @@ private fun LocalFollowOption(
                 fontSize = 15.sp,
                 color = if (selected) COUITheme.colorScheme.primary else COUITheme.colorScheme.onBackground,
             )
-            Text(subtitle, fontSize = 12.sp, color = COUITheme.colorScheme.onSurfaceSecondary)
+            if (subtitle.isNotEmpty()) {
+                Text(subtitle, fontSize = 12.sp, color = COUITheme.colorScheme.onSurfaceSecondary)
+            }
         }
         if (selected) {
             Text("已选", fontSize = 13.sp, color = COUITheme.colorScheme.primary)
         }
     }
 }
-
-private data class FeedTabOptionItem(
-    val item: FeedTabItem,
-    val subtitle: String,
-)
 
 @Composable
 private fun FeedTabPicker(
@@ -581,7 +581,6 @@ private fun FeedTabPicker(
     OverlayDialog(
         show = show,
         title = title,
-        summary = "中间栏固定为全部关注。左右两侧可设置不同或相同内容，也可设为隐藏；左右均隐藏时直接单页浏览。",
         outsideMargin = DpSize(16.dp, 8.dp),
         onDismissRequest = { show = false },
         onDismissFinished = {
@@ -593,33 +592,31 @@ private fun FeedTabPicker(
         },
     ) {
         Column {
-            Column(
+            // 和三点菜单同一套：ListPopupColumn 自己铺胶囊高亮和上下拖选的手势，
+            // DropdownImpl 负责选中态的勾和蓝字。propagateMinConstraints 把对话框的宽度
+            // 传给列，否则列会缩到弹层的最小宽度（约 168dp）。
+            Box(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 380.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .heightIn(max = 380.dp),
+                propagateMinConstraints = true,
             ) {
-                val options = listOf(
-                    FeedTabOptionItem(FeedTabItem.None, "不显示此栏"),
-                    FeedTabOptionItem(FeedTabItem.Circle, "互相关注的好友微博"),
-                    FeedTabOptionItem(FeedTabItem.Recommend, "热门推荐微博"),
-                    FeedTabOptionItem(FeedTabItem.Local, "按本机关注名单拉取"),
-                    FeedTabOptionItem(FeedTabItem.Original, "过滤转发，仅看原创"),
-                    FeedTabOptionItem(FeedTabItem.Special, "特别关注分组"),
-                    FeedTabOptionItem(FeedTabItem.Secret, "悄悄关注的人"),
-                    FeedTabOptionItem(FeedTabItem.Favorites, "已收藏的微博"),
-                )
-                options.forEach { opt ->
-                    LocalFollowOption(
-                        title = opt.item.label,
-                        subtitle = opt.subtitle,
-                        selected = opt.item == selected,
-                        tag = "feed_tab_option_${opt.item.key}",
-                        onClick = {
-                            result = opt.item
-                            show = false
-                        },
-                    )
+                ListPopupColumn {
+                    val options = FeedTabItem.entries
+                    options.forEachIndexed { index, opt ->
+                        DropdownImpl(
+                            item = DropdownItem(text = opt.label),
+                            optionSize = options.size,
+                            isSelected = opt == selected,
+                            index = index,
+                            modifier = Modifier.testTag("feed_tab_option_${opt.key}"),
+                            groupKey = "feed-tabs",
+                            onSelectedIndexChange = {
+                                result = options[it]
+                                show = false
+                            },
+                        )
+                    }
                 }
             }
             DialogButtonBar(
