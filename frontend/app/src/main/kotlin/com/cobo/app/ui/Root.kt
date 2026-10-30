@@ -3,6 +3,7 @@ package com.cobo.app.ui
 import android.app.Activity
 import android.os.Build
 import android.view.RoundedCorner
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -277,10 +278,24 @@ private fun UpdatePrompt() {
  * Drives the page-follow back animation. Routes with their own nested back handler (the search
  * page's SearchBar) call this again after that handler so the predictive gesture reaches the
  * navigator instead of collapsing the route without an animation.
+ *
+ * 设置里关掉预测性返回后，这里换成普通的 [BackHandler]：返回键照常能用，只是页面不再跟着
+ * 手指往回收，抬手才走。
  */
 @Composable
 fun CoboPredictiveBackHandler(nav: NavState) {
     val context = LocalContext.current
+    if (!App.settings.predictiveBack) {
+        BackHandler(enabled = true) {
+            val entry = nav.stack.lastOrNull()
+            when {
+                entry == null || nav.stack.size <= 1 -> (context as? Activity)?.moveTaskToBack(true)
+                entry.exiting -> Unit
+                else -> nav.pop()
+            }
+        }
+        return
+    }
     PredictiveBackHandler(enabled = true) { events ->
         val entry = nav.stack.lastOrNull()
         if (entry == null || nav.stack.size <= 1) {

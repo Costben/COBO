@@ -72,6 +72,7 @@ fun SettingsScreen(nav: NavState) {
     var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
     var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
+    var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -139,6 +140,24 @@ fun SettingsScreen(nav: NavState) {
                         onClick = {
                             fontScale = App.settings.cycleFontScale()
                         },
+                    )
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    SwitchPreference(
+                        checked = predictiveBack,
+                        onCheckedChange = {
+                            predictiveBack = it
+                            App.settings.applyPredictiveBack(it)
+                        },
+                        title = "预测性返回手势",
+                        modifier = Modifier.testTag("settings_predictive_back"),
+                        cardListPosition = CardListPosition.Full,
                     )
                 }
             }

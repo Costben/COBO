@@ -30,6 +30,7 @@ class SettingsE2eTest : UiE2eTest() {
         listOf(
             "settings_dark",
             "settings_font",
+            "settings_predictive_back",
             "settings_feed_left_tab",
             "settings_feed_right_tab",
             "settings_accounts",
@@ -39,6 +40,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_topic",
             "settings_nearby",
             "settings_update",
+            "settings_changelog",
             "settings_auto_update",
             "settings_prerelease",
             "settings_in_app_update",
@@ -77,6 +79,20 @@ class SettingsE2eTest : UiE2eTest() {
             assertEquals("字号没有回到初始值", before, App.settings.fontScale, 0.001f)
         } finally {
             App.settings.applyFontScale(before)
+        }
+    }
+
+    @Test
+    fun predictiveBack_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.predictiveBack
+        try {
+            tapTag("settings_predictive_back")
+            waitUntil("预测性返回开关没有切换") { App.settings.predictiveBack != before }
+            tapTag("settings_predictive_back")
+            waitUntil("预测性返回开关没有切回") { App.settings.predictiveBack == before }
+        } finally {
+            App.settings.applyPredictiveBack(before)
         }
     }
 

@@ -113,6 +113,13 @@ class Settings(context: Context) {
     var inAppUpdate by mutableStateOf(sp.getBoolean("in_app_update", false))
         private set
 
+    /**
+     * 预测性返回手势：返回时页面跟着手指往回收。关掉之后退回普通返回——按一下才走，
+     * 没有跟手的预览动画。默认开。
+     */
+    var predictiveBack by mutableStateOf(sp.getBoolean("predictive_back", true))
+        private set
+
     /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -187,6 +194,11 @@ class Settings(context: Context) {
     fun applyInAppUpdate(value: Boolean) {
         inAppUpdate = value
         sp.edit().putBoolean("in_app_update", value).apply()
+    }
+
+    fun applyPredictiveBack(value: Boolean) {
+        predictiveBack = value
+        sp.edit().putBoolean("predictive_back", value).apply()
     }
 
     fun applyLocalFollowUid(uid: String) {
