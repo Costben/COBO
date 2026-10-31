@@ -103,8 +103,12 @@ import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlinx.coroutines.launch
 
 internal sealed class FeedTabSpec {
@@ -704,10 +708,6 @@ private fun FeedTabs(
     val dark = scheme.background.luminance() < 0.5f
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
-    val page = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(
-        0f,
-        (feedTabs.size - 1).coerceAtLeast(0).toFloat()
-    )
     val labels = feedTabs.map { it.label }
     val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
@@ -721,27 +721,99 @@ private fun FeedTabs(
     val density = LocalDensity.current
     val segmentWidth = with(density) { (4 * 13).sp.toDp() } + 2.dp + 10.dp + 22.dp
     val containerWidth = segmentWidth * feedTabs.size + 8.dp
+    val segmentWidthPx = with(density) { segmentWidth.toPx() }
+    val restHeightPx = with(density) { 32.dp.toPx() }
+    val padPx = with(density) { 4.dp.toPx() }
+
+    fun centerFor(index: Int): Float = padPx + index * segmentWidthPx + segmentWidthPx / 2f
+    val firstCenter = centerFor(0)
+    val lastCenter = centerFor(max(0, feedTabs.size - 1))
+
+    val initialPage = pager.currentPage.coerceIn(0, max(0, feedTabs.size - 1))
+    val motion = remember {
+        CouiSegmentIndicatorMotion(
+            center = centerFor(initialPage),
+            width = segmentWidthPx,
+            height = restHeightPx,
+        )
+    }
+    LaunchedEffect(motion) { motion.animate() }
+
+    var lastSettledPage by remember { mutableIntStateOf(initialPage) }
+    LaunchedEffect(pager.currentPage, segmentWidthPx) {
+        val target = pager.currentPage.coerceIn(0, max(0, feedTabs.size - 1))
+        if (target != lastSettledPage) {
+            lastSettledPage = target
+            motion.select(
+                targetCenter = centerFor(target),
+                targetWidth = segmentWidthPx,
+                restHeight = restHeightPx,
+                firstCenter = firstCenter,
+                lastCenter = lastCenter,
+                maxExtraWidth = with(density) { 16.dp.toPx() },
+            )
+        }
+    }
+
+    LaunchedEffect(pager.currentPageOffsetFraction, pager.isScrollInProgress) {
+        if (pager.isScrollInProgress && !motion.isRunning) {
+            val pageFloat = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(
+                0f,
+                (feedTabs.size - 1).coerceAtLeast(0).toFloat()
+            )
+            val center = padPx + pageFloat * segmentWidthPx + segmentWidthPx / 2f
+            val offsetAbs = abs(pager.currentPageOffsetFraction)
+            val stretchFactor = sin(offsetAbs * PI.toFloat()).coerceIn(0f, 1f)
+            val dynHeight = restHeightPx * (1f - 0.1f * stretchFactor)
+            val dynWidth = segmentWidthPx + with(density) { 14.dp.toPx() } * stretchFactor
+            motion.updateDrag(center, dynWidth, dynHeight)
+        }
+    }
+
+    val handleSelect: (Int) -> Unit = { index ->
+        lastSettledPage = index
+        motion.select(
+            targetCenter = centerFor(index),
+            targetWidth = segmentWidthPx,
+            restHeight = restHeightPx,
+            firstCenter = firstCenter,
+            lastCenter = lastCenter,
+            maxExtraWidth = with(density) { 16.dp.toPx() },
+        )
+        onSelect(index)
+    }
+
+    val effectivePage = if (segmentWidthPx > 0f) {
+        ((motion.centerX - padPx - segmentWidthPx / 2f) / segmentWidthPx).coerceIn(
+            0f,
+            (feedTabs.size - 1).coerceAtLeast(0).toFloat()
+        )
+    } else {
+        0f
+    }
+
     BoxWithConstraints(
         modifier
             // Opaque 40dp capsule, the same height as the search action in the header row.
             .requiredHeight(40.dp)
             .width(containerWidth)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(CouiSegmentCapsuleShape)
             .background(containerColor),
     ) {
+        val drawW = with(density) { (motion.width * indicatorScale).toDp() }
+        val drawH = with(density) { (motion.height * indicatorScale).toDp() }
+        val drawCenterXDp = with(density) { motion.centerX.toDp() }
+        val drawLeftDp = drawCenterXDp - drawW / 2f
+        val drawTopDp = (40.dp - drawH) / 2f
+
         Box(
             Modifier
                 .offset(
-                    x = 4.dp + segmentWidth * page,
-                    y = 4.dp,
+                    x = drawLeftDp,
+                    y = drawTopDp,
                 )
-                .width(segmentWidth)
-                .height(32.dp)
-                .graphicsLayer {
-                    scaleX = indicatorScale
-                    scaleY = indicatorScale
-                }
-                .clip(RoundedCornerShape(16.dp))
+                .size(width = drawW, height = drawH)
+                .clip(CouiSegmentCapsuleShape)
                 .background(indicatorColor),
         )
         Row(
@@ -754,13 +826,13 @@ private fun FeedTabs(
                     label = spec.label,
                     index = index,
                     tag = spec.tag,
-                    page = page,
+                    page = effectivePage,
                     interactionSource = interactions[index],
                     pressed = pressed[index].value,
                     modifier = Modifier.weight(1f),
                     showArrow = menu,
                     onClick = {
-                        onSelect(index)
+                        handleSelect(index)
                         if (menu) onFilterClick()
                     },
                 ) {
