@@ -90,6 +90,7 @@ class VoteParseTest {
         assertFalse(vote.isMultiSelect)
         assertEquals(1, vote.maxSelect)
         assertEquals("截止时间 2026年11月07日 16:23", vote.endTimeStr)
+        assertEquals("2026年11月07日 16:23 截止", vote.deadlineLabel)
         assertEquals(3970, vote.partNum)
         assertFalse(vote.parted)
         assertFalse(vote.isExpired)
@@ -106,6 +107,7 @@ class VoteParseTest {
         assertEquals("7英寸2K 19.5:9大直屏", opt1.title)
         assertEquals("1917票", opt1.partNum)
         assertEquals(48.29f, opt1.partRatio, 0.01f)
+        assertEquals("48.3%", opt1.ratioLabel)
         assertFalse(opt1.selected)
 
         val opt2 = vote.options[1]

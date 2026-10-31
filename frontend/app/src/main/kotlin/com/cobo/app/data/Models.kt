@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 fun JSONObject.str(key: String, def: String = ""): String {
     val v = opt(key) ?: return def
@@ -164,7 +165,14 @@ data class VoteOption(
     val partNum: String = "",
     val partRatio: Float = 0f,
     val selected: Boolean = false,
-)
+) {
+    /** 保留一位小数，整数比例不带 `.0`。 */
+    val ratioLabel: String
+        get() {
+            val tenths = (partRatio * 10).roundToInt()
+            return if (tenths % 10 == 0) "${tenths / 10}%" else "${tenths / 10}.${tenths % 10}%"
+        }
+}
 
 data class VoteInfo(
     val id: String,
@@ -180,6 +188,12 @@ data class VoteInfo(
     val author: User? = null,
 ) {
     val isExpired: Boolean get() = status == 0
+
+    /** 接口的截止文案自带「截止时间」前缀；其它形式（如剩余时间）原样展示。 */
+    val deadlineLabel: String
+        get() = endTimeStr.trim().let {
+            if (it.startsWith("截止时间")) "${it.removePrefix("截止时间").trim()} 截止" else it
+        }
 }
 
 fun extractVoteId(text: String?): String? {
@@ -319,10 +333,6 @@ data class Status(
 
             val retweeted = if (depth < 2) parse(o.optJSONObject("retweeted_status"), depth + 1) else null
 
-            val isVote = o.int("is_vote") == 1 ||
-                page?.str("object_type") == "hudongvote" ||
-                page?.str("type") == "23"
-
             var voteId: String? = null
             if (page != null) {
                 val cardInfo = page.optJSONObject("card_info")
@@ -336,6 +346,11 @@ data class Status(
             if (voteId == null) {
                 voteId = extractVoteId(o.str("text"))
             }
+
+            val isVote = o.int("is_vote") == 1 ||
+                page?.str("object_type") == "hudongvote" ||
+                page?.str("type") == "23" ||
+                voteId != null
 
             return Status(
                 id = id,

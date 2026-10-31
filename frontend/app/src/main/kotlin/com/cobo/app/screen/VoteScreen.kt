@@ -387,7 +387,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                             }
                                             Spacer(Modifier.width(12.dp))
                                             Text(
-                                                text = "${option.partRatio}%",
+                                                text = option.ratioLabel,
                                                 fontSize = 16.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (option.selected) scheme.primary else scheme.onSurface,
@@ -426,6 +426,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                     }
                                 },
                                 enabled = selectedIds.isNotEmpty() && !submitting,
+                                colors = ButtonDefaults.buttonColorsPrimary(),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(48.dp),
