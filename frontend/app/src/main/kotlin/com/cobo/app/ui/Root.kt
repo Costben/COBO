@@ -78,6 +78,7 @@ import com.cobo.app.screen.SearchScreen
 import com.cobo.app.screen.SettingsScreen
 import com.cobo.app.screen.TopicScreen
 import com.cobo.app.screen.VideoScreen
+import com.cobo.app.screen.VoteScreen
 import com.cobo.app.screen.WebScreen
 import com.cobo.app.ui.components.ImageSaver
 import com.cobo.app.ui.components.LocalImageSaver
@@ -131,10 +132,12 @@ fun CoboRoot() {
         { raw: String ->
             // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，先拆出真实地址再决定去哪。
             val url = unwrapSinaUrl(raw) ?: raw
+            val voteId = weiboVoteId(url)
             val statusId = weiboStatusId(url)
             val uid = weiboUserId(url)
             val mention = weiboMentionName(url)
             when {
+                voteId != null -> nav.push(Route.Vote(voteId))
                 isImageLink(url) -> nav.push(Route.Images(listOf(url), 0))
                 statusId != null -> nav.push(Route.Detail(statusId, ""))
                 uid != null -> nav.push(Route.Profile(uid))
@@ -145,6 +148,20 @@ fun CoboRoot() {
                         nav.push(Route.Profile(target))
                     } else {
                         resolveWeiboLink(raw)?.let { nav.push(Route.Web(it, mention)) }
+                    }
+                }
+                isWeiboShortLink(url) -> scope.launch {
+                    val resolved = App.repo.resolveShortUrl(url)
+                    val vid = weiboVoteId(resolved)
+                    if (vid != null) {
+                        nav.push(Route.Vote(vid))
+                    } else {
+                        val sid = weiboStatusId(resolved)
+                        if (sid != null) {
+                            nav.push(Route.Detail(sid, ""))
+                        } else {
+                            resolveWeiboLink(resolved)?.let { nav.push(Route.Web(it, "网页")) }
+                        }
                     }
                 }
                 else -> resolveWeiboLink(url)?.let { nav.push(Route.Web(it, "网页")) }
@@ -577,6 +594,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Topic -> TopicScreen(nav, route.name)
         is Route.Images -> ImageViewerScreen(nav, route.urls, route.index)
         is Route.Video -> VideoScreen(nav, route.url, route.title)
+        is Route.Vote -> VoteScreen(nav, route.voteId)
     }
 }
 

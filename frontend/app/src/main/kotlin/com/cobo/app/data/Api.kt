@@ -112,6 +112,53 @@ object Api {
         execute(Request.Builder().url(url).weiboHeaders(cookie, st).post(body).build())
     }
 
+    suspend fun getHtml(url: String, cookie: String?): String = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", WEB_UA)
+            .header("Referer", "https://m.weibo.cn/")
+            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw ApiHttpException(response.code, response.body?.string().orEmpty())
+            response.body?.string().orEmpty()
+        }
+    }
+
+    suspend fun resolveRedirect(url: String, cookie: String?): String = withContext(Dispatchers.IO) {
+        val noRedirectClient = client.newBuilder().followRedirects(false).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", WEB_UA)
+            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+            .get()
+            .build()
+        noRedirectClient.newCall(request).execute().use { response ->
+            response.header("Location") ?: url
+        }
+    }
+
+    suspend fun postVote(
+        url: String,
+        form: Map<String, String>,
+        cookie: String?,
+        referer: String,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val body = FormBody.Builder().apply {
+            form.forEach { (k, v) -> add(k, v) }
+        }.build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", WEB_UA)
+            .header("Referer", referer)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+            .post(body)
+            .build()
+        execute(request)
+    }
+
     suspend fun upload(
         url: String,
         bytes: ByteArray,

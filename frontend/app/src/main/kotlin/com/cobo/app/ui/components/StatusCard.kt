@@ -19,6 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +46,7 @@ import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
+import com.cobo.app.ui.LocalLinkHandler
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.imageOrigin
 import com.cobo.app.ui.components.LocalImageSaver
@@ -53,6 +59,7 @@ import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun StatusCard(
@@ -86,6 +93,10 @@ fun StatusCard(
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 20.sp else 22.sp,
             )
+        }
+        if (status.isVote) {
+            Spacer(Modifier.height(8.dp))
+            StatusVoteCard(status = status)
         }
         StatusMedia(status, compact, onImage, onVideo)
         if (status.retweeted != null) {
@@ -404,6 +415,117 @@ fun RetweetBlock(
                 lineHeight = 18.sp,
             )
         }
+        if (status.isVote) {
+            Spacer(Modifier.height(6.dp))
+            StatusVoteCard(status = status)
+        }
         StatusMedia(status, true, onImage, onVideo)
+    }
+}
+
+@Composable
+fun StatusVoteCard(
+    status: Status,
+    modifier: Modifier = Modifier,
+) {
+    val linkHandler = LocalLinkHandler.current
+    val scope = rememberCoroutineScope()
+    val scheme = COUITheme.colorScheme
+    var voteId by remember(status.id) { mutableStateOf(status.voteId) }
+    var resolving by remember(status.id) { mutableStateOf(false) }
+
+    val onClick = {
+        val currentId = voteId
+        if (currentId != null) {
+            linkHandler("https://vote.weibo.com/h5/index/index?vote_id=$currentId")
+        } else if (!resolving) {
+            resolving = true
+            scope.launch {
+                val resolved = App.repo.resolveStatusVoteId(status.id, status.textHtml)
+                if (resolved != null) {
+                    voteId = resolved
+                    linkHandler("https://vote.weibo.com/h5/index/index?vote_id=$resolved")
+                } else {
+                    App.toast("未找到投票信息")
+                }
+                resolving = false
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(scheme.surfaceContainerHigh.copy(alpha = 0.65f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(scheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CoboIcons.Poll,
+                    contentDescription = "投票",
+                    tint = scheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(scheme.primary.copy(alpha = 0.14f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "投票",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.primary,
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "微博投票",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.onSurface,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "点击进入原生页面参与投票与查看统计",
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(scheme.primary)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = if (resolving) "加载中…" else "去投票",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = scheme.onPrimary,
+                )
+            }
+        }
     }
 }

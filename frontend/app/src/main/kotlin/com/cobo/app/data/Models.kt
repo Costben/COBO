@@ -157,6 +157,102 @@ data class VideoInfo(
     val url: String,
 )
 
+data class VoteOption(
+    val id: String,
+    val title: String,
+    val pic: String = "",
+    val partNum: String = "",
+    val partRatio: Float = 0f,
+    val selected: Boolean = false,
+)
+
+data class VoteInfo(
+    val id: String,
+    val title: String,
+    val sk: String = "",
+    val status: Int = 1,
+    val isMultiSelect: Boolean = false,
+    val maxSelect: Int = 1,
+    val endTimeStr: String = "",
+    val partNum: Int = 0,
+    val parted: Boolean = false,
+    val options: List<VoteOption> = emptyList(),
+    val author: User? = null,
+) {
+    val isExpired: Boolean get() = status == 0
+}
+
+fun extractVoteId(text: String?): String? {
+    if (text.isNullOrBlank()) return null
+    val regex = Regex("""vote_id=([0-9a-zA-Z_\-]+)""")
+    val match = regex.find(text)
+    if (match != null) return match.groupValues[1]
+    val pageIdRegex = Regex("""231716([0-9a-zA-Z_\-]+)""")
+    val match2 = pageIdRegex.find(text)
+    if (match2 != null) return match2.groupValues[1]
+    return null
+}
+
+fun extractVoteIdFromUrlStruct(arr: JSONArray?): String? {
+    if (arr == null) return null
+    for (i in 0 until arr.length()) {
+        val item = arr.optJSONObject(i) ?: continue
+        for (field in listOf("ori_url", "long_url", "h5_target_url", "page_id")) {
+            val v = item.str(field)
+            val vid = extractVoteId(v)
+            if (vid != null) return vid
+        }
+    }
+    return null
+}
+
+fun parseVoteInfoJson(voteId: String, sk: String, vi: JSONObject, fallbackAuthor: User? = null): VoteInfo {
+    val authorObj = vi.optJSONObject("launch_userinfo")
+    val author = if (authorObj != null) {
+        User(
+            id = authorObj.str("uid"),
+            name = authorObj.str("name"),
+            avatar = authorObj.str("avatar_large").ifBlank { authorObj.str("avatar") },
+            svip = authorObj.str("logo").contains("gold") || authorObj.str("logo").contains("vip"),
+        )
+    } else fallbackAuthor
+
+    val options = ArrayList<VoteOption>()
+    val optArr = vi.optJSONArray("option_list") ?: vi.optJSONArray("vote_list")
+    if (optArr != null) {
+        for (i in 0 until optArr.length()) {
+            val opt = optArr.optJSONObject(i) ?: continue
+            val ratio = opt.optDouble("part_ratio", 0.0).toFloat()
+            val normalizedRatio = if (ratio in 0.0f..1.0f) ratio * 100f else ratio
+            options.add(
+                VoteOption(
+                    id = opt.str("id"),
+                    title = opt.str("title").ifBlank { opt.str("content") },
+                    pic = opt.str("pic"),
+                    partNum = opt.str("part_num"),
+                    partRatio = normalizedRatio,
+                    selected = opt.int("selected") > 0,
+                )
+            )
+        }
+    }
+
+    val limited = vi.int("limited", vi.int("maximum", 1))
+    return VoteInfo(
+        id = vi.str("id", voteId),
+        title = vi.str("title").ifBlank { vi.str("content") },
+        sk = sk,
+        status = vi.int("status", vi.int("state", 1)),
+        isMultiSelect = limited > 1 || vi.int("is_multi_select") > 0,
+        maxSelect = limited,
+        endTimeStr = vi.str("end_time_str").ifBlank { vi.str("show_str") },
+        partNum = vi.int("part_num", vi.int("part_info")),
+        parted = vi.int("parted") > 0,
+        options = options,
+        author = author,
+    )
+}
+
 data class Status(
     val id: String,
     val mid: String,
@@ -173,6 +269,8 @@ data class Status(
     val liked: Boolean = false,
     val region: String = "",
     val editCount: Int = 0,
+    val isVote: Boolean = false,
+    val voteId: String? = null,
 ) {
     val plainText: String get() = stripHtml(textHtml)
 
@@ -221,6 +319,24 @@ data class Status(
 
             val retweeted = if (depth < 2) parse(o.optJSONObject("retweeted_status"), depth + 1) else null
 
+            val isVote = o.int("is_vote") == 1 ||
+                page?.str("object_type") == "hudongvote" ||
+                page?.str("type") == "23"
+
+            var voteId: String? = null
+            if (page != null) {
+                val cardInfo = page.optJSONObject("card_info")
+                val voteObj = cardInfo?.optJSONObject("vote_object")
+                voteId = voteObj?.str("id")?.takeIf { it.isNotBlank() }
+                    ?: extractVoteId(page.str("page_url"))
+            }
+            if (voteId == null) {
+                voteId = extractVoteIdFromUrlStruct(o.optJSONArray("url_struct"))
+            }
+            if (voteId == null) {
+                voteId = extractVoteId(o.str("text"))
+            }
+
             return Status(
                 id = id,
                 mid = o.str("mid").ifBlank { id },
@@ -237,6 +353,8 @@ data class Status(
                 liked = o.optBoolean("liked", false),
                 region = o.str("region_name"),
                 editCount = o.int("edit_count"),
+                isVote = isVote,
+                voteId = voteId,
             )
         }
     }

@@ -355,4 +355,49 @@ object CoboIcons {
             }
         }.build()
     }
+
+    val Poll: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Poll",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.0f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(5f, 19f)
+                lineTo(5f, 11f)
+                moveTo(12f, 19f)
+                lineTo(12f, 5f)
+                moveTo(19f, 19f)
+                lineTo(19f, 14f)
+            }
+        }.build()
+    }
+
+    val Check: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Check",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(4.5f, 12.5f)
+                lineTo(9.5f, 17.5f)
+                lineTo(19.5f, 7.5f)
+            }
+        }.build()
+    }
 }

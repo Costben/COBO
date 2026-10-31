@@ -176,3 +176,12 @@ fun weiboStatusId(raw: String): String? {
     if (head != "status" && head != "detail") return null
     return id.takeIf { it.all(Char::isDigit) }
 }
+
+/** 投票直链（vote.weibo.com 或带有 vote_id 参数的页面）。 */
+fun weiboVoteId(raw: String): String? = com.cobo.app.data.extractVoteId(raw)
+
+/** 是否是 t.cn 这类短链接，点击时先探测目标地址以防掉进通用网页 WebView。 */
+fun isWeiboShortLink(raw: String): Boolean {
+    val trimmed = raw.trim().lowercase()
+    return trimmed.startsWith("http://t.cn/") || trimmed.startsWith("https://t.cn/")
+}

@@ -141,6 +141,7 @@ sealed interface Route {
     data class Topic(val name: String = "") : Route
     data class Images(val urls: List<String>, val index: Int) : Route
     data class Video(val url: String, val title: String) : Route
+    data class Vote(val voteId: String) : Route
 }
 
 class NavEntry(

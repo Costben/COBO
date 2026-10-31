@@ -622,6 +622,94 @@ class Repo(private val context: Context, private val store: Store) {
         }
     }
 
+    suspend fun resolveShortUrl(url: String): String =
+        runCatching { Api.resolveRedirect(url, cookie()) }.getOrDefault(url)
+
+    suspend fun resolveStatusVoteId(statusId: String, textHtml: String): String? {
+        val tcnMatch = Regex("""https?://t\.cn/[a-zA-Z0-9]+""").find(textHtml)
+        if (tcnMatch != null) {
+            val redirected = resolveShortUrl(tcnMatch.value)
+            val vid = extractVoteId(redirected)
+            if (vid != null) return vid
+        }
+        return runCatching {
+            val root = Api.getDesktop("https://weibo.com/ajax/statuses/show?id=$statusId", cookie())
+            val page = root.optJSONObject("page_info")
+            val card = page?.optJSONObject("card_info")
+            val voteObj = card?.optJSONObject("vote_object")
+            voteObj?.str("id")?.takeIf { it.isNotBlank() }
+                ?: extractVoteId(page?.str("page_url"))
+                ?: extractVoteIdFromUrlStruct(root.optJSONArray("url_struct"))
+        }.getOrNull()
+    }
+
+    suspend fun fetchVote(voteId: String): VoteInfo {
+        val url = "https://vote.weibo.com/h5/index/index?vote_id=$voteId"
+        val html = Api.getHtml(url, cookie())
+        val regex = Regex("""window\.__DATA__\s*=\s*(\{.*?\})\s*\|\|\s*''\s*;""", RegexOption.DOT_MATCHES_ALL)
+        val match = regex.find(html) ?: throw ApiException("无法解析投票页面数据")
+        val root = try {
+            JSONObject(match.groupValues[1])
+        } catch (_: Throwable) {
+            throw ApiException("投票数据格式错误")
+        }
+        val sk = root.str("sk")
+        val vi = root.optJSONObject("vote_info") ?: throw ApiException("未找到投票信息")
+        return parseVoteInfoJson(voteId, sk, vi)
+    }
+
+    suspend fun castVote(voteId: String, optionIds: List<String>, sk: String): VoteInfo {
+        if (optionIds.isEmpty()) throw ApiException("请选择投票选项")
+        val cookie = loginCookie()
+        val form = mapOf(
+            "vote_id" to voteId,
+            "vote_optionids" to optionIds.joinToString(","),
+            "sk" to sk,
+        )
+        val referer = "https://vote.weibo.com/h5/index/index?vote_id=$voteId"
+        val root = Api.postVote(
+            "https://vote.weibo.com/vote/h5/aj/vote/index",
+            form,
+            cookie,
+            referer,
+        )
+        val code = root.optInt("code", 0)
+        if (code != 1) {
+            throw ApiException(root.str("msg").ifBlank { "投票失败 ($code)" })
+        }
+        val data = root.optJSONObject("data")
+        val vi = data?.optJSONObject("vote_info")
+        if (vi != null) {
+            return parseVoteInfoJson(voteId, sk, vi)
+        }
+        return fetchVote(voteId)
+    }
+
+    suspend fun uncastVote(voteId: String, sk: String): VoteInfo {
+        val cookie = loginCookie()
+        val form = mapOf(
+            "vote_id" to voteId,
+            "sk" to sk,
+        )
+        val referer = "https://vote.weibo.com/h5/index/index?vote_id=$voteId"
+        val root = Api.postVote(
+            "https://vote.weibo.com/vote/h5/aj/cancelvote/index",
+            form,
+            cookie,
+            referer,
+        )
+        val code = root.optInt("code", 0)
+        if (code != 1) {
+            throw ApiException(root.str("msg").ifBlank { "取消投票失败 ($code)" })
+        }
+        val data = root.optJSONObject("data")
+        val vi = data?.optJSONObject("vote_info")
+        if (vi != null) {
+            return parseVoteInfoJson(voteId, sk, vi)
+        }
+        return fetchVote(voteId)
+    }
+
     suspend fun comments(
         id: String,
         mid: String,
