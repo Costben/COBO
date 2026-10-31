@@ -622,17 +622,24 @@ class Repo(private val context: Context, private val store: Store) {
         }
     }
 
+    private val voteCache = java.util.concurrent.ConcurrentHashMap<String, VoteInfo>()
+    private val statusVoteIdCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     suspend fun resolveShortUrl(url: String): String =
         runCatching { Api.resolveRedirect(url, cookie()) }.getOrDefault(url)
 
     suspend fun resolveStatusVoteId(statusId: String, textHtml: String): String? {
+        statusVoteIdCache[statusId]?.let { return it }
         val tcnMatch = Regex("""https?://t\.cn/[a-zA-Z0-9]+""").find(textHtml)
         if (tcnMatch != null) {
             val redirected = resolveShortUrl(tcnMatch.value)
             val vid = extractVoteId(redirected)
-            if (vid != null) return vid
+            if (vid != null) {
+                statusVoteIdCache[statusId] = vid
+                return vid
+            }
         }
-        return runCatching {
+        val resolved = runCatching {
             val root = Api.getDesktop("https://weibo.com/ajax/statuses/show?id=$statusId", cookie())
             val page = root.optJSONObject("page_info")
             val card = page?.optJSONObject("card_info")
@@ -641,9 +648,16 @@ class Repo(private val context: Context, private val store: Store) {
                 ?: extractVoteId(page?.str("page_url"))
                 ?: extractVoteIdFromUrlStruct(root.optJSONArray("url_struct"))
         }.getOrNull()
+        if (resolved != null) {
+            statusVoteIdCache[statusId] = resolved
+        }
+        return resolved
     }
 
-    suspend fun fetchVote(voteId: String): VoteInfo {
+    suspend fun fetchVote(voteId: String, force: Boolean = false): VoteInfo {
+        if (!force) {
+            voteCache[voteId]?.let { return it }
+        }
         val url = "https://vote.weibo.com/h5/index/index?vote_id=$voteId"
         val html = Api.getHtml(url, cookie())
         val regex = Regex("""window\.__DATA__\s*=\s*(\{.*?\})\s*\|\|\s*''\s*;""", RegexOption.DOT_MATCHES_ALL)
@@ -655,7 +669,9 @@ class Repo(private val context: Context, private val store: Store) {
         }
         val sk = root.str("sk")
         val vi = root.optJSONObject("vote_info") ?: throw ApiException("未找到投票信息")
-        return parseVoteInfoJson(voteId, sk, vi)
+        val parsed = parseVoteInfoJson(voteId, sk, vi)
+        voteCache[voteId] = parsed
+        return parsed
     }
 
     suspend fun castVote(voteId: String, optionIds: List<String>, sk: String): VoteInfo {
@@ -680,9 +696,11 @@ class Repo(private val context: Context, private val store: Store) {
         val data = root.optJSONObject("data")
         val vi = data?.optJSONObject("vote_info")
         if (vi != null) {
-            return parseVoteInfoJson(voteId, sk, vi)
+            val parsed = parseVoteInfoJson(voteId, sk, vi)
+            voteCache[voteId] = parsed
+            return parsed
         }
-        return fetchVote(voteId)
+        return fetchVote(voteId, force = true)
     }
 
     suspend fun uncastVote(voteId: String, sk: String): VoteInfo {
@@ -705,9 +723,11 @@ class Repo(private val context: Context, private val store: Store) {
         val data = root.optJSONObject("data")
         val vi = data?.optJSONObject("vote_info")
         if (vi != null) {
-            return parseVoteInfoJson(voteId, sk, vi)
+            val parsed = parseVoteInfoJson(voteId, sk, vi)
+            voteCache[voteId] = parsed
+            return parsed
         }
-        return fetchVote(voteId)
+        return fetchVote(voteId, force = true)
     }
 
     suspend fun comments(
