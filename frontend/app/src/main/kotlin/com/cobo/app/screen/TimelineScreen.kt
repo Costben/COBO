@@ -230,13 +230,11 @@ fun TimelineScreen(
     val pageMemory = remember(stores.size) { List(stores.size) { PageMemory() } }
     // The header folds its title row away one pixel per pixel scrolled; past the first item the
     // row is already gone, so a large sentinel collapses it fully.
-    // 换页时先把折叠量扣住：新页面的滚动位置和上一页毫无关系，照直报过去会让已经收起的标题行在
-    // 左右滑的途中弹回来。等它自己报回一个不小于一行标题的值再交还。
+    // 左右那几页跟着当前页一起走，但只补第一行收进去的那一段：滑到多深，两边也只停在收满一行
+    // 的位置。翻页前两边就已经在各自该在的地方，滑过去不会跳，也就用不着动画。回到顶部时
+    // 两边一起回去。
     val foldPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
     LaunchedEffect(pagerState, listStates, foldPx) {
-        var page = pagerState.currentPage
-        var holding = false
-        var last = 0f
         snapshotFlow {
             val current = pagerState.currentPage
             val state = listStates.getOrNull(current)
@@ -247,22 +245,15 @@ fun TimelineScreen(
             }
             current to offset
         }.collect { (current, offset) ->
-            if (current != page) {
-                page = current
-                holding = last >= foldPx
-                val state = listStates.getOrNull(current)
-                // 标题行已经收起时，这一页的顶端要顶到模糊的下沿，不然收起状态会空出一行标题的
-                // 高度。顶上去走一段短动画，直接跳会看到它先落在低位再弹一下。
-                if (holding && state != null &&
-                    state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0
-                ) {
-                    state.animateScrollToItem(0, foldPx.roundToInt())
-                    return@collect
+            val synced = offset.coerceAtMost(foldPx).roundToInt()
+            listStates.forEachIndexed { index, state ->
+                if (index == current) return@forEachIndexed
+                // 只动还停在顶部那一段的页；已经滚到深处的那几页有自己的位置，不能碰。
+                if (state.firstVisibleItemIndex != 0 || state.firstVisibleItemScrollOffset > foldPx) {
+                    return@forEachIndexed
                 }
+                if (state.firstVisibleItemScrollOffset != synced) state.scrollToItem(0, synced)
             }
-            if (holding && offset < foldPx) return@collect
-            holding = false
-            last = offset
             onScrollOffset(offset)
         }
     }
