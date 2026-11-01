@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -33,6 +34,7 @@ import com.cobo.app.data.FeedPage
 import com.cobo.app.data.Status
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.LocalTopBarBounds
+import com.cobo.app.ui.FeedTitleRowHeight
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
@@ -215,12 +217,26 @@ fun TimelineScreen(
     }
     // The header folds its title row away one pixel per pixel scrolled; past the first item the
     // row is already gone, so a large sentinel collapses it fully.
-    LaunchedEffect(pagerState, listStates) {
+    // 换页时先把折叠量扣住：新页面的滚动位置和上一页毫无关系，照直报过去会让已经收起的标题行在
+    // 左右滑的途中弹回来。等新页面自己也滚过一行标题的高度再交还——那时候报过去的值和屏幕上
+    // 看到的一模一样，不会跳。
+    val foldPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
+    LaunchedEffect(pagerState, listStates, foldPx) {
+        var page = pagerState.currentPage
+        var holding = false
         snapshotFlow {
             val state = listStates.getOrNull(pagerState.currentPage) ?: return@snapshotFlow 0f
             if (state.firstVisibleItemIndex > 0) Float.MAX_VALUE
             else state.firstVisibleItemScrollOffset.toFloat()
-        }.collect { onScrollOffset(it) }
+        }.collect { offset ->
+            if (pagerState.currentPage != page) {
+                page = pagerState.currentPage
+                holding = true
+            }
+            if (holding && offset < foldPx) return@collect
+            holding = false
+            onScrollOffset(offset)
+        }
     }
     val currentFollowStore by rememberUpdatedState(followStore)
     val currentStores by rememberUpdatedState(stores)
