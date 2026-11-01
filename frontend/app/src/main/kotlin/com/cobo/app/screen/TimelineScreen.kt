@@ -58,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.roundToInt
 
 enum class FeedFilter(val label: String, val emptyText: String) {
     All("全部", "这里还没有微博"),
@@ -197,6 +198,17 @@ class FeedStore(
     }
 }
 
+/**
+ * 每一页的位置记忆。左右滑会把整页拆掉重装，滚动位置本身记在 `LazyListState` 里；这里只记
+ * 这一格上一次交给的是哪个流，以及已经为哪一次刷新回到过顶部。
+ */
+private class PageMemory {
+    var store: FeedStore? = null
+    var generation = -1
+    /** 这一格是不是已经装载过一次；第一次装载不算刷新，不该把人拉回顶部。 */
+    var seen = false
+}
+
 @Composable
 fun TimelineScreen(
     nav: NavState,
@@ -215,26 +227,42 @@ fun TimelineScreen(
     val pullStates = remember(stores.size) {
         mutableStateListOf<FullPagePullToRefreshState?>().apply { repeat(stores.size) { add(null) } }
     }
+    val pageMemory = remember(stores.size) { List(stores.size) { PageMemory() } }
     // The header folds its title row away one pixel per pixel scrolled; past the first item the
     // row is already gone, so a large sentinel collapses it fully.
     // 换页时先把折叠量扣住：新页面的滚动位置和上一页毫无关系，照直报过去会让已经收起的标题行在
-    // 左右滑的途中弹回来。等新页面自己也滚过一行标题的高度再交还——那时候报过去的值和屏幕上
-    // 看到的一模一样，不会跳。
+    // 左右滑的途中弹回来。等它自己报回一个不小于一行标题的值再交还。
     val foldPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
     LaunchedEffect(pagerState, listStates, foldPx) {
         var page = pagerState.currentPage
         var holding = false
+        var last = 0f
         snapshotFlow {
-            val state = listStates.getOrNull(pagerState.currentPage) ?: return@snapshotFlow 0f
-            if (state.firstVisibleItemIndex > 0) Float.MAX_VALUE
-            else state.firstVisibleItemScrollOffset.toFloat()
-        }.collect { offset ->
-            if (pagerState.currentPage != page) {
-                page = pagerState.currentPage
-                holding = true
+            val current = pagerState.currentPage
+            val state = listStates.getOrNull(current)
+            val offset = when {
+                state == null -> 0f
+                state.firstVisibleItemIndex > 0 -> Float.MAX_VALUE
+                else -> state.firstVisibleItemScrollOffset.toFloat()
+            }
+            current to offset
+        }.collect { (current, offset) ->
+            if (current != page) {
+                page = current
+                holding = last >= foldPx
+                val state = listStates.getOrNull(current)
+                // 标题行已经收起时，这一页的顶端要顶到模糊的下沿，不然收起状态会空出一行标题的
+                // 高度。顶上去走一段短动画，直接跳会看到它先落在低位再弹一下。
+                if (holding && state != null &&
+                    state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0
+                ) {
+                    state.animateScrollToItem(0, foldPx.roundToInt())
+                    return@collect
+                }
             }
             if (holding && offset < foldPx) return@collect
             holding = false
+            last = offset
             onScrollOffset(offset)
         }
     }
@@ -279,6 +307,7 @@ fun TimelineScreen(
             topInset = topInset,
             emptyText = emptyText,
             listState = listState,
+            memory = pageMemory.getOrNull(page) ?: return@HorizontalPager,
             onPullState = { if (page < pullStates.size) pullStates[page] = it },
         )
     }
@@ -292,6 +321,7 @@ private fun TimelinePage(
     topInset: Dp,
     emptyText: String,
     listState: LazyListState,
+    memory: PageMemory,
     onPullState: (FullPagePullToRefreshState) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -300,13 +330,28 @@ private fun TimelinePage(
     LaunchedEffect(pullState) { onPullState(pullState) }
 
     LaunchedEffect(store) {
-        listState.scrollToItem(0)
+        val previous = memory.store
+        memory.store = store
+        // 滑走会把整页拆掉，滑回来是重新组合；位置记在 LazyListState 里，只有这一格换成了别的
+        // 流（换筛选）才该从头来。
+        if (previous !== store) {
+            memory.generation = store.generation
+            memory.seen = store.loaded
+            if (previous != null) listState.scrollToItem(0)
+        }
         if (!store.loaded) store.loadInitial()
     }
     // Every completed load of a fresh page lands the reader on the first card, including a
-    // refresh started from the bottom accessory while scrolled deep in the list.
+    // refresh started from the bottom accessory while scrolled deep in the list. 滑回来时
+    // generation 没变，位置要留着，不能跟着再回一次顶。
     LaunchedEffect(store.generation) {
-        if (store.generation > 0) listState.glideToTop()
+        if (store.generation > memory.generation) {
+            memory.generation = store.generation
+            // 第一次装载不算刷新：这一页要么本来就停在第一条，要么刚被顶到模糊的下沿，
+            // 两种位置都不该再被拉回顶部。
+            if (memory.seen) listState.glideToTop()
+            memory.seen = true
+        }
     }
     LaunchedEffect(listState, store) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
