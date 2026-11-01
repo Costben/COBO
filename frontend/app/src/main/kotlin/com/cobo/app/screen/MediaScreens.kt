@@ -62,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -362,6 +363,12 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val pagerState = rememberPagerState(initialPage = start) { urls.size }
     val current = urls.getOrNull(pagerState.currentPage).orEmpty()
 
+    val currentPic = pics.getOrNull(pagerState.currentPage)
+
+    // 记下正在看的是哪一张：被它盖住的那枚缩略图角标要等这一页撤走再淡回来，别的缩略图不动。
+    SideEffect { origins.viewing = current }
+    DisposableEffect(Unit) { onDispose { origins.viewing = null } }
+
     // Kept across page turns so the chrome does not flicker while the next sample lands.
     var light by remember { mutableStateOf(false) }
     LaunchedEffect(current) {
@@ -448,14 +455,15 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                 // The bar is up now, so its inset is real; the cutout still has to be unioned in
                 // for landscape and for devices that report them separately.
                 val topInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
+                // 顶栏只在进场后半段出现、退场开头就消失，不会跟着画面一起缩小。
+                // 底下的实况标记也走这条曲线，否则返回时它会留到动画结束才不见。
+                val chromeFade: () -> Float = {
+                    ((progress() - ChromeFadeStart) / (1f - ChromeFadeStart)).coerceIn(0f, 1f)
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // 顶栏只在进场后半段出现、退场开头就消失，不会跟着画面一起缩小。
-                        .graphicsLayer {
-                            alpha = ((progress() - ChromeFadeStart) / (1f - ChromeFadeStart))
-                                .coerceIn(0f, 1f)
-                        }
+                        .graphicsLayer { alpha = chromeFade() }
                         .align(Alignment.TopCenter)
                         // Drawn before the insets and the bar's own padding, so the ramp starts at
                         // the very top of the screen and runs [ScrimTail] past the controls.
@@ -523,25 +531,15 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                 }
 
                 // 实况标记：跟顶栏那些胶囊共用一套玻璃底，图标取自相册的实况图标。
-                if (pics.getOrNull(pagerState.currentPage)?.isLive == true) {
-                    Row(
-                        modifier = Modifier
+                if (currentPic?.isLive == true) {
+                    Box(
+                        Modifier
                             .align(Alignment.BottomStart)
+                            .graphicsLayer { alpha = chromeFade() }
                             .navigationBarsPadding()
-                            .padding(start = 12.dp, bottom = 12.dp)
-                            .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
-                            .height(BarHeight)
-                            .padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .padding(start = 12.dp, bottom = 12.dp),
                     ) {
-                        Icon(
-                            painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp),
-                            tint = ink,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("实况", color = ink, fontSize = 13.sp)
+                        LivePill(plate = plate, plateAlpha = plateAlpha, ink = ink)
                     }
                 }
             }
@@ -555,6 +553,32 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
             onDismiss = { menu = false },
             state = saver,
         )
+    }
+}
+
+/** 看图页停住时顶栏左下角那颗「实况」胶囊，也是退场那枚标记的起点。 */
+@Composable
+private fun LivePill(
+    plate: Color,
+    plateAlpha: Float,
+    ink: Color,
+) {
+    Row(
+        // 玻璃底会把挂在它前面的修饰符整条丢掉，尺寸和留白只能排在它后面。
+        modifier = Modifier
+            .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
+            .height(BarHeight)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
+            contentDescription = null,
+            modifier = Modifier.size(15.dp),
+            tint = ink,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("实况", color = ink, fontSize = 13.sp)
     }
 }
 

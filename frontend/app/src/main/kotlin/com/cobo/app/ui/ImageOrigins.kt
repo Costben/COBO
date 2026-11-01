@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -33,6 +36,9 @@ internal class ThumbSlot {
     var model: String? = null
 }
 
+/** 缩略图左下角实况标记的直径。 */
+internal val LiveBadgeSize = 17.dp
+
 /**
  * Where the thumbnails on screen sit, by picture URL, so the viewer can grow out of the one that
  * was tapped and shrink back into the one it ends on. Keyed by URL rather than by route argument
@@ -41,6 +47,14 @@ internal class ThumbSlot {
 @Stable
 class ImageOrigins {
     private val slots = HashMap<String, ThumbSlot>()
+
+    /**
+     * 看图页此刻正在显示的那张图，没有打开看图页时为空。
+     *
+     * 看图页是一整块照片落在缩略图上的，退场一路盖着那一格，直到最后一帧才整层撤掉，所以画在
+     * 它上面的角标得等这一页走了再淡回来。只有这一张会这样，别的缩略图不受影响。
+     */
+    var viewing by mutableStateOf<String?>(null)
 
     internal fun put(url: String, slot: ThumbSlot) {
         slots[url] = slot

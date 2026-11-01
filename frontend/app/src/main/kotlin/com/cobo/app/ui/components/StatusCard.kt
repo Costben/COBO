@@ -38,10 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,6 +62,8 @@ import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
 import com.cobo.app.ui.LocalLinkHandler
+import com.cobo.app.ui.LiveBadgeSize
+import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.imageOrigin
 import com.cobo.app.ui.components.LocalImageSaver
@@ -293,7 +297,7 @@ fun ImageGrid(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
-            if (pic.isLive) LiveBadge(Modifier.align(Alignment.BottomStart).padding(6.dp))
+            if (pic.isLive) LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
         }
         return
     }
@@ -333,7 +337,7 @@ fun ImageGrid(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
-                            if (pic.isLive) LiveBadge(Modifier.align(Alignment.BottomStart).padding(4.dp))
+                            if (pic.isLive) LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
                         }
                     } else {
                         Spacer(Modifier.weight(1f))
@@ -344,19 +348,43 @@ fun ImageGrid(
     }
 }
 
-/** 缩略图左下角的实况标记，点进看图页后按住才会播那段短视频。 */
+/** 多图格子里、单张大图上，实况标记各自离左下角的距离。 */
+private val GridBadgeInset = 2.dp
+private val SingleBadgeInset = 4.dp
+
+/**
+ * 缩略图左下角的实况标记，点进看图页后按住才会播那段短视频。
+ *
+ * 看图页是整块照片盖在这一格上的，退场到最后一帧才整层撤掉；标记若一直在，就会在那一帧整块
+ * 跳出来。所以被打开的那一张在页面开着时先让位，等页面走了再淡回来。别的缩略图照旧。
+ */
 @Composable
-private fun LiveBadge(modifier: Modifier = Modifier) {
-    Text(
-        text = "实况",
-        color = Color.White,
-        fontSize = 10.sp,
-        modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.Black.copy(alpha = 0.45f))
-            .padding(horizontal = 5.dp, vertical = 1.dp),
+private fun LiveBadge(url: String, modifier: Modifier = Modifier) {
+    val covered = LocalImageOrigins.current.viewing == url
+    val fade = animateFloatAsState(
+        targetValue = if (covered) 0f else 1f,
+        animationSpec = tween(LiveBadgeFadeMillis),
+        label = "liveBadge",
     )
+    Box(
+        modifier
+            .graphicsLayer { alpha = fade.value }
+            .size(LiveBadgeSize)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
+            contentDescription = "实况",
+            modifier = Modifier.size(13.dp),
+            tint = Color.White,
+        )
+    }
 }
+
+/** 看图页撤走之后标记淡回来的时长。 */
+private const val LiveBadgeFadeMillis = 220
 
 @Composable
 fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) {
