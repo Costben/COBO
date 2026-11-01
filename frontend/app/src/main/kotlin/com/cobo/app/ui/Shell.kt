@@ -3,6 +3,7 @@ package com.cobo.app.ui
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -109,6 +110,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal sealed class FeedTabSpec {
@@ -444,7 +446,24 @@ private fun MainTopBar(
         pageBarHeight
     }
     val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
-    val collapsed = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
+    val collapseTarget = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
+    // 滚动时折叠量必须一像素一像素跟手，直接给；翻页那一下它会一步跨过去（比如从收起的分类
+    // 滑到刚刷新的分类），那一步走位移动画，标签行是滑上去的，不会闪。
+    var paging by remember { mutableStateOf(false) }
+    LaunchedEffect(feedPager.currentPage, feedPager.isScrollInProgress) {
+        if (feedPager.isScrollInProgress) {
+            paging = true
+        } else {
+            delay(MainTabFadeMillis.toLong())
+            paging = false
+        }
+    }
+    val collapseAnimated by animateFloatAsState(
+        targetValue = collapseTarget,
+        animationSpec = if (paging) tween(MainTabFadeMillis) else snap(),
+        label = "mainBarCollapse",
+    )
+    val collapsed = if (paging) collapseAnimated else collapseTarget
     // 只有微博页会把标题行折进状态栏。切走时把这个折叠量收回 0，材质才不会停在上一页的位置。
     // 折叠时上移的只有材质：内容的折叠轨迹一直是按「栏顶 = 0」写的（标题往上折、分段行往下贴），
     // 原来材质和内容是一层套一层，两个等量反向的偏移互相抵消；这里内容已经移出材质节点，
