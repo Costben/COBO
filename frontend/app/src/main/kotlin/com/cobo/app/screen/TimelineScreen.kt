@@ -252,7 +252,7 @@ fun TimelineScreen(
                 if (state.firstVisibleItemIndex != 0 || state.firstVisibleItemScrollOffset > foldPx) {
                     return@forEachIndexed
                 }
-                if (state.firstVisibleItemScrollOffset != synced) state.scrollToItem(0, synced)
+                if (state.firstVisibleItemScrollOffset != synced) state.requestScrollToItem(0, synced)
             }
             onScrollOffset(offset)
         }
