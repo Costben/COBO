@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
+import com.cobo.app.data.Pic
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -139,7 +140,7 @@ sealed interface Route {
     data object Changelog : Route
     data object Nearby : Route
     data class Topic(val name: String = "") : Route
-    data class Images(val urls: List<String>, val index: Int) : Route
+    data class Images(val pics: List<Pic>, val index: Int) : Route
     data class Video(val url: String, val title: String) : Route
     data class Vote(val voteId: String) : Route
 }

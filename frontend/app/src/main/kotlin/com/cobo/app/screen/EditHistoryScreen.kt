@@ -120,7 +120,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                         VersionCard(
                             version = version,
                             current = index == 0,
-                            onImage = { urls, i -> nav.push(Route.Images(urls, i)) },
+                            onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                         )
                     }
                 }
@@ -150,7 +150,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
 private fun VersionCard(
     version: EditVersion,
     current: Boolean,
-    onImage: (List<String>, Int) -> Unit,
+    onImage: (List<Pic>, Int) -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
     Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {

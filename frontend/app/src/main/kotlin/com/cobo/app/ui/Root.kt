@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
+import com.cobo.app.data.Pic
 import com.cobo.app.data.UpdateCheckInterval
 import com.cobo.app.data.Updater
 import com.cobo.app.screen.AccountsScreen
@@ -138,7 +139,7 @@ fun CoboRoot() {
             val mention = weiboMentionName(url)
             when {
                 voteId != null -> nav.push(Route.Vote(voteId))
-                isImageLink(url) -> nav.push(Route.Images(listOf(url), 0))
+                isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
                 statusId != null -> nav.push(Route.Detail(statusId, ""))
                 uid != null -> nav.push(Route.Profile(uid))
                 // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
@@ -592,7 +593,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)
         is Route.Topic -> TopicScreen(nav, route.name)
-        is Route.Images -> ImageViewerScreen(nav, route.urls, route.index)
+        is Route.Images -> ImageViewerScreen(nav, route.pics, route.index)
         is Route.Video -> VideoScreen(nav, route.url, route.title)
         is Route.Vote -> VoteScreen(nav, route.voteId)
     }

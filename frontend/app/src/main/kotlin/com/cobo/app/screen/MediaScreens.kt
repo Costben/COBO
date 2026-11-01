@@ -10,6 +10,8 @@ import android.graphics.Bitmap
 import android.media.AudioManager
 import android.os.Build
 import android.os.Environment
+import java.io.File
+import java.security.MessageDigest
 import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
@@ -73,6 +75,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -98,6 +101,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -121,6 +125,7 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.size.Size
+import com.cobo.app.data.Pic
 import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalRouteTransition
@@ -334,7 +339,8 @@ private fun ViewerGlyph(
 }
 
 @Composable
-fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
+fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
+    val urls = pics.map { it.large }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
@@ -419,11 +425,13 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
             Box(Modifier.fillMaxSize().preciseClickAnchor(precise)) {
                 ZoomableImage(
                     url = urls[page],
+                    live = pics[page].live,
                     thumbModel = origins.modelOf(urls[page]),
                     original = original && page == pagerState.currentPage,
                     isCurrent = pagerState.currentPage == page,
                     isSettledElsewhere = pagerState.settledPage != page,
                     frame = frame,
+                    chromeVisible = chrome,
                     onTap = { chrome = !chrome },
                     onLongPress = {
                         if (!saver.saving) {
@@ -513,6 +521,29 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
                         }
                     }
                 }
+
+                // 实况标记：跟顶栏那些胶囊共用一套玻璃底，图标取自相册的实况图标。
+                if (pics.getOrNull(pagerState.currentPage)?.isLive == true) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .navigationBarsPadding()
+                            .padding(start = 12.dp, bottom = 12.dp)
+                            .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
+                            .height(BarHeight)
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp),
+                            tint = ink,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("实况", color = ink, fontSize = 13.sp)
+                    }
+                }
             }
         }
 
@@ -527,14 +558,56 @@ fun ImageViewerScreen(nav: NavState, urls: List<String>, index: Int) {
     }
 }
 
+private val MediaCacheClient by lazy { OkHttpClient.Builder().followRedirects(true).build() }
+
+/** 看图页打开时顺手下的静图和实况视频，按地址哈希落在应用缓存里，清缓存时一起删。 */
+private fun mediaCacheDir(context: Context): File =
+    File(context.cacheDir, "live").apply { mkdirs() }
+
+private fun mediaCacheFile(context: Context, url: String, ext: String): File {
+    val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
+    val name = digest.joinToString("") { "%02x".format(it) }
+    return File(mediaCacheDir(context), "$name.$ext")
+}
+
+/**
+ * 把 [url] 下到 [dest]。已有且不是空文件就直接用；下载写到临时文件，完整了再换名，
+ * 避免按住时读到写了一半的视频。
+ */
+private suspend fun cacheMedia(context: Context, url: String, dest: File): File? =
+    withContext(Dispatchers.IO) {
+        if (dest.length() > 0L) return@withContext dest
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .header("Referer", "https://m.weibo.cn/")
+                .build()
+            MediaCacheClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body ?: return@use null
+                val tmp = File(dest.parentFile, dest.name + ".part")
+                tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                if (tmp.length() <= 0L) {
+                    tmp.delete()
+                    return@use null
+                }
+                if (!tmp.renameTo(dest)) tmp.copyTo(dest, overwrite = true).also { tmp.delete() }
+                dest
+            }
+        }.getOrNull()
+    }
+
 @Composable
 private fun ZoomableImage(
     url: String,
+    live: String,
     thumbModel: String?,
     original: Boolean,
     isCurrent: Boolean,
     isSettledElsewhere: Boolean,
     frame: ViewerFrame,
+    chromeVisible: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -552,6 +625,64 @@ private fun ZoomableImage(
     val glide = remember { mutableStateOf<Job?>(null) }
     val remote = url.startsWith("http://") || url.startsWith("https://")
     var loaded by remember(url) { mutableStateOf(false) }
+    // 实况只在手指按住时播，松手回到静图。放大之后手势归缩放层，不再触发播放。
+    var holding by remember { mutableStateOf(false) }
+    // 第一帧出来之前不盖静图：PlayerView 默认是黑底，地址播不出来时整页会变成黑屏。
+    var liveReady by remember(live) { mutableStateOf(false) }
+    var liveFailed by remember(live) { mutableStateOf(false) }
+    // 打开这一页就把静图和实况视频一起下进缓存；播的时候优先用本地文件。
+    var liveFile by remember(live) { mutableStateOf<File?>(null) }
+    LaunchedEffect(url, live, isCurrent) {
+        if (!isCurrent) return@LaunchedEffect
+        if (remote) {
+            launch { cacheMedia(context, url, mediaCacheFile(context, url, "img")) }
+        }
+        if (live.isNotBlank()) {
+            liveFile = cacheMedia(context, live, mediaCacheFile(context, live, "mov"))
+        }
+    }
+    val playing = holding && liveFile != null && isCurrent && scale <= 1f + ZoomEpsilon
+    val livePlayer = remember(liveFile) {
+        val file = liveFile
+        if (file == null) {
+            null
+        } else {
+            ExoPlayer.Builder(context).build().apply {
+                volume = 0f
+                repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
+                playWhenReady = false
+                setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+                addListener(object : androidx.media3.common.Player.Listener {
+                    override fun onRenderedFirstFrame() {
+                        liveReady = true
+                    }
+
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        liveFailed = true
+                        android.util.Log.e("CoboLive", "${error.errorCodeName} ${file.name}", error)
+                    }
+                })
+                prepare()
+            }
+        }
+    }
+    DisposableEffect(livePlayer) {
+        onDispose { livePlayer?.release() }
+    }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    LaunchedEffect(playing) {
+        val player = livePlayer ?: return@LaunchedEffect
+        if (playing) {
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            player.seekTo(0)
+            player.play()
+        } else {
+            // 停在松手这一帧上淡回静图。先跳回开头再淡出，第一帧会在过渡里闪一下。
+            player.pause()
+            delay(LiveFadeMillis.toLong())
+            if (!playing) player.seekTo(0)
+        }
+    }
     // 整图自己的不透明度，让它盖着缩略图淡进来，而不是硬切一下。
     var reveal by remember(url) { mutableFloatStateOf(0f) }
 
@@ -744,20 +875,54 @@ private fun ZoomableImage(
             }
         }
 
+        // 常态由顶栏那枚「实况」标记表达，这里只报下载和失败这两种临时状态。
+        val liveStatus = when {
+            liveFailed -> "实况播放失败"
+            liveFile == null -> "实况下载中"
+            else -> ""
+        }
+        if (liveStatus.isNotEmpty() && chromeVisible) {
+            Text(
+                text = liveStatus,
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+
         // Gestures sit above the picture, so neither can swallow a swipe.
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { onTap() },
-                        onDoubleTap = { toggleZoom(it) },
-                        onLongPress = { onLongPress() },
-                    )
+                .pointerInput(live) {
+                    if (live.isBlank()) {
+                        detectTapGestures(
+                            onTap = { onTap() },
+                            onDoubleTap = { toggleZoom(it) },
+                            onLongPress = { onLongPress() },
+                        )
+                    } else {
+                        detectLivePress(
+                            onTap = { onTap() },
+                            onDoubleTap = { toggleZoom(it) },
+                            onPlay = { holding = true },
+                            onStop = { holding = false },
+                        )
+                    }
                 }
                 .pointerInput(Unit) {
                     detectZoomAndPan(
-                        onStart = { glide.value?.cancel() },
+                        onStart = {
+                            glide.value?.cancel()
+                            // 手指已经在滑了，这次按住不算实况。
+                            holding = false
+                        },
                         onRelease = { velocity, taken ->
                             if (scale < 1f - ZoomEpsilon) rebound() else if (taken) flingBy(velocity.y)
                         },
@@ -786,6 +951,58 @@ private fun ZoomableImage(
                     }
                 },
         )
+
+        // 盖在手势层上，画面才看得见；不接收触摸，松手和滑动仍由下面那层处理。
+        // 实况视频的像素尺寸和旋转跟静图不一样，铺满整屏会拉变形。按静图的比例裁切。
+        // 层本身一直在，进出只改透明度，避免整块视图插进来时闪一下。
+        if (livePlayer != null) {
+            val liveAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (playing) 1f else 0f,
+                animationSpec = tween(LiveFadeMillis),
+                label = "live",
+            )
+            val rest = shown()
+            val fitted = if (rest.width > 0f && rest.height > 0f && box != IntSize.Zero) {
+                Modifier
+                    .requiredSize(
+                        with(density) { rest.width.toDp() },
+                        with(density) { rest.height.toDp() },
+                    )
+                    .align(Alignment.Center)
+                    .graphicsLayer {
+                        alpha = liveAlpha
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
+                    .clipToBounds()
+            } else {
+                Modifier.fillMaxSize().graphicsLayer { alpha = liveAlpha }
+            }
+            AndroidView(
+                factory = { ctx ->
+                    playerView(ctx, livePlayer, controls = false).apply {
+                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    }
+                },
+                modifier = fitted,
+                update = { view ->
+                    view.player = livePlayer
+                    val format = livePlayer.videoFormat
+                    if (format != null && format.height > 0) {
+                        val turned = format.rotationDegrees % 180 != 0
+                        view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
+                            androidx.media3.ui.R.id.exo_content_frame,
+                        )?.setAspectRatio(
+                            if (turned) format.height.toFloat() / format.width
+                            else format.width.toFloat() / format.height,
+                        )
+                    }
+                },
+            )
+        }
+
     }
 }
 
@@ -796,6 +1013,63 @@ private fun ZoomableImage(
  * fingers land; [onRelease] once they are all up, with the speed the last one left at and whether
  * the gesture took anything at all.
  */
+/** 按住这么久、期间手指没滑开，才算要播实况。短于左右滑的判断，长于一次点按。 */
+private const val LiveHoldMillis = 280L
+
+/** 实况盖上静图、以及松手回到静图，两边用同一段淡入淡出。 */
+private const val LiveFadeMillis = 600
+
+/**
+ * 实况图的点按：点一下切换顶栏，连点两下放大。按住 [LiveHoldMillis] 且手指没离开、
+ * 也没滑过触摸阈值，才回调 [onPlay]；一松手或一开始滑就 [onStop]。
+ */
+private suspend fun PointerInputScope.detectLivePress(
+    onTap: () -> Unit,
+    onDoubleTap: (Offset) -> Unit,
+    onPlay: () -> Unit,
+    onStop: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val slop = viewConfiguration.touchSlop
+        var moved = false
+        var released = false
+        val held = withTimeoutOrNull(LiveHoldMillis) {
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id }
+                if (change == null || !change.pressed) {
+                    released = true
+                    break
+                }
+                if ((change.position - down.position).getDistance() > slop) {
+                    moved = true
+                    break
+                }
+            }
+        }
+        if (released && !moved) {
+            // 很快抬起来的是点击。两次落在双击间隔里，交给放大。
+            val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
+                val next = awaitFirstDown(requireUnconsumed = false)
+                next.position
+            }
+            if (second != null) onDoubleTap(second) else onTap()
+            return@awaitEachGesture
+        }
+        if (held != null) return@awaitEachGesture
+        onPlay()
+        try {
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.changes.none { it.pressed }) break
+            }
+        } finally {
+            onStop()
+        }
+    }
+}
+
 private suspend fun PointerInputScope.detectZoomAndPan(
     onStart: () -> Unit = {},
     onRelease: (velocity: Velocity, taken: Boolean) -> Unit = { _, _ -> },
@@ -938,6 +1212,48 @@ private fun fitSize(boxWidth: Float, boxHeight: Float, aspect: Float): ComposeSi
 private fun restSize(boxWidth: Float, boxHeight: Float, aspect: Float): ComposeSize =
     if (aspect < LongImageAspect) ComposeSize(boxWidth, boxWidth / aspect) else fitSize(boxWidth, boxHeight, aspect)
 
+/**
+ * 两种播放器：[controls] 为真是普通视频，底下带进度条和播放控件；
+ * 为假是实况，只有画面。
+ *
+ * 实况不能只在建好之后再关掉：播放器一切到可播，PlayerView 会自己把控件叫出来再淡掉，
+ * 就是按住时闪的那一下。所以无控件的那套默认就藏住，并且不再自动弹出。
+ */
+private fun playerView(context: Context, player: ExoPlayer, controls: Boolean): PlayerView =
+    (if (controls) {
+        PlayerView(context)
+    } else {
+        // 代码里建出来的是 SurfaceView，不吃父层透明度，淡入淡出会变成整块闪现。
+        // 实况走布局里指定的 TextureView，透明度才能一帧帧变。
+        android.view.LayoutInflater.from(context)
+            .inflate(com.cobo.app.R.layout.live_player_view, null) as PlayerView
+    }).apply {
+        if (!controls) {
+            useController = false
+            controllerAutoShow = false
+            setControllerShowTimeoutMs(0)
+            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+            hideController()
+            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setEnableComposeSurfaceSyncWorkaround(true)
+        }
+        this.player = player
+        if (controls) {
+            useController = true
+            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+        } else {
+            hideController()
+            player.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onEvents(
+                    player: androidx.media3.common.Player,
+                    events: androidx.media3.common.Player.Events,
+                ) {
+                    hideController()
+                }
+            })
+        }
+    }
+
 /** The control bar PlayerView draws at the bottom; gestures must not cover it. */
 private val ControllerStrip = 84.dp
 
@@ -1021,10 +1337,7 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    this.player = player
-                    useController = true
-                }.also { playerView = it }
+                playerView(ctx, player, controls = true).also { playerView = it }
             },
             modifier = Modifier.fillMaxSize(),
         )

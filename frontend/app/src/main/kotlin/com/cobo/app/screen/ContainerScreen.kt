@@ -97,7 +97,7 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                             nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
                         },
                         onUser = { nav.push(Route.Profile(it.id)) },
-                        onImage = { urls, i -> nav.push(Route.Images(urls, i)) },
+                        onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                         onVideo = { nav.push(Route.Video(it.url, it.title)) },
                         onLike = { scope.launch { store.like(index) } },
                         onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },

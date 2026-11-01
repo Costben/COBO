@@ -49,6 +49,7 @@ import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
+import com.cobo.app.data.Pic
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
@@ -311,7 +312,7 @@ fun ProfileContent(
                     tag = tag,
                     topInset = topInset,
                     pullState = pullState,
-                    onCover = { urls, i -> nav.push(Route.Images(urls, i)) },
+                    onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
                     followLabel = when {
                         App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
                         user?.following == true -> "已关注"
@@ -372,7 +373,7 @@ fun ProfileContent(
                     modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
                     onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
                     onUser = { nav.push(Route.Profile(it.id)) },
-                    onImage = { urls, i -> nav.push(Route.Images(urls, i)) },
+                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                     onVideo = { nav.push(Route.Video(it.url, it.title)) },
                     onLike = {
                         scope.launch {
@@ -484,7 +485,7 @@ private fun ProfileHeader(
     tag: FollowTag? = null,
     /** 顶栏（含状态栏）的高度：封面顶到屏幕最上沿，多出这一截藏在顶栏玻璃下面。 */
     topInset: Dp = 0.dp,
-    onCover: (List<String>, Int) -> Unit = { _, _ -> },
+    onCover: (List<Pic>, Int) -> Unit = { _, _ -> },
 ) {
     val scheme = COUITheme.colorScheme
     val covers = user?.covers.orEmpty()
@@ -548,7 +549,9 @@ private fun ProfileHeader(
                         modifier = Modifier
                             .fillMaxSize()
                             .imageOrigin(covers[page], 0.dp, aspect = coverAspects[page])
-                            .clickable { onCover(covers, page) },
+                            .clickable {
+                                onCover(covers.map { Pic(thumb = it, large = it) }, page)
+                            },
                     )
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)))

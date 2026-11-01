@@ -150,7 +150,72 @@ data class Pic(
     val large: String,
     val width: Int = 0,
     val height: Int = 0,
-)
+    /**
+     * 实况图（`type=livephoto`）附带的短视频。静图、GIF 都是空串：GIF 在看图页仍按静图打开。
+     * 地址可能是 `video.weibo.com/media/play?livephoto=` 这种播放页，真正的 mov 在参数里。
+     */
+    val live: String = "",
+) {
+    val isLive: Boolean get() = live.isNotBlank()
+}
+
+// 实况视频地址：m.weibo.cn 放在 videoSrc，weibo.com 的 pic_infos 放在 video。
+internal fun liveVideoUrl(pic: JSONObject): String {
+    if (!pic.str("type").equals("livephoto", ignoreCase = true)) return ""
+    val raw = pic.str("videoSrc").ifBlank { pic.str("video") }.ifBlank { pic.str("video_hd") }
+    return unwrapLivePhoto(raw)
+}
+
+// 裸 mov 直接请求 403，要先走 video.weibo.com 的播放页拿签名地址。已签名的原样返回。
+internal fun livePlayUrl(raw: String): String {
+    if (raw.isBlank()) return ""
+    if (raw.contains("livephoto=") || raw.contains("Expires=") || raw.contains("ssig=")) return raw
+    val absolute = if (raw.startsWith("//")) "https:$raw" else raw
+    if (!absolute.contains("sinaimg.cn") || !absolute.substringBefore('?').endsWith(".mov")) return absolute
+    return "https://video.weibo.com/media/play?livephoto=" +
+        java.net.URLEncoder.encode(absolute, "UTF-8")
+}
+
+private fun unwrapLivePhoto(raw: String): String = livePlayUrl(raw)
+
+/**
+ * 一条微博的配图。优先走 `pics[]`（m.weibo.cn 的卡片和详情都有），没有时退回
+ * `pic_ids` + `pic_infos`（weibo.com 的 ajax 接口）。实况视频跟在对应那张静图上。
+ */
+internal fun picsOf(o: JSONObject): List<Pic> {
+    val arr = o.optJSONArray("pics")
+    if (arr != null && arr.length() > 0) {
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val p = arr.optJSONObject(i) ?: continue
+                picOf(p)?.let(::add)
+            }
+        }
+    }
+    val ids = o.optJSONArray("pic_ids") ?: return emptyList()
+    val infos = o.optJSONObject("pic_infos") ?: return emptyList()
+    return buildList {
+        for (i in 0 until ids.length()) {
+            val id = ids.optString(i).orEmpty()
+            if (id.isBlank()) continue
+            infos.optJSONObject(id)?.let { picOf(it) }?.let(::add)
+        }
+    }
+}
+
+private fun picOf(p: JSONObject): Pic? {
+    val large = p.optJSONObject("large") ?: p.optJSONObject("largest")
+    val url = p.str("url").ifBlank { large?.str("url").orEmpty() }
+    if (url.isBlank() && large == null) return null
+    val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
+    return Pic(
+        thumb = url.ifBlank { large?.str("url").orEmpty() },
+        large = large?.str("url")?.ifBlank { url } ?: url,
+        width = geo?.int("width") ?: large?.int("width") ?: p.int("width"),
+        height = geo?.int("height") ?: large?.int("height") ?: p.int("height"),
+        live = liveVideoUrl(p),
+    )
+}
 
 data class VideoInfo(
     val title: String,
@@ -296,23 +361,7 @@ data class Status(
             val id = o.str("id")
             if (id.isBlank()) return null
 
-            val pics = ArrayList<Pic>()
-            val arr = o.optJSONArray("pics")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val p = arr.optJSONObject(i) ?: continue
-                    val large = p.optJSONObject("large")
-                    val url = p.str("url")
-                    pics.add(
-                        Pic(
-                            thumb = url,
-                            large = large?.str("url")?.ifBlank { url } ?: url,
-                            width = large?.int("width") ?: p.int("width"),
-                            height = large?.int("height") ?: p.int("height"),
-                        )
-                    )
-                }
-            }
+            val pics = picsOf(o)
 
             var video: VideoInfo? = null
             val page = o.optJSONObject("page_info")

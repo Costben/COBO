@@ -347,7 +347,7 @@ private fun TimelinePage(
                     modifier = Modifier.expandOrigin(origin).testTag("feed_card_$index"),
                     onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
                     onUser = { nav.push(Route.Profile(it.id)) },
-                    onImage = { urls, i -> nav.push(Route.Images(urls, i)) },
+                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                     onVideo = { nav.push(Route.Video(it.url, it.title)) },
                     onLike = { scope.launch { store.like(index) } },
                     onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },

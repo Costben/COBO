@@ -327,6 +327,7 @@ fun SettingsScreen(nav: NavState) {
                                 val loader = SingletonImageLoader.get(context)
                                 loader.memoryCache?.clear()
                                 loader.diskCache?.clear()
+                                context.cacheDir.resolve("live").deleteRecursively()
                             }
                             App.cache.clear()
                             message = "已清理图片与内容缓存"

@@ -85,7 +85,7 @@ fun StatusCard(
     status: Status,
     onOpen: () -> Unit,
     onUser: (User) -> Unit,
-    onImage: (List<String>, Int) -> Unit,
+    onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
     onLike: () -> Unit,
     modifier: Modifier = Modifier,
@@ -240,7 +240,7 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
 fun StatusMedia(
     status: Status,
     compact: Boolean,
-    onImage: (List<String>, Int) -> Unit,
+    onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
 ) {
     val video = status.video
@@ -259,7 +259,7 @@ fun StatusMedia(
 fun ImageGrid(
     pics: List<Pic>,
     compact: Boolean,
-    onImage: (List<String>, Int) -> Unit,
+    onImage: (List<Pic>, Int) -> Unit,
 ) {
     val urls = pics.map { it.large }
     // 长按任意一张缩略图就能弹出「保存原图 / 一键保存原图」，菜单由根节点统一承载。
@@ -274,10 +274,7 @@ fun ImageGrid(
         // 真实的宽高比（不是裁切后的格子比例）交给看图页，它才能把第一帧摆得和这张缩略图一模一样。
         val aspect = if (pic.width > 0 && pic.height > 0) pic.width.toFloat() / pic.height else null
         val precise = rememberPreciseClickState()
-        AsyncImage(
-            model = pic.large,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
+        Box(
             modifier = Modifier
                 .fillMaxWidth(if (compact) 0.72f else 0.86f)
                 .aspectRatio(ratio)
@@ -286,10 +283,18 @@ fun ImageGrid(
                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                 .preciseClickAnchor(precise)
                 .combinedClickable(
-                    onClick = { onImage(urls, 0) },
+                    onClick = { onImage(pics, 0) },
                     onLongClick = { saver?.show(urls, 0, precise) },
                 ),
-        )
+        ) {
+            AsyncImage(
+                model = pic.large,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (pic.isLive) LiveBadge(Modifier.align(Alignment.BottomStart).padding(6.dp))
+        }
         return
     }
 
@@ -318,7 +323,7 @@ fun ImageGrid(
                                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                                 .preciseClickAnchor(precise)
                                 .combinedClickable(
-                                    onClick = { onImage(urls, index) },
+                                    onClick = { onImage(pics, index) },
                                     onLongClick = { saver?.show(urls, index, precise) },
                                 ),
                         ) {
@@ -328,6 +333,7 @@ fun ImageGrid(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
+                            if (pic.isLive) LiveBadge(Modifier.align(Alignment.BottomStart).padding(4.dp))
                         }
                     } else {
                         Spacer(Modifier.weight(1f))
@@ -336,6 +342,20 @@ fun ImageGrid(
             }
         }
     }
+}
+
+/** 缩略图左下角的实况标记，点进看图页后按住才会播那段短视频。 */
+@Composable
+private fun LiveBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = "实况",
+        color = Color.White,
+        fontSize = 10.sp,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.45f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }
 
 @Composable
@@ -397,7 +417,7 @@ fun RetweetBlock(
     compact: Boolean,
     onOpen: () -> Unit,
     onUser: (User) -> Unit,
-    onImage: (List<String>, Int) -> Unit,
+    onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
 ) {
