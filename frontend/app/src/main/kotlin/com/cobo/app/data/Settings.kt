@@ -35,7 +35,6 @@ class Settings(context: Context) {
 
     private companion object {
         const val SearchHistoryLimit = 10
-        const val FeedFilterCount = 9
     }
 
     /** Recent queries, newest first. Backed by `search_history` as a JSON array. */
@@ -92,10 +91,6 @@ class Settings(context: Context) {
 
     /** 记录当前停留的微博页栏标识（例如 "left_circle", "follow", "right_recommend"）。 */
     var feedTabKey by mutableStateOf(sp.getString("feed_tab_key", "follow").orEmpty())
-        private set
-
-    // Index into FeedFilter.entries.
-    var feedFilter by mutableIntStateOf(sp.getInt("feed_filter", 0))
         private set
 
     /**
@@ -224,11 +219,6 @@ class Settings(context: Context) {
     fun applyFeedTabKey(key: String) {
         feedTabKey = key
         sp.edit().putString("feed_tab_key", key).apply()
-    }
-
-    fun applyFeedFilter(value: Int) {
-        feedFilter = value.coerceIn(0, FeedFilterCount - 1)
-        sp.edit().putInt("feed_filter", feedFilter).apply()
     }
 
     fun applyAutoCheckUpdate(value: Boolean) {

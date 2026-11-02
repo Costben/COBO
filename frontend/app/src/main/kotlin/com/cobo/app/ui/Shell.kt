@@ -120,11 +120,15 @@ internal sealed class FeedTabSpec {
     abstract val emptyText: String
     abstract val isFollow: Boolean
 
+    /** 只有中间栏带「更多」菜单：它列的就是「微博中间栏内容」那份选项。 */
+    abstract val isCenter: Boolean
+
     data class Custom(val item: FeedTabItem, val position: String, val guest: Boolean) : FeedTabSpec() {
         override val key: String get() = "${position}_${item.key}"
         override val label: String get() = item.label
         override val tag: String get() = item.tag
         override val isFollow: Boolean get() = false
+        override val isCenter: Boolean get() = position == "center"
         override val emptyText: String get() = when (item) {
             FeedTabItem.Follow -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有关注的人"
             FeedTabItem.Circle -> "好友圈还没有内容"
@@ -144,6 +148,7 @@ internal sealed class FeedTabSpec {
         override val label: String get() = if (guest) "本地关注" else filter.label
         override val tag: String get() = "feed_tab_follow"
         override val isFollow: Boolean get() = true
+        override val isCenter: Boolean get() = position == "center"
         override val emptyText: String get() = if (guest) {
             "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里"
         } else {
@@ -169,10 +174,9 @@ fun MainShell(nav: NavState) {
     val centerTab = App.settings.feedCenterTab
     val rightTab = App.settings.feedRightTab
 
-    var filterIndex by remember {
-        mutableIntStateOf(App.settings.feedFilter.coerceIn(0, FeedFilter.entries.lastIndex))
-    }
-    val filter = if (guest) FeedFilter.Local else FeedFilter.entries[filterIndex]
+    // 中间栏看哪条流由「中间栏内容」决定，菜单只是把这一项搬到页面上。原来的「筛选」只剩
+    // 一份好友流，显示时统一叫「全部」；纯本地模式没有好友流，仍按「本地关注」走。
+    val filter = if (guest) FeedFilter.Local else FeedFilter.All
     val friendsStore = remember {
         FeedStore("friends") { cursor, force -> App.repo.friends(cursor, force) }
     }
@@ -374,19 +378,19 @@ fun MainShell(nav: NavState) {
                     feedPager = feedPager,
                     feedTabs = feedTabs,
                     guest = guest,
-                    filter = filter,
+                    centerTab = centerTab,
                     collapsePx = feedCollapse,
                     bounds = topBarBounds,
-                    onFilterSelected = { selected ->
-                        filterIndex = selected.ordinal
-                        App.settings.applyFeedFilter(selected.ordinal)
+                    onCenterSelected = { item ->
+                        App.settings.applyFeedCenterTab(item)
                         // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
-                        if (selected == FeedFilter.Special || selected == FeedFilter.Secret ||
-                            selected == FeedFilter.Local
+                        if (item == FeedTabItem.Special || item == FeedTabItem.Secret ||
+                            item == FeedTabItem.Local
                         ) {
-                            scope.launch { filterStores[selected]?.refresh() }
+                            scope.launch { storeFor(item).refresh() }
                         }
-                        val targetPage = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
+                        // 中间栏永远排在左栏后面：左栏没隐藏就是第二页。
+                        val targetPage = if (leftTab != FeedTabItem.None) 1 else 0
                         scope.launch { feedPager.animateScrollToPage(targetPage) }
                     },
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
@@ -453,10 +457,10 @@ private fun MainTopBar(
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
     guest: Boolean,
-    filter: FeedFilter,
+    centerTab: FeedTabItem,
     collapsePx: Float,
     bounds: TopBarBounds,
-    onFilterSelected: (FeedFilter) -> Unit,
+    onCenterSelected: (FeedTabItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -528,9 +532,9 @@ private fun MainTopBar(
                 feedPager = feedPager,
                 feedTabs = feedTabs,
                 guest = guest,
-                filter = filter,
+                centerTab = centerTab,
                 collapsed = collapsed,
-                onFilterSelected = onFilterSelected,
+                onCenterSelected = onCenterSelected,
             )
         }
     }
@@ -543,18 +547,18 @@ private fun BarContent(
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
     guest: Boolean,
-    filter: FeedFilter,
+    centerTab: FeedTabItem,
     collapsed: Float,
-    onFilterSelected: (FeedFilter) -> Unit,
+    onCenterSelected: (FeedTabItem) -> Unit,
 ) {
     when (tab) {
         0 -> FeedHeader(
             feedPager = feedPager,
             feedTabs = feedTabs,
             filterMenu = !guest,
-            filter = filter,
+            centerTab = centerTab,
             collapsed = collapsed,
-            onFilterSelected = onFilterSelected,
+            onCenterSelected = onCenterSelected,
             onSearch = { nav.push(Route.Search) },
         )
 
@@ -644,9 +648,9 @@ private fun FeedHeader(
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
     filterMenu: Boolean,
-    filter: FeedFilter,
+    centerTab: FeedTabItem,
     collapsed: Float,
-    onFilterSelected: (FeedFilter) -> Unit,
+    onCenterSelected: (FeedTabItem) -> Unit,
     onSearch: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -703,12 +707,12 @@ private fun FeedHeader(
                     pager = feedPager,
                     feedTabs = feedTabs,
                     filterMenu = filterMenu,
-                    filter = filter,
+                    centerTab = centerTab,
                     filterMenuExpanded = filterMenuExpanded,
                     onFilterMenuDismiss = { filterMenuExpanded = false },
-                    onFilterSelected = {
+                    onCenterSelected = {
                         filterMenuExpanded = false
-                        onFilterSelected(it)
+                        onCenterSelected(it)
                     },
                     onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
                     onFilterClick = { filterMenuExpanded = true },
@@ -729,10 +733,10 @@ private fun FeedTabs(
     pager: PagerState,
     feedTabs: List<FeedTabSpec>,
     filterMenu: Boolean,
-    filter: FeedFilter,
+    centerTab: FeedTabItem,
     filterMenuExpanded: Boolean,
     onFilterMenuDismiss: () -> Unit,
-    onFilterSelected: (FeedFilter) -> Unit,
+    onCenterSelected: (FeedTabItem) -> Unit,
     onSelect: (Int) -> Unit,
     onFilterClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -856,7 +860,7 @@ private fun FeedTabs(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             feedTabs.forEachIndexed { index, spec ->
-                val menu = filterMenu && spec.isFollow
+                val menu = filterMenu && spec.isCenter
                 FeedTabSegment(
                     label = spec.label,
                     index = index,
@@ -879,16 +883,21 @@ private fun FeedTabs(
                         ) {
                             val dismiss = LocalDismissState.current
                             ListPopupColumn {
-                                FeedFilter.entries.forEachIndexed { filterIndex, item ->
+                                // 和设置里的「微博中间栏内容」同一份选项：好友流在分割线上面，
+                                // 其余能放进中间栏的流都在下面。
+                                val options = FeedTabItem.entries.filter { it != FeedTabItem.None }
+                                options.forEachIndexed { optionIndex, item ->
                                     DropdownImpl(
-                                        item = DropdownItem(text = item.label),
-                                        optionSize = FeedFilter.entries.size,
-                                        isSelected = item == filter,
-                                        index = filterIndex,
-                                        // One divider after "全部"; the filters below stay one group.
-                                        groupKey = if (filterIndex == 0) "all" else "filters",
+                                        item = DropdownItem(
+                                            text = if (item == FeedTabItem.Follow) "全部" else item.label,
+                                        ),
+                                        optionSize = options.size,
+                                        isSelected = item == centerTab,
+                                        index = optionIndex,
+                                        // One divider after "全部"; the feeds below stay one group.
+                                        groupKey = if (optionIndex == 0) "all" else "filters",
                                         onSelectedIndexChange = {
-                                            onFilterSelected(FeedFilter.entries[it])
+                                            onCenterSelected(options[it])
                                             dismiss?.invoke()
                                         },
                                     )
