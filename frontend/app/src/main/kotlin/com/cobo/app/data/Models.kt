@@ -79,6 +79,9 @@ fun chatPlainText(html: String?): String {
  */
 enum class Membership { None, Vip, Svip }
 
+/** 主页上的两种关系列表：关注了谁、谁在关注。 */
+enum class RelationKind { Following, Followers }
+
 data class User(
     val id: String,
     val name: String,
@@ -680,6 +683,30 @@ private fun searchUserOf(item: JSONObject): User? {
         parseCount(raw) ?: 0
     }
     return user.copy(description = description, followers = followers)
+}
+
+/**
+ * 关注 / 粉丝列表的卡片。只认 `card_type` 11 且没有 `card_style` 的那几张：
+ * 同一页里还夹着「相关用户」「推荐关注」这类卡，它们的用户挂在 `users` 数组上，
+ * 混进来会把关系列表变成推荐页。列表项里的 `desc1` 才是简介。
+ */
+fun parseRelationUsers(root: JSONObject?): List<User> {
+    val data = root?.optJSONObject("data") ?: return emptyList()
+    val cards = data.optJSONArray("cards") ?: return emptyList()
+    val users = LinkedHashMap<String, User>()
+    for (i in 0 until cards.length()) {
+        val card = cards.optJSONObject(i) ?: continue
+        if (card.optInt("card_type") != 11 || !card.isNull("card_style")) continue
+        User.from(card.optJSONObject("user"))?.let { if (it.id !in users) users[it.id] = it }
+        val group = card.optJSONArray("card_group") ?: continue
+        for (j in 0 until group.length()) {
+            val item = group.optJSONObject(j) ?: continue
+            val user = User.from(item.optJSONObject("user")) ?: continue
+            val description = item.str("desc1").ifBlank { user.description }
+            if (user.id !in users) users[user.id] = user.copy(description = description)
+        }
+    }
+    return users.values.toList()
 }
 
 /**

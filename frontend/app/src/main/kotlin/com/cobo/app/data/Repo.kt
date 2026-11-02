@@ -24,6 +24,9 @@ private const val LIKE_COOLDOWN_MS = 1500L
 /** 特别关注名单缓存时间：名单变动不频繁，翻页时不必每页重拉。 */
 private const val SPECIAL_UIDS_TTL_MS = 5 * 60 * 1000L
 
+/** 关注 / 粉丝列表接口固定一页 20 人；粉丝列表按已拉取的条数翻页。 */
+private const val RELATION_PAGE_SIZE = 20
+
 /** 特别关注流单次最多回扫多少页关注流、凑够多少条就停。 */
 private const val SPECIAL_SCAN_PAGES = 4
 private const val SPECIAL_PAGE_SIZE = 12
@@ -1192,6 +1195,34 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun userStatuses(uid: String, sinceId: String? = null, force: Boolean = false): FeedPage {
         return container("107603$uid", sinceId, force = force)
+    }
+
+    /**
+     * 关注 / 粉丝列表。自己的列表走 `selffollowed` / `selffans`（别人那套容器对自己的
+     * 账号不完整），别人的走 `231051`；关注按页码翻，粉丝按已拉取的条数偏移翻。
+     */
+    suspend fun relations(
+        uid: String,
+        kind: RelationKind,
+        page: Int,
+        force: Boolean = false,
+    ): List<User> {
+        val own = uid.isNotBlank() && uid == ownUid()
+        val cid = when (kind) {
+            RelationKind.Following ->
+                if (own) "231093_-_selffollowed" else "231051_-_followers_-_$uid"
+            RelationKind.Followers ->
+                if (own) "231016_-_selffans" else "231051_-_fans_-_$uid"
+        }
+        val current = page.coerceAtLeast(1)
+        val params = LinkedHashMap<String, String?>()
+        params["containerid"] = cid
+        when (kind) {
+            RelationKind.Following -> params["page"] = current.toString()
+            RelationKind.Followers -> params["since_id"] = ((current - 1) * RELATION_PAGE_SIZE).toString()
+        }
+        val root = get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
+        return parseRelationUsers(root)
     }
 
     suspend fun favorites(force: Boolean = false): FeedPage = container("230267", force = force)

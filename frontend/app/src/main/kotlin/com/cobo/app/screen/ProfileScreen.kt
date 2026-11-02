@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -50,6 +51,7 @@ import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
 import com.cobo.app.data.Pic
+import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
@@ -313,6 +315,10 @@ fun ProfileContent(
                     topInset = topInset,
                     pullState = pullState,
                     onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
+                    onRelations = { kind ->
+                        val target = user?.id ?: resolvedUid
+                        if (!target.isNullOrBlank()) nav.push(Route.Relations(target, kind))
+                    },
                     followLabel = when {
                         App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
                         user?.following == true -> "已关注"
@@ -486,6 +492,7 @@ private fun ProfileHeader(
     /** 顶栏（含状态栏）的高度：封面顶到屏幕最上沿，多出这一截藏在顶栏玻璃下面。 */
     topInset: Dp = 0.dp,
     onCover: (List<Pic>, Int) -> Unit = { _, _ -> },
+    onRelations: (RelationKind) -> Unit = {},
 ) {
     val scheme = COUITheme.colorScheme
     val covers = user?.covers.orEmpty()
@@ -675,16 +682,38 @@ private fun ProfileHeader(
                 horizontalArrangement = Arrangement.spacedBy(26.dp),
             ) {
                 Stat("微博", user?.statuses ?: 0)
-                Stat("关注", user?.friends ?: 0)
-                Stat("粉丝", user?.followers ?: 0)
+                Stat("关注", user?.friends ?: 0, testTag = "profile_following") {
+                    onRelations(RelationKind.Following)
+                }
+                Stat("粉丝", user?.followers ?: 0, testTag = "profile_followers") {
+                    onRelations(RelationKind.Followers)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Stat(label: String, value: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun Stat(
+    label: String,
+    value: Int,
+    testTag: String? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(role = Role.Button, onClick = onClick)
+                } else {
+                    Modifier
+                }
+            )
+            .padding(vertical = 2.dp)
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(fmtCount(value), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.width(4.dp))
         Text(label, fontSize = 12.sp, color = COUITheme.colorScheme.onSurfaceSecondary)

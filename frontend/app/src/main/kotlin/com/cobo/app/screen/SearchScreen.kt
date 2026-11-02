@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.HotItem
-import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
@@ -64,14 +63,11 @@ import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.expandOrigin
-import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
-import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
-import com.cobo.app.ui.components.VerifiedBadge
-import com.cobo.app.ui.components.fmtCount
+import com.cobo.app.ui.components.UserRow
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
@@ -575,58 +571,6 @@ private fun ResultState(
         loading -> LoadingState()
         error != null -> ErrorState(error, onRetry = onRetry)
         else -> EmptyState(emptyText)
-    }
-}
-
-@Composable
-private fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val scheme = COUITheme.colorScheme
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Avatar(user.avatar, 46.dp)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    user.name,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (user.membership != Membership.None) {
-                    Spacer(Modifier.width(4.dp))
-                    MemberBadge(user.membership, compact = true)
-                }
-                if (user.verified) {
-                    Spacer(Modifier.width(4.dp))
-                    VerifiedBadge()
-                }
-            }
-            if (user.description.isNotBlank()) {
-                Text(
-                    user.description,
-                    fontSize = 12.sp,
-                    color = scheme.onSurfaceSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-            Text(
-                "${fmtCount(user.followers)} 粉丝",
-                fontSize = 11.sp,
-                color = scheme.onSurfaceSecondary,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
     }
 }
 

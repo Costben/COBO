@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
 import com.cobo.app.data.Pic
+import com.cobo.app.data.RelationKind
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -128,6 +129,7 @@ sealed interface Route {
     data class Detail(val id: String, val mid: String, val readOnly: Boolean = false) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
+    data class Relations(val uid: String, val kind: RelationKind) : Route
     data object Search : Route
     data class Publish(val draft: String = "") : Route
     data class Chat(val uid: String, val name: String) : Route

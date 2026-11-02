@@ -75,6 +75,7 @@ import com.cobo.app.screen.LoginScreen
 import com.cobo.app.screen.NearbyScreen
 import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
+import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SearchScreen
 import com.cobo.app.screen.SettingsScreen
 import com.cobo.app.screen.TopicScreen
@@ -581,6 +582,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
+        is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
         Route.Search -> SearchScreen(nav)
         is Route.Publish -> PublishScreen(nav, route.draft)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name)
