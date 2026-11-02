@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLDecoder
 
 /** `/api/config` 下发的 st 会过期，过期后写操作一律 403（errno 100006 请求非法）。 */
 private const val ST_TTL_MS = 10 * 60 * 1000L
@@ -1296,5 +1297,69 @@ class Repo(private val context: Context, private val store: Store) {
         extra = mapOf("lat" to lat, "lon" to lon),
     )
 
+    /**
+     * 「附近」能选的城市。
+     *
+     * 微博网页版切城市用的就是 `2306860024` 这个容器，`needlocation=1` 时每条城市链接里的
+     * `push_mid=qiehuan_<cityId>_<lon>_<lat>` 直接带着坐标，取出来喂给同城流就能换一座城。
+     * 少数条目（区县、地图模式入口）没有坐标，跳过。
+     */
+    suspend fun nearbyCities(force: Boolean = false): List<NearbyPlace> {
+        val root = get(
+            Api.url(
+                "https://m.weibo.cn/api/container/getIndex",
+                linkedMapOf(
+                    "containerid" to "2306860024_____8008631000000000000",
+                    "needlocation" to "1",
+                    "extparam" to "city",
+                ),
+            ),
+            cookie(),
+            force,
+        )
+        return parseNearbyPlaces(root)
+    }
+
     fun clearLocalHistory() = store.clearHistory()
+}
+
+/** 城市链接里的坐标：`qiehuan_8008631000000000000_121.47_31.23` 是 经度_纬度。 */
+private val NearbyPlaceScheme = Regex("qiehuan_\\d+_([\\d.]+)_([\\d.]+)")
+
+private fun parseNearbyPlaces(root: JSONObject): List<NearbyPlace> {
+    val cards = root.optJSONObject("data")?.optJSONArray("cards") ?: return emptyList()
+    val places = LinkedHashMap<String, NearbyPlace>()
+
+    fun add(name: String?, scheme: String?) {
+        if (name.isNullOrBlank() || scheme.isNullOrBlank()) return
+        val decoded = runCatching { URLDecoder.decode(scheme, "UTF-8") }.getOrDefault(scheme)
+        val match = NearbyPlaceScheme.find(decoded) ?: return
+        val lon = match.groupValues[1].toDoubleOrNull() ?: return
+        val lat = match.groupValues[2].toDoubleOrNull() ?: return
+        if (lon == 0.0 && lat == 0.0) return
+        val label = name.trim()
+        places.putIfAbsent(label, NearbyPlace(label, lat, lon))
+    }
+
+    for (i in 0 until cards.length()) {
+        val groups = cards.optJSONObject(i)?.optJSONArray("card_group") ?: continue
+        for (j in 0 until groups.length()) {
+            val group = groups.optJSONObject(j) ?: continue
+            // 历史城市卡：名字在同项 tag 的 display_name 上，链接在 tag_scheme 上。
+            val tags = group.optJSONObject("profile_tag")?.optJSONArray("tags")
+            if (tags != null) {
+                for (k in 0 until tags.length()) {
+                    val tag = tags.optJSONObject(k) ?: continue
+                    add(tag.str("display_name"), tag.str("tag_scheme"))
+                }
+            }
+            // 省市卡：一格里三个城市，名字在 title_sub、链接在 scheme 上。
+            val items = group.optJSONArray("group") ?: continue
+            for (k in 0 until items.length()) {
+                val item = items.optJSONObject(k) ?: continue
+                add(item.str("title_sub"), item.str("scheme"))
+            }
+        }
+    }
+    return places.values.toList()
 }

@@ -20,6 +20,7 @@ enum class FeedTabItem(val key: String, val label: String, val tag: String) {
     Special("special", "特别关注", "feed_tab_special"),
     Secret("secret", "悄悄关注", "feed_tab_secret"),
     Favorites("favorites", "收藏", "feed_tab_favorites"),
+    Nearby("nearby", "附近", "feed_tab_nearby"),
     ;
 
     companion object {
@@ -108,6 +109,22 @@ class Settings(context: Context) {
     var localMode by mutableStateOf(sp.getBoolean("local_mode", false))
         private set
 
+    /**
+     * 附近看哪座城：默认跟着设备定位走；[nearbyCustom] 打开后固定看 [nearbyPlaceName]，
+     * 坐标存在下面两项里。微博的同城流只认坐标，选城市也就是换一组坐标。
+     */
+    var nearbyCustom by mutableStateOf(sp.getBoolean("nearby_custom", false))
+        private set
+
+    var nearbyPlaceName by mutableStateOf(sp.getString("nearby_place_name", "").orEmpty())
+        private set
+
+    var nearbyPlaceLat by mutableFloatStateOf(sp.getFloat("nearby_place_lat", 0f))
+        private set
+
+    var nearbyPlaceLon by mutableFloatStateOf(sp.getFloat("nearby_place_lon", 0f))
+        private set
+
     /** 启动时自动查更新，默认开。 */
     var autoCheckUpdate by mutableStateOf(sp.getBoolean("auto_check_update", true))
         private set
@@ -182,6 +199,26 @@ class Settings(context: Context) {
     fun applyFeedRightTab(item: FeedTabItem) {
         feedRightTab = item
         sp.edit().putString("feed_right_tab", item.key).apply()
+    }
+
+    /** 附近改回跟设备定位走。 */
+    fun applyNearbyDevice() {
+        nearbyCustom = false
+        sp.edit().putBoolean("nearby_custom", false).apply()
+    }
+
+    /** 附近固定看某座城：名字只用来在界面上说明现在看的是哪儿。 */
+    fun applyNearbyPlace(name: String, lat: Double, lon: Double) {
+        nearbyCustom = true
+        nearbyPlaceName = name
+        nearbyPlaceLat = lat.toFloat()
+        nearbyPlaceLon = lon.toFloat()
+        sp.edit()
+            .putBoolean("nearby_custom", true)
+            .putString("nearby_place_name", name)
+            .putFloat("nearby_place_lat", lat.toFloat())
+            .putFloat("nearby_place_lon", lon.toFloat())
+            .apply()
     }
 
     fun applyFeedTabKey(key: String) {

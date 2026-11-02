@@ -68,6 +68,7 @@ import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
+import com.cobo.app.data.nearbyCoords
 import com.cobo.app.screen.FeedFilter
 import com.cobo.app.screen.FeedStore
 import com.cobo.app.screen.LocalHome
@@ -133,6 +134,7 @@ internal sealed class FeedTabSpec {
             FeedTabItem.Special -> "特别关注还没有内容"
             FeedTabItem.Secret -> "还没有悄悄关注的人"
             FeedTabItem.Favorites -> "还没有收藏的微博"
+            FeedTabItem.Nearby -> "附近需要定位\n到设置的「附近」里打开定位，或选一座城市"
             FeedTabItem.None -> "这里还没有微博"
         }
     }
@@ -199,6 +201,26 @@ fun MainShell(nav: NavState) {
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
 
+    // 附近：坐标来自设备定位或用户选的城市，换位置之后这条流要整条重来。
+    val nearbyStore = remember {
+        FeedStore("nearby") { cursor, force ->
+            val coords = nearbyCoords(App.context)
+            if (coords == null) {
+                FeedPage(emptyList(), null)
+            } else {
+                App.repo.nearby(coords.first.toString(), coords.second.toString(), cursor, force)
+            }
+        }
+    }
+    val nearbyLocationKey = "${App.settings.nearbyCustom}:${App.settings.nearbyPlaceName}"
+    var lastNearbyLocationKey by remember { mutableStateOf(nearbyLocationKey) }
+    LaunchedEffect(nearbyLocationKey) {
+        if (nearbyLocationKey != lastNearbyLocationKey) {
+            lastNearbyLocationKey = nearbyLocationKey
+            nearbyStore.refresh()
+        }
+    }
+
     fun storeFor(item: FeedTabItem): FeedStore = when (item) {
         FeedTabItem.Follow -> followStore
         FeedTabItem.Circle -> circleStore
@@ -208,6 +230,7 @@ fun MainShell(nav: NavState) {
         FeedTabItem.Special -> filterStores.getValue(FeedFilter.Special)
         FeedTabItem.Secret -> filterStores.getValue(FeedFilter.Secret)
         FeedTabItem.Favorites -> filterStores.getValue(FeedFilter.Favorites)
+        FeedTabItem.Nearby -> nearbyStore
         FeedTabItem.None -> friendsStore
     }
 
