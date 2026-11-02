@@ -1,5 +1,6 @@
 package com.cobo.app.screen
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -32,6 +34,7 @@ import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
@@ -41,11 +44,15 @@ import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
+import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.blur.LocalBackdrop
+import io.github.suqi8.coui.kmp.blur.layerBackdrop
+import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -72,13 +79,55 @@ fun ChangelogScreen(nav: NavState) {
             }
     }
 
-    Scaffold(
-        containerColor = pageContainerColor(),
-        topBar = {
+    val backdrop = rememberLayerBackdrop()
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+
+    Box(Modifier.fillMaxSize().background(pageContainerColor())) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(backdrop)
+                .background(pageContainerColor()),
+        ) {
+            val list = releases
+            when {
+                error != null -> Box(Modifier.fillMaxSize().padding(top = topBarHeight)) {
+                    ErrorState(error!!) { reload++ }
+                }
+
+                list == null -> Box(Modifier.fillMaxSize().padding(top = topBarHeight)) {
+                    LoadingState()
+                }
+
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 12.dp,
+                        top = topBarHeight + 10.dp,
+                        end = 12.dp,
+                        bottom = 12.dp + navBottomPadding(),
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(list, key = { it.version }) { release ->
+                        ReleaseCard(release, isCurrent = release.version == current)
+                    }
+                }
+            }
+        }
+
+        CompositionLocalProvider(
+            LocalBackdrop provides backdrop,
+            // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
+            LocalEdgeToEdge provides true,
+        ) {
             PinnedBarDensity {
                 SmallTopAppBar(
-                    color = pageContainerColor(),
                     title = "更新日志",
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    color = pageContainerColor(),
+                    showDivider = false,
+                    gradientGlass = true,
                     navigationIcon = { BackIconButton { nav.pop() } },
                     actions = {
                         HighlightedIconButton(
@@ -89,30 +138,6 @@ fun ChangelogScreen(nav: NavState) {
                         }
                     },
                 )
-            }
-        },
-    ) { padding ->
-        val list = releases
-        when {
-            error != null -> Box(Modifier.fillMaxSize().padding(padding)) {
-                ErrorState(error!!) { reload++ }
-            }
-
-            list == null -> Box(Modifier.fillMaxSize().padding(padding)) { LoadingState() }
-
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = 10.dp,
-                    end = 12.dp,
-                    bottom = 12.dp + navBottomPadding(),
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(list, key = { it.version }) { release ->
-                    ReleaseCard(release, isCurrent = release.version == current)
-                }
             }
         }
     }
