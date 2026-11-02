@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -447,8 +446,8 @@ private fun MainTopBar(
     }
     val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
     val collapseTarget = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
-    // 滚动时折叠量一像素一像素跟手，直接给出去；翻页那一下它会一步跨过去（比如从收起的分类
-    // 滑到刚刷新的分类），那一段走位移动画，标签行是滑上去的。
+    // 折叠量只认 Animatable 的当前值这一条来源：以前在「动画值」和「目标值」之间切换，
+    // 掉帧让目标一步跨过动画阈值时，会先按目标值折没一帧、动画启动后又弹回旧值，闪一下才上移。
     val collapseShown = remember { Animatable(collapseTarget) }
     LaunchedEffect(collapseTarget) {
         if (abs(collapseTarget - collapseShown.value) > 0.6f) {
@@ -457,11 +456,7 @@ private fun MainTopBar(
             collapseShown.snapTo(collapseTarget)
         }
     }
-    // 翻页那一帧折叠量还是旧值，先按住动画值，别让新值闪一帧。
-    var collapsePage by remember { mutableIntStateOf(feedPager.currentPage) }
-    val flipped = feedPager.currentPage != collapsePage
-    SideEffect { collapsePage = feedPager.currentPage }
-    val collapsed = if (flipped || collapseShown.isRunning) collapseShown.value else collapseTarget
+    val collapsed = collapseShown.value
     // 只有微博页会把标题行折进状态栏。切走时把这个折叠量收回 0，材质才不会停在上一页的位置。
     // 折叠时上移的只有材质：内容的折叠轨迹一直是按「栏顶 = 0」写的（标题往上折、分段行往下贴），
     // 原来材质和内容是一层套一层，两个等量反向的偏移互相抵消；这里内容已经移出材质节点，
