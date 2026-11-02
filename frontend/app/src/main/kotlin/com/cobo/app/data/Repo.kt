@@ -515,9 +515,11 @@ class Repo(private val context: Context, private val store: Store) {
         maxId: String?,
         force: Boolean,
         cookie: String? = this.cookie(),
+        extra: Map<String, String?> = emptyMap(),
     ): FeedPage {
         val params = LinkedHashMap<String, String?>()
         if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+        params.putAll(extra)
         val root = get(Api.url(base, params), cookie, force)
         val data = root.optJSONObject("data")
         if (data == null) {
@@ -1274,13 +1276,25 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun favorites(force: Boolean = false): FeedPage = container("230267", force = force)
 
-    suspend fun nearby(lat: String, lon: String, force: Boolean = false): FeedPage {
-        return container(
-            "231776",
-            extra = mapOf("lat" to lat, "lon" to lon),
-            force = force,
-        )
-    }
+    /**
+     * 附近。
+     *
+     * `231776` 这个容器已经空了：官方 H5 的 `/p/index?containerid=231776` 自己也只能拿到
+     * 「这里还没有内容」，我们自己发同一个请求同样为空，说明是上游停了这条流，不是参数问题。
+     * m.weibo.cn 现在的同城页改走 `api/feed/trendtop?containerid=102803_2222`：带上 `lat` / `lon`，
+     * 服务端按坐标换城市（上海 / 北京 / 日本…），返回的就是标准 statuses 数组，`max_id` 翻页。
+     */
+    suspend fun nearby(
+        lat: String,
+        lon: String,
+        maxId: String? = null,
+        force: Boolean = false,
+    ): FeedPage = statusFeed(
+        "https://m.weibo.cn/api/feed/trendtop?containerid=102803_2222",
+        maxId,
+        force,
+        extra = mapOf("lat" to lat, "lon" to lon),
+    )
 
     fun clearLocalHistory() = store.clearHistory()
 }
