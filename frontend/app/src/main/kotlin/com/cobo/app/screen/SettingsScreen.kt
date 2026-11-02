@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
@@ -525,8 +524,7 @@ private fun LocalFollowPicker(
         Column {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp),
+                    .fillMaxWidth(),
                 propagateMinConstraints = true,
             ) {
                 ListPopupColumn {
@@ -600,10 +598,11 @@ private fun FeedTabPicker(
             // 和三点菜单同一套：ListPopupColumn 自己铺胶囊高亮和上下拖选的手势，
             // DropdownImpl 负责选中态的勾和蓝字。propagateMinConstraints 把对话框的宽度
             // 传给列，否则列会缩到弹层的最小宽度（约 168dp）。
+            // 不给高度设上限：设了就会变成可滚动，而滚动和「按住上下拖选」抢同一个手势，
+            // 拖不动。整张表一口气排完才拖得起来。
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp),
+                    .fillMaxWidth(),
                 propagateMinConstraints = true,
             ) {
                 ListPopupColumn {

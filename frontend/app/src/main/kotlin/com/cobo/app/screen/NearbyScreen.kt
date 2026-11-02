@@ -364,8 +364,7 @@ private fun NearbyPlaceDialog(
         Column {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp),
+                    .fillMaxWidth(),
                 propagateMinConstraints = true,
             ) {
                 ListPopupColumn {
