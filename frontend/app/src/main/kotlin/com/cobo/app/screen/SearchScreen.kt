@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.HotItem
+import com.cobo.app.data.SearchSort
 import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
@@ -96,7 +97,7 @@ import kotlinx.coroutines.launch
 
 /**
  * 搜索结果的分类。containerid 里的 type 由 Repo 负责：
- * 微博 `type=1`、用户 `type=3`、话题 `type=38`。
+ * 微博 `type=1/61/60`（跟着排序走）、用户 `type=3`、话题 `type=38`。
  */
 private enum class SearchTab(val label: String) {
     Weibo("微博"),
@@ -138,6 +139,7 @@ fun SearchScreen(nav: NavState) {
     var query by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf("") }
     var tab by remember { mutableStateOf(SearchTab.Weibo) }
+    var sort by remember { mutableStateOf(SearchSort.Comprehensive) }
     val hot = remember { mutableStateListOf<HotItem>() }
     val weibo = remember { SearchTabItems<Status>() }
     val users = remember { SearchTabItems<User>() }
@@ -185,7 +187,12 @@ fun SearchScreen(nav: NavState) {
             when (which) {
                 SearchTab.Weibo -> {
                     val nextPage = if (reset) 1 else weibo.page
-                    val pageItems = App.repo.search(keyword, nextPage, force = if (reset) force else false).items
+                    val pageItems = App.repo.search(
+                        keyword,
+                        nextPage,
+                        force = if (reset) force else false,
+                        sort = sort,
+                    ).items
                     if (reset) weibo.items.clear()
                     val known = weibo.items.mapTo(HashSet()) { it.id }
                     pageItems.forEach { if (known.add(it.id)) weibo.items.add(it) }
@@ -242,6 +249,17 @@ fun SearchScreen(nav: NavState) {
         if (submitted.isNotBlank() && !stateFor(next).started) {
             scope.launch { load(next, reset = true) }
         }
+    }
+
+    // 排序只对「微博」这一类生效，所以选完直接回到微博结果上，免得点了没反应。
+    fun selectSort(next: SearchSort) {
+        if (next == sort) return
+        sort = next
+        error = null
+        if (submitted.isBlank()) return
+        tab = SearchTab.Weibo
+        weibo.reset()
+        scope.launch { load(SearchTab.Weibo, reset = true, force = true) }
     }
 
     // 话题结果点开就是该话题下的微博：换个关键词重新走一遍「微博」分类。
@@ -502,9 +520,11 @@ fun SearchScreen(nav: NavState) {
                             },
                             // 原来的「取消」换成了三点：搜索哪一类由这个菜单决定。
                             outsideEndAction = {
-                                SearchScopeAction(
+                                SearchMenuAction(
                                     tab = tab,
-                                    onPick = { next -> selectTab(next) },
+                                    sort = sort,
+                                    onPickTab = { next -> selectTab(next) },
+                                    onPickSort = { next -> selectSort(next) },
                                 )
                             },
                         ) {}
@@ -521,19 +541,25 @@ fun SearchScreen(nav: NavState) {
 }
 
 /**
- * 搜索框右边的三点按钮：点开选这一搜是搜微博、用户还是话题。
+ * 搜索框右边的三点按钮：上面选这一搜是搜微博、用户还是话题，
+ * 分割线下面选微博结果的排序（综合 / 最新 / 最热）。
  * 原来是「取消」，现在入口挪到这里，搜索框底下那排分类胶囊也就撤掉了。
  * 使用 COUI 标准的 [SearchBarActionButton]，带完整的焦散光效、材质描边与触控动效。
  */
 @Composable
-private fun SearchScopeAction(tab: SearchTab, onPick: (SearchTab) -> Unit) {
+private fun SearchMenuAction(
+    tab: SearchTab,
+    sort: SearchSort,
+    onPickTab: (SearchTab) -> Unit,
+    onPickSort: (SearchSort) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         SearchBarActionButton(
             onClick = { expanded = true },
             modifier = Modifier.testTag("search_scope"),
         ) {
-            Icon(COUIIcons.More, "搜索范围", Modifier.size(22.dp))
+            Icon(COUIIcons.More, "搜索范围与排序", Modifier.size(22.dp))
         }
         OverlayListPopup(
             show = expanded,
@@ -541,16 +567,31 @@ private fun SearchScopeAction(tab: SearchTab, onPick: (SearchTab) -> Unit) {
             onDismissRequest = { expanded = false },
         ) {
             val dismiss = LocalDismissState.current
+            // 分组键一变，弹层就在两组交界处补一条分割线，不用自己摆 Divider。
+            val optionSize = SearchTab.entries.size + SearchSort.entries.size
             ListPopupColumn {
                 SearchTab.entries.forEachIndexed { index, item ->
                     DropdownImpl(
                         item = DropdownItem(text = item.label),
-                        optionSize = SearchTab.entries.size,
+                        optionSize = optionSize,
                         isSelected = item == tab,
                         index = index,
                         groupKey = "search_scope",
                         onSelectedIndexChange = {
-                            onPick(item)
+                            onPickTab(item)
+                            dismiss?.invoke()
+                        },
+                    )
+                }
+                SearchSort.entries.forEachIndexed { index, item ->
+                    DropdownImpl(
+                        item = DropdownItem(text = item.label),
+                        optionSize = optionSize,
+                        isSelected = item == sort,
+                        index = SearchTab.entries.size + index,
+                        groupKey = "search_sort",
+                        onSelectedIndexChange = {
+                            onPickSort(item)
                             dismiss?.invoke()
                         },
                     )

@@ -92,6 +92,16 @@ private fun tagFeedCut(fetched: Map<String, List<Status>>, size: Int): Long? =
 private fun oldestStatusId(items: List<Status>?): Long? =
     items?.mapNotNull { it.id.toLongOrNull() }?.minOrNull()
 
+/**
+ * 微博搜索结果的排序。[type] 是微博搜索频道表里给的值：
+ * 综合 `type=1`、实时 `type=61`、热门 `type=60`。
+ */
+enum class SearchSort(val label: String, val type: Int) {
+    Comprehensive("综合", 1),
+    Latest("最新", 61),
+    Hot("最热", 60),
+}
+
 class Repo(private val context: Context, private val store: Store) {
 
     @Volatile
@@ -559,8 +569,13 @@ class Repo(private val context: Context, private val store: Store) {
         return out
     }
 
-    suspend fun search(query: String, page: Int = 1, force: Boolean = true): FeedPage {
-        val cid = "100103type=1&q=$query"
+    suspend fun search(
+        query: String,
+        page: Int = 1,
+        force: Boolean = true,
+        sort: SearchSort = SearchSort.Comprehensive,
+    ): FeedPage {
+        val cid = "100103type=${sort.type}&q=$query"
         return container(
             cid,
             extra = if (page > 1) mapOf("page" to page.toString()) else emptyMap(),
