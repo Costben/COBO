@@ -1,6 +1,5 @@
 package com.cobo.app.ui
 
-import android.app.Activity
 import android.os.Build
 import android.view.RoundedCorner
 import androidx.activity.compose.BackHandler
@@ -306,25 +305,19 @@ private fun UpdatePrompt() {
  */
 @Composable
 fun CoboPredictiveBackHandler(nav: NavState) {
-    val context = LocalContext.current
+    // 根页面不注册返回回调：交给系统处理，才会播预测性返回退回桌面的动画。
+    val hasPage = nav.stack.size > 1
     if (!App.settings.predictiveBack) {
-        BackHandler(enabled = true) {
-            val entry = nav.stack.lastOrNull()
-            when {
-                entry == null || nav.stack.size <= 1 -> (context as? Activity)?.moveTaskToBack(true)
-                entry.exiting -> Unit
-                else -> nav.pop()
-            }
+        BackHandler(enabled = hasPage) {
+            if (nav.stack.lastOrNull()?.exiting != true) nav.pop()
         }
         return
     }
-    PredictiveBackHandler(enabled = true) { events ->
+    PredictiveBackHandler(enabled = hasPage) { events ->
         val entry = nav.stack.lastOrNull()
         if (entry == null || nav.stack.size <= 1) {
-            // Nothing to reveal. Consume the gesture so the system does not run its own
-            // scale-and-dim preview, then leave the app when the finger lifts.
+            // 手势进行到一半页面已回到根：吃完事件，避免系统再叠一次返回。
             events.collect { }
-            (context as? Activity)?.moveTaskToBack(true)
             return@PredictiveBackHandler
         }
         if (entry.exiting) {
