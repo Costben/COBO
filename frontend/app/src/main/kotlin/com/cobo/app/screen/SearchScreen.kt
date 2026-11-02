@@ -71,6 +71,7 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.UserRow
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -87,12 +88,14 @@ import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.More
+import io.github.suqi8.coui.kmp.icon.extended.Search
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -147,10 +150,14 @@ fun SearchScreen(nav: NavState) {
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 输入框里还没提交的联想词：一行一个，点了就直接搜。
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     // The system search page opens in the edit state; SearchBar hides its content while collapsed.
     var fieldFocused by remember { mutableStateOf(true) }
     val expanded = fieldFocused || submitted.isNotBlank()
     val history = App.settings.searchHistory
+    // 正在改词（输入框内容和已搜的词不一样）才出联想，否则结果页下面不该再冒一排词。
+    val suggesting = query.isNotBlank() && query.trim() != submitted
     val listState = rememberLazyListState()
 
     fun stateFor(t: SearchTab): SearchTabState = when (t) {
@@ -238,6 +245,8 @@ fun SearchScreen(nav: NavState) {
         users.reset()
         topics.reset()
         submitted = q
+        // 联想列表和结果共用同一个 LazyColumn，滚过联想词再搜，结果页不该从半截开始。
+        listState.scrollToItem(0)
         load(tab, reset = true, force = true)
     }
 
@@ -269,6 +278,17 @@ fun SearchScreen(nav: NavState) {
         scope.launch { runSearch(topic.title) }
     }
 
+    // 停下来 250ms 再去要联想词，边打边发会把接口打满。
+    LaunchedEffect(query, submitted) {
+        val keyword = query.trim()
+        if (keyword.isBlank() || keyword == submitted) {
+            suggestions = emptyList()
+            return@LaunchedEffect
+        }
+        delay(250)
+        suggestions = runCatching { App.repo.suggest(keyword) }.getOrDefault(emptyList())
+    }
+
     LaunchedEffect(Unit) { loadHot(force = false) }
     LaunchedEffect(listState, submitted, tab, stateFor(tab).count) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
@@ -295,27 +315,37 @@ fun SearchScreen(nav: NavState) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
-                        top = with(pageDensity) { barHeight.toDp() } + 8.dp,
+                        // AppBarBlurOverlay 的材质比上报的 barHeight 还低 24dp，那一段会吃掉触摸；
+                        // 列表从材质下缘开始排，第一条联想词才点得动。
+                        top = with(pageDensity) { barHeight.toDp() } +
+                            AppBarBlurOverlayDefaults.ExtraHeight + 8.dp,
                         end = 12.dp,
                         bottom = 8.dp + navBottomPadding(),
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (submitted.isBlank() && history.isNotEmpty()) {
-                        item {
-                            SearchHistoryView(
-                                items = history.toList(),
-                                onItemClick = { keyword ->
-                                    query = keyword
-                                    scope.launch { runSearch(keyword) }
-                                },
-                                onDeleteClick = { App.settings.clearSearchHistory() },
-                                title = "搜索历史",
-                                deleteIconDescription = "清空搜索历史",
-                            )
+                    if (suggesting) {
+                        items(suggestions, key = { it }) { term ->
+                            SuggestionRow(term) {
+                                query = term
+                                scope.launch { runSearch(term) }
+                            }
                         }
-                    }
-                    if (submitted.isBlank()) {
+                    } else if (submitted.isBlank()) {
+                        if (history.isNotEmpty()) {
+                            item {
+                                SearchHistoryView(
+                                    items = history.toList(),
+                                    onItemClick = { keyword ->
+                                        query = keyword
+                                        scope.launch { runSearch(keyword) }
+                                    },
+                                    onDeleteClick = { App.settings.clearSearchHistory() },
+                                    title = "搜索历史",
+                                    deleteIconDescription = "清空搜索历史",
+                                )
+                            }
+                        }
                         item {
                             Text(
                                 "微博热搜",
@@ -366,7 +396,10 @@ fun SearchScreen(nav: NavState) {
                                     color = scheme.onSurfaceSecondary,
                                     modifier = Modifier.weight(1f),
                                 )
-                                TextButton(text = "返回热搜", onClick = { submitted = "" })
+                                TextButton(text = "返回热搜", onClick = {
+                                    submitted = ""
+                                    query = ""
+                                })
                             }
                         }
                         when (tab) {
@@ -598,6 +631,33 @@ private fun SearchMenuAction(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SuggestionRow(term: String, onClick: () -> Unit) {
+    val scheme = COUITheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            COUIIcons.Search,
+            null,
+            Modifier.size(16.dp),
+            tint = scheme.onSurfaceSecondary,
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            term,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

@@ -83,6 +83,14 @@ object Api {
         }
 
     /**
+     * 带 XSRF 令牌的读请求，且不进缓存：搜索联想这类随输入变化的结果，缓存下来只会拿到旧词。
+     */
+    suspend fun getWithSt(url: String, cookie: String?, st: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            execute(Request.Builder().url(url).weiboHeaders(cookie, st).get().build())
+        }
+
+    /**
      * Some weibo.com ajax endpoints reject the mobile referer, so this variant signs the request
      * the way a desktop browser does and skips the cache.
      */

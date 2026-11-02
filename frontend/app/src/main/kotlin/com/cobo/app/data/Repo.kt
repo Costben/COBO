@@ -8,6 +8,7 @@ import com.cobo.app.data.FollowTags
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -565,6 +566,37 @@ class Repo(private val context: Context, private val store: Store) {
                     )
                 )
             }
+        }
+        return out
+    }
+
+    /**
+     * 搜索联想词。接口要 `X-XSRF-TOKEN` 和 cookie 配套，令牌取自 `/api/config`；
+     * 不带令牌只会回「请求失败」。
+     */
+    suspend fun suggest(keyword: String): List<String> {
+        val url = Api.url("https://m.weibo.cn/api/search/suggest", mapOf("keyword" to keyword))
+        var cookie = cookie() ?: return emptyList()
+        var st = configFor(cookie).st
+        var data: JSONObject? = null
+        // 这接口会没头没脑地回 ok:0「请求失败」，同一组参数隔一会儿再问一次就出结果，
+        // 三试已经够用；访客 cookie 过期时顺手换一个身份再试。
+        for (attempt in 0 until 3) {
+            if (attempt > 0) delay(150)
+            try {
+                data = Api.getWithSt(url, cookie, st).optJSONObject("data")
+                if (data != null) break
+            } catch (e: ApiHttpException) {
+                if (e.code != 432 || session != null) return emptyList()
+                cookie = visitorFor(stale = cookie)
+                st = configFor(cookie, force = true).st
+            }
+        }
+        val arr = data?.optJSONArray("suggestion") ?: return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val text = arr.optJSONObject(i)?.str("suggestion").orEmpty()
+            if (text.isNotBlank() && text !in out) out.add(text)
         }
         return out
     }
