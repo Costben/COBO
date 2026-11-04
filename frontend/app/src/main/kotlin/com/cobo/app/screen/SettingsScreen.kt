@@ -33,6 +33,7 @@ import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
@@ -106,7 +107,7 @@ fun SettingsScreen(nav: NavState) {
             // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
             contentPadding = PaddingValues(
                 start = 12.dp,
-                top = topBarHeight + 10.dp,
+                top = glassBarContentTop(topBarHeight, 10.dp),
                 end = 12.dp,
                 bottom = 24.dp + navBottomPadding(),
             ),

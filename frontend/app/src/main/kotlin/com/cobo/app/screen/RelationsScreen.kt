@@ -40,6 +40,7 @@ import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.UserRow
 import com.cobo.app.ui.components.navBottomPadding
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
@@ -127,7 +128,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("relations_list"),
                     contentPadding = PaddingValues(
-                        top = topBarHeight + 8.dp,
+                        top = glassBarContentTop(topBarHeight, 8.dp),
                         bottom = navBottomPadding() + 16.dp,
                     ),
                     verticalArrangement = Arrangement.spacedBy(2.dp),

@@ -40,6 +40,7 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MarkdownText
 import com.cobo.app.ui.components.navBottomPadding
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -103,7 +104,7 @@ fun ChangelogScreen(nav: NavState) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
-                        top = topBarHeight + 10.dp,
+                        top = glassBarContentTop(topBarHeight, 10.dp),
                         end = 12.dp,
                         bottom = 12.dp + navBottomPadding(),
                     ),

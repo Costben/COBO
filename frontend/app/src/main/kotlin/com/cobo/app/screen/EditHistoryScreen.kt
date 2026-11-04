@@ -36,6 +36,7 @@ import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
@@ -89,7 +90,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                 modifier = Modifier.fillMaxSize().testTag("edit_history_list"),
                 contentPadding = PaddingValues(
                     start = 12.dp,
-                    top = topBarHeight + 8.dp,
+                    top = glassBarContentTop(topBarHeight, 8.dp),
                     end = 12.dp,
                     bottom = navBottomPadding() + 16.dp,
                 ),

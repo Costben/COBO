@@ -59,6 +59,7 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.navBottomPadding
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import io.github.suqi8.coui.kmp.basic.Button
@@ -138,7 +139,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                             .testTag("vote_screen_list"),
                         contentPadding = PaddingValues(
                             start = 16.dp,
-                            top = topBarHeight + 12.dp,
+                            top = glassBarContentTop(topBarHeight, 12.dp),
                             end = 16.dp,
                             bottom = navBottomPadding() + if (currentVote.parted && currentVote.isExpired) 24.dp else 96.dp,
                         ),

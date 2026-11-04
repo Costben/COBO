@@ -48,6 +48,7 @@ import com.cobo.app.data.deviceCoords
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
@@ -178,7 +179,7 @@ fun NearbyScreen(nav: NavState) {
                 // 内容从顶栏玻璃下面滚过去，顶栏才有东西可采样。
                 contentPadding = PaddingValues(
                     start = 12.dp,
-                    top = topBarHeight + 8.dp,
+                    top = glassBarContentTop(topBarHeight, 8.dp),
                     end = 12.dp,
                     bottom = 8.dp + navBottomPadding(),
                 ),

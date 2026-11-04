@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
 
 /**
@@ -35,3 +36,10 @@ private fun pinnedHeight(rows: List<Dp>): Dp {
     val rowsPx = with(rememberGalleryDensity()) { rows.fold(0f) { acc, row -> acc + row.toPx() } }
     return with(local) { (statusPx + rowsPx).toDp() }
 }
+
+/**
+ * 玻璃顶栏下首屏内容的上沿：栏高加上材质的渐隐模糊带，再留出 [gap]。
+ * 材质会往栏底以下多画 [AppBarBlurOverlayDefaults.ExtraHeight]，首行要让过这段才不会被糊住。
+ */
+fun glassBarContentTop(topBarHeight: Dp, gap: Dp): Dp =
+    topBarHeight + AppBarBlurOverlayDefaults.ExtraHeight + gap
