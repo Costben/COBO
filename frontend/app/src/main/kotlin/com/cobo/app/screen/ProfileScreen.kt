@@ -55,6 +55,7 @@ import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
@@ -107,7 +108,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
-import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.FullPageRefreshState
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
@@ -136,11 +136,10 @@ fun ProfileScreen(nav: NavState, uid: String?) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                AppBarBlurOverlay(
+                AppBarSurface(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageContainerColor(),
                     scrollFraction = { 1f },
-                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = "主页",

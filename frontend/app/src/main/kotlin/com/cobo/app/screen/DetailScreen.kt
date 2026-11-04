@@ -75,6 +75,7 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
@@ -96,7 +97,6 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
-import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -459,9 +459,10 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         ) {
             PinnedBarDensity {
                 // 玻璃比顶栏往下多画 24dp 做渐隐，而正文卡片只在顶栏下留 8dp：常亮的话静止时卡片顶端
-                // 就被糊住。改成 COUI 原生的随滚动出现 —— 在顶部时透明，内容滚进顶栏底下 30dp 内淡入。
+                // 就被糊住。改成 COUI 原生的随滚动出现 —— 在顶部时透明，内容滚进顶栏底下 30dp 内淡入；
+                // 模糊关掉时是同一条淡入曲线，只是淡进来的是实色而不是虚化。
                 val density = LocalDensity.current
-                AppBarBlurOverlay(
+                AppBarSurface(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageContainerColor(),
                     scrollFraction = {
@@ -469,7 +470,6 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         else listState.firstVisibleItemScrollOffset.toFloat()
                         AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
                     },
-                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = "微博正文",

@@ -58,6 +58,7 @@ import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.CoboPredictiveBackHandler
@@ -72,7 +73,6 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.UserRow
 import com.cobo.app.ui.components.navBottomPadding
-import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
@@ -317,8 +317,8 @@ fun SearchScreen(nav: NavState) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
-                        // AppBarBlurOverlay 的材质比上报的 barHeight 还低 24dp，那一段会吃掉触摸；
-                        // 列表从材质下缘开始排，第一条联想词才点得动。
+                        // 模糊开着时材质比上报的 barHeight 还低 24dp，那一段会吃掉触摸；
+                        // 列表统一从材质下缘开始排，第一条联想词才点得动。
                         top = with(pageDensity) { barHeight.toDp() } +
                             AppBarBlurOverlayDefaults.ExtraHeight + 8.dp,
                         end = 12.dp,
@@ -505,14 +505,13 @@ fun SearchScreen(nav: NavState) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                AppBarBlurOverlay(
+                AppBarSurface(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
                         .onSizeChanged { barHeight = it.height },
                     containerColor = pageContainerColor(),
                     scrollFraction = { 1f },
-                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     Column(
                         Modifier

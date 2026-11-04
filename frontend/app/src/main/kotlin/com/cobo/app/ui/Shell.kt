@@ -76,7 +76,6 @@ import com.cobo.app.screen.LocalMessagesPlaceholder
 import com.cobo.app.screen.MessagesScreen
 import com.cobo.app.screen.ProfileContent
 import com.cobo.app.screen.TimelineScreen
-import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
@@ -502,14 +501,13 @@ private fun MainTopBar(
         label = "mainBarMaterialHeight",
     )
     Box(modifier) {
-        AppBarBlurOverlay(
+        AppBarSurface(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(0, -materialShift()) }
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
             scrollFraction = { 1f },
-            platformRenderer = blurEffectsEnabled(),
         ) {
             Box(
                 Modifier

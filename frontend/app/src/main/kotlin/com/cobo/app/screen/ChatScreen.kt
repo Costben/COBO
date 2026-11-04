@@ -55,6 +55,7 @@ import com.cobo.app.data.ChatMessage
 import com.cobo.app.data.chatPlainText
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
@@ -69,7 +70,6 @@ import com.cobo.app.ui.components.WeiboRichText
 import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
 import com.cobo.app.ui.pageContainerColor
-import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
@@ -427,15 +427,14 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
-            // 和「消息」页完全同一个材质：AppBarBlurOverlay（COUI 渐变玻璃，材质量到顶栏
-            // +24dp 并向下淡出）。SmallTopAppBar 的均匀磨砂会在顶栏下缘留一条硬切线，
-            // 这里把它的底色设成透明，只借它的标题 / 图标排版，材质由 overlay 画。
+            // 和「消息」页完全同一个材质层：模糊开着是 COUI 渐变玻璃（材质量到顶栏 +24dp 并向下淡出），
+            // 关掉是整块实色。SmallTopAppBar 的均匀磨砂会在顶栏下缘留一条硬切线，
+            // 这里把它的底色设成透明，只借它的标题 / 图标排版，材质由 AppBarSurface 画。
             PinnedBarDensity {
-                AppBarBlurOverlay(
+                AppBarSurface(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageColor,
                     scrollFraction = { 1f },
-                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = peerName,
