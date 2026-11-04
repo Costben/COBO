@@ -234,6 +234,9 @@ fun CoboRoot() {
                         .fillMaxSize()
                         .zIndex(3f)
                         .drawBehind {
+                            // 页面静止时上面那一页不透明，四角本来就被盖住，这里什么都不用画。
+                            // 只有转场（含返回手势预览）时页面才被裁掉角，才需要补这一层。
+                            if (nav.stack.all { it.progress.value >= 1f }) return@drawBehind
                             val cut = when (val outline = cornerShape.createOutline(size, layoutDirection, this)) {
                                 is Outline.Generic -> outline.path
                                 is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
@@ -417,8 +420,14 @@ private fun RouteLayer(
                     belowTop -> -topProgress() * widthPx / RouteParallaxDivisor
                     else -> 0f
                 }
-                shape = cornerShape
-                clip = true
+                // SquircleShape 是路径裁剪，每帧都要光栅化一张裁切蒙版。只有页面真的在移动时
+                // 才需要它：静止时上面那一页整屏不透明，裁与不裁看不出区别。
+                if (progress() < 1f || topProgress() < 1f) {
+                    shape = cornerShape
+                    clip = true
+                } else {
+                    clip = false
+                }
             }
         }
 
@@ -494,8 +503,14 @@ private fun ExpandLayer(
                     screenCorner.toPx(),
                     p,
                 ) / scale
-                shape = ExpandShape(height / scale, radius)
-                clip = true
+                // 和 RouteLayer 一样：路径裁剪只在页面真的在缩放时才需要。铺满屏幕之后
+                // 这一页整屏不透明，四角落在物理屏幕的圆角之外，裁与不裁看不出区别。
+                if (p < 1f) {
+                    shape = ExpandShape(height / scale, radius)
+                    clip = true
+                } else {
+                    clip = false
+                }
             }
             // Drawn inside the frame's layer, so the card is clipped to the frame and travels
             // with it instead of being painted over the list around it.
