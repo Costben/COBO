@@ -139,6 +139,13 @@ class Settings(context: Context) {
     var predictiveBack by mutableStateOf(sp.getBoolean("predictive_back", true))
         private set
 
+    /**
+     * 模糊效果：顶栏的渐变玻璃和页面里的玻璃面都要每帧采样背后的内容。
+     * 关掉之后改为纯色，页面也不再录制 backdrop。默认开，和以前的外观一致。
+     */
+    var blurEffects by mutableStateOf(sp.getBoolean("blur_effects", true))
+        private set
+
     /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -239,6 +246,11 @@ class Settings(context: Context) {
     fun applyPredictiveBack(value: Boolean) {
         predictiveBack = value
         sp.edit().putBoolean("predictive_back", value).apply()
+    }
+
+    fun applyBlurEffects(value: Boolean) {
+        blurEffects = value
+        sp.edit().putBoolean("blur_effects", value).apply()
     }
 
     fun applyLocalFollowUid(uid: String) {

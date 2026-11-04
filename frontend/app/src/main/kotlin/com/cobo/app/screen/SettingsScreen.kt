@@ -32,6 +32,7 @@ import com.cobo.app.data.Account
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
@@ -72,6 +73,7 @@ fun SettingsScreen(nav: NavState) {
     var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
     var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
+    var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -100,7 +102,7 @@ fun SettingsScreen(nav: NavState) {
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop).background(pageColor)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
@@ -151,6 +153,18 @@ fun SettingsScreen(nav: NavState) {
                         },
                         title = "预测性返回手势",
                         modifier = Modifier.testTag("settings_predictive_back"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = blurEffects,
+                        onCheckedChange = {
+                            blurEffects = it
+                            App.settings.applyBlurEffects(it)
+                        },
+                        title = "模糊效果",
+                        summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
+                        modifier = Modifier.testTag("settings_blur"),
                         cardListPosition = CardListPosition.Tail,
                     )
                 }
@@ -397,7 +411,7 @@ fun SettingsScreen(nav: NavState) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffects) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -407,7 +421,7 @@ fun SettingsScreen(nav: NavState) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageColor,
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffects,
                     navigationIcon = { BackIconButton { nav.pop() } },
                 )
             }

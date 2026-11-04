@@ -46,6 +46,8 @@ import com.cobo.app.App
 import com.cobo.app.data.NearbyPlace
 import com.cobo.app.data.deviceCoords
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.glassBarContentTop
@@ -170,7 +172,7 @@ fun NearbyScreen(nav: NavState) {
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
             LazyColumn(
@@ -231,7 +233,7 @@ fun NearbyScreen(nav: NavState) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -240,7 +242,7 @@ fun NearbyScreen(nav: NavState) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageContainerColor(),
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     navigationIcon = { BackIconButton { nav.pop() } },
                     actions = {
                         HighlightedIconButton(

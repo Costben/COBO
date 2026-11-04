@@ -58,6 +58,8 @@ import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
@@ -308,7 +310,7 @@ fun SearchScreen(nav: NavState) {
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         val scheme = COUITheme.colorScheme
         // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样。
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
             Column(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = listState,
@@ -499,7 +501,7 @@ fun SearchScreen(nav: NavState) {
 
         // 顶栏材质：ColorOS 那一套从上到下渐隐的高斯模糊，内容从玻璃底下滚过去。
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -510,6 +512,7 @@ fun SearchScreen(nav: NavState) {
                         .onSizeChanged { barHeight = it.height },
                     containerColor = pageContainerColor(),
                     scrollFraction = { 1f },
+                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     Column(
                         Modifier

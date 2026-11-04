@@ -131,6 +131,8 @@ import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalRouteTransition
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.ThumbBounds
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.originalSize
@@ -406,7 +408,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
             beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 // 整层按「缩略图那一块」到「整屏」插值：缩放 + 平移 + 裁剪窗口，
                 // 于是进度 0 时正好是缩略图的居中裁切，1 时是原样铺满。
                 .graphicsLayer {
@@ -451,7 +453,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
         }
 
         if (chrome) {
-            CompositionLocalProvider(LocalBackdrop provides backdrop) {
+            CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
                 // The bar is up now, so its inset is real; the cutout still has to be unioned in
                 // for landscape and for devices that report them separately.
                 val topInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)

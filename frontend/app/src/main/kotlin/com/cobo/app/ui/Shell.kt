@@ -162,6 +162,7 @@ fun MainShell(nav: NavState) {
     val tab = nav.mainTab
     val holder = rememberSaveableStateHolder()
     val backdrop = rememberLayerBackdrop()
+    val blur = blurEffectsEnabled()
     val scope = rememberCoroutineScope()
     // The bar floats over all three pages, so the line it ends at is reported once here and read
     // by whatever has to be placed clear of it.
@@ -319,7 +320,7 @@ fun MainShell(nav: NavState) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .layerBackdrop(backdrop)
+                    .layerBackdropIf(blur, backdrop)
                     .background(pageContainerColor())
             ) {
                 // The bottom bar only switches on tap, so the page carries the transition itself:
@@ -368,7 +369,7 @@ fun MainShell(nav: NavState) {
         // 否则把内容第一行抹成一条平色横带（顶栏「糊成一团」）。页面 contentPadding 把 topInset
         // 放在列表自己身上，滚动时内容确实从顶栏底下过，这里直接开。
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blur) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -398,7 +399,7 @@ fun MainShell(nav: NavState) {
             }
         }
 
-        CompositionLocalProvider(LocalBackdrop provides backdrop) {
+        CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
             PinnedBarDensity {
                 FloatingBottomBar(
                     tab = tab,
@@ -508,6 +509,7 @@ private fun MainTopBar(
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
             scrollFraction = { 1f },
+            platformRenderer = blurEffectsEnabled(),
         ) {
             Box(
                 Modifier

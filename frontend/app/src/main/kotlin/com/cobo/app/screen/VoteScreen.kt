@@ -50,6 +50,8 @@ import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.VoteOption
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
@@ -121,7 +123,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
             when {
@@ -482,7 +484,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
 
         // 顶栏玻璃
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -491,7 +493,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageContainerColor(),
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     navigationIcon = { BackIconButton { nav.pop() } },
                 )
             }

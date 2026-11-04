@@ -55,6 +55,8 @@ import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
@@ -126,11 +128,11 @@ fun ProfileScreen(nav: NavState, uid: String?) {
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样；和「我」页同一套材质。
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
             ProfileContent(nav, uid, Modifier.fillMaxSize(), topInset = topBarHeight)
         }
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -138,6 +140,7 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageContainerColor(),
                     scrollFraction = { 1f },
+                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = "主页",

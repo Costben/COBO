@@ -33,6 +33,8 @@ import com.cobo.app.App
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.components.BackIconButton
@@ -87,7 +89,7 @@ fun ChangelogScreen(nav: NavState) {
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor()),
         ) {
             val list = releases
@@ -118,7 +120,7 @@ fun ChangelogScreen(nav: NavState) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -128,7 +130,7 @@ fun ChangelogScreen(nav: NavState) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageContainerColor(),
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     navigationIcon = { BackIconButton { nav.pop() } },
                     actions = {
                         HighlightedIconButton(

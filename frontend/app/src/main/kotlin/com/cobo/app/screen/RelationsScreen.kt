@@ -30,6 +30,8 @@ import com.cobo.app.App
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
@@ -113,7 +115,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
     }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
             FullPagePullToRefresh(
                 isRefreshing = refreshing,
                 onRefresh = { scope.launch { load(true, force = true, showRefresh = true) } },
@@ -176,7 +178,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
@@ -185,7 +187,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageContainerColor(),
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     navigationIcon = { BackIconButton { nav.pop() } },
                 )
             }

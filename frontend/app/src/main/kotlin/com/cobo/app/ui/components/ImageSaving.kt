@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.cobo.app.ui.blurEffectsEnabled
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
@@ -283,8 +284,8 @@ fun SaveImagesMenu(
     }
 
     val point = precise?.touchPoint
-    // 独立窗口没有页面可以采样，玻璃底只能自己截一帧带进去。
-    val snapshot = rememberPageSnapshot(urls != null)
+    // 独立窗口没有页面可以采样，玻璃底只能自己截一帧带进去。模糊关掉时菜单是实心底，不用截。
+    val snapshot = rememberPageSnapshot(urls != null && blurEffectsEnabled())
     val popup: @Composable () -> Unit = {
         // 独立窗口而不是主窗口里的浮层：底栏的玻璃含一块平台 View 遮罩，主窗口的视图树一变
         // （浮层卸载），它作为独立 RenderNode 会丢一帧，整块玻璃跟着消失。菜单挪进自己的窗口

@@ -186,6 +186,7 @@ fun CoboRoot() {
     // 玻璃菜单要有一层能采样的底：把整摞路由录进 backdrop，菜单浮在上面做模糊和外发光。
     // 录制节点和读 backdrop 的节点必须是兄弟，否则菜单会把自己模糊过的样子再采一遍。
     val rootBackdrop = rememberLayerBackdrop { drawContent() }
+    val blur = blurEffectsEnabled()
     // 缩略图把自己的屏幕位置登记在这里，看图页才能从被点的那张长出来、再缩回去。
     val imageOrigins = remember { ImageOrigins() }
 
@@ -206,7 +207,7 @@ fun CoboRoot() {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .layerBackdrop(rootBackdrop)
+                    .layerBackdropIf(blur, rootBackdrop)
             ) {
                 // 每页都按屏幕超级椭圆裁角，裁掉的那一圈是透明的。窗口占满屏幕时它正好落在屏幕
                 // 之外，看不见；下拉通知中心、控制中心会让窗口整块下沉缩小，那一圈就翻到屏幕里
@@ -258,7 +259,7 @@ fun CoboRoot() {
                     .fillMaxSize()
                     .zIndex(20f)
             ) {
-                CompositionLocalProvider(LocalBackdrop provides rootBackdrop) {
+                CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     SaveImagesMenu(
                         urls = saveTargets,
                         index = saveIndex,

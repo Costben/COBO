@@ -34,6 +34,8 @@ import com.cobo.app.data.EditVersion
 import com.cobo.app.data.Pic
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.glassBarContentTop
@@ -83,7 +85,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
             LazyColumn(
@@ -129,7 +131,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -139,7 +141,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageContainerColor(),
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     navigationIcon = { BackIconButton { nav.pop() } },
                 )
             }

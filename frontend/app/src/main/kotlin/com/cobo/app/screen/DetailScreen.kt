@@ -75,6 +75,8 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
@@ -277,7 +279,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
             LazyColumn(
@@ -451,7 +453,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -467,6 +469,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         else listState.firstVisibleItemScrollOffset.toFloat()
                         AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
                     },
+                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = "微博正文",

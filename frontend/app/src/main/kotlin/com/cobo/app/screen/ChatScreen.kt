@@ -55,6 +55,8 @@ import com.cobo.app.data.ChatMessage
 import com.cobo.app.data.chatPlainText
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
@@ -277,7 +279,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
     ) { uri -> if (uri != null) sendImage(uri) }
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
             Column(Modifier.fillMaxSize().imePadding()) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
@@ -421,7 +423,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -433,6 +435,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageColor,
                     scrollFraction = { 1f },
+                    platformRenderer = blurEffectsEnabled(),
                 ) {
                     SmallTopAppBar(
                         title = peerName,

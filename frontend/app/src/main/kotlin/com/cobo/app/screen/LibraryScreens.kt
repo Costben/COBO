@@ -49,6 +49,8 @@ import com.cobo.app.data.Account
 import com.cobo.app.data.Draft
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
@@ -197,7 +199,7 @@ fun HistoryScreen(nav: NavState) {
     val scrollBehavior = PinnedScrollBehavior()
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop).background(pageColor)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop).background(pageColor)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
                 state = listState,
@@ -264,7 +266,7 @@ fun HistoryScreen(nav: NavState) {
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides backdrop,
+            LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
@@ -274,7 +276,7 @@ fun HistoryScreen(nav: NavState) {
                     title = "浏览历史",
                     color = pageColor,
                     showDivider = false,
-                    gradientGlass = true,
+                    gradientGlass = blurEffectsEnabled(),
                     scrollBehavior = scrollBehavior,
                     navigationIcon = { BackIconButton { nav.pop() } },
                     actions = {
