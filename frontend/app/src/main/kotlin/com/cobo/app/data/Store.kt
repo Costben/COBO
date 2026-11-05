@@ -32,19 +32,122 @@ class Store(private val context: Context) {
         if (!f.exists()) return null
         return runCatching {
             val o = JSONObject(f.readText())
-            val cookie = o.str("cookie")
-            if (cookie.isBlank()) null
-            else Session(cookie, o.str("uid"), o.optLong("savedAt"))
+            val cookies = o.optJSONObject("cookies").toStringMap()
+            val cookie = o.str("cookie").ifBlank { CookieVault.header(cookies, "m.weibo.cn") }
+            // 只有 SUB 在才算登录：服务端删掉 SUB 以后剩下的都是没用的空壳，
+            // 留着它会让 App 以为还登录着，实际每个请求都回 -100。
+            if (!cookie.contains("SUB=")) null
+            else Session(
+                cookie = cookie,
+                uid = o.str("uid"),
+                savedAt = o.optLong("savedAt"),
+                gsid = o.optString("gsid"),
+                gsidAt = o.optLong("gsidAt"),
+                accessToken = o.optString("accessToken"),
+                expires = o.optLong("expires"),
+                source = o.optString("source", "web"),
+                loginType = o.optInt("loginType", if (o.optString("gsid").isNotBlank()) 4 else 1),
+                cookies = cookies,
+            )
         }.getOrNull()
     }
 
-    fun saveSession(cookie: String, uid: String = "") {
+    fun saveSession(
+        cookie: String,
+        uid: String = "",
+        cookies: Map<String, String> = CookieVault.seed(cookie),
+    ) {
         val o = JSONObject()
             .put("source", "web")
             .put("cookie", cookie)
             .put("uid", uid)
             .put("savedAt", System.currentTimeMillis())
+            .put("loginType", 1)
+            .put("cookies", cookies.toJson())
         write("session.json", o)
+    }
+
+    /** 客户端登录的完整会话：cookie 之外还有能换新 cookie 的 gsid。 */
+    fun saveClientSession(
+        uid: String,
+        gsid: String,
+        cookie: String,
+        accessToken: String,
+        expires: Long,
+        cookies: Map<String, String> = CookieVault.seed(cookie),
+    ) {
+        val now = System.currentTimeMillis()
+        val o = JSONObject()
+            .put("source", "client")
+            .put("cookie", cookie)
+            .put("uid", uid)
+            .put("gsid", gsid)
+            .put("gsidAt", now)
+            .put("accessToken", accessToken)
+            .put("expires", expires)
+            .put("savedAt", now)
+            .put("loginType", 4)
+            .put("cookies", cookies.toJson())
+        write("session.json", o)
+    }
+
+    /** 续期只换 gsid 与 cookie，账号、昵称这些字段原样留着。 */
+    fun updateClientSession(
+        gsid: String,
+        cookie: String,
+        accessToken: String,
+        expires: Long,
+        cookies: Map<String, String> = CookieVault.seed(cookie),
+    ) {
+        val f = file("session.json")
+        val o = if (f.exists()) {
+            runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+        } else {
+            JSONObject()
+        }
+        o.put("source", "client")
+        o.put("cookie", cookie)
+        o.put("cookies", cookies.toJson())
+        o.put("loginType", 4)
+        if (gsid.isNotBlank()) o.put("gsid", gsid)
+        o.put("gsidAt", System.currentTimeMillis())
+        if (accessToken.isNotBlank()) o.put("accessToken", accessToken)
+        if (expires > 0) o.put("expires", expires)
+        write("session.json", o)
+    }
+
+    /**
+     * 只更新 cookie 表。网页端每次响应都可能滚动 `SUB` / `ALF`，
+     * 收下来就直接落盘，不必等下一次登录。
+     */
+    fun updateCookies(cookies: Map<String, String>) {
+        val f = file("session.json")
+        if (!f.exists()) return
+        val o = runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+        if (o.length() == 0) return
+        val merged = LinkedHashMap(o.optJSONObject("cookies").toStringMap())
+        merged.putAll(cookies)
+        o.put("cookies", merged.toJson())
+        o.put("cookie", CookieVault.header(merged, "m.weibo.cn"))
+        o.put("savedAt", System.currentTimeMillis())
+        write("session.json", o)
+    }
+
+    /**
+     * 容器接口的 `i` 参数，15 位设备号。第一次生成后一直复用：
+     * 每次登录都换一个值会被当成新设备，反而更容易触发验证。
+     */
+    fun deviceId(): String {
+        val f = file("device.json")
+        val saved = if (f.exists()) {
+            runCatching { JSONObject(f.readText()).optString("i") }.getOrNull()
+        } else {
+            null
+        }
+        if (!saved.isNullOrBlank()) return saved
+        val id = "86" + (1_000_000_000_000L + (Math.random() * 8_999_999_999_999L).toLong())
+        write("device.json", JSONObject().put("i", id))
+        return id
     }
 
     fun clearSession() = file("session.json").delete()
@@ -67,7 +170,16 @@ class Store(private val context: Context) {
             val o = arr.optJSONObject(i) ?: continue
             val cookie = o.str("cookie")
             if (cookie.isBlank()) continue
-            out.add(Account(o.str("uid"), o.str("name"), o.str("avatar"), cookie))
+            out.add(
+                Account(
+                    uid = o.str("uid"),
+                    name = o.str("name"),
+                    avatar = o.str("avatar"),
+                    cookie = cookie,
+                    gsid = o.optString("gsid"),
+                    gsidAt = o.optLong("gsidAt"),
+                )
+            )
         }
         return out
     }
@@ -80,6 +192,8 @@ class Store(private val context: Context) {
             .put("name", account.name)
             .put("avatar", account.avatar)
             .put("cookie", account.cookie)
+            .put("gsid", account.gsid)
+            .put("gsidAt", account.gsidAt)
         out.put(o)
         for (i in 0 until arr.length()) {
             val old = arr.optJSONObject(i) ?: continue

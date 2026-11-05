@@ -5,6 +5,7 @@ import android.net.Uri
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -13,12 +14,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLDecoder
 
 /** `/api/config` 下发的 st 会过期，过期后写操作一律 403（errno 100006 请求非法）。 */
 private const val ST_TTL_MS = 10 * 60 * 1000L
+
+/**
+ * 客户端登录的 cookie 多久换一次。参考同类客户端：6 小时换一次，
+ * 远早于微博真正让 cookie 失效的时间，续期失败也还有好几天可以重试。
+ */
+private const val GSID_TTL_MS = 6 * 60 * 60 * 1000L
+
+/** 网页会话的心跳间隔：像浏览器一样隔几小时打开一次页面，让服务端重发 SUB。 */
+private const val WEB_HEARTBEAT_MS = 6 * 60 * 60 * 1000L
 
 /** 同一条微博两次点赞之间的最小间隔，低于这个值基本只会换来 20016。 */
 private const val LIKE_COOLDOWN_MS = 1500L
@@ -44,6 +56,10 @@ private const val VISITOR_RETRY_MS = 60_000L
 
 private const val GUEST_BLOCKED = "纯本地模式看不了这里，登录后可用"
 private const val LOGIN_REQUIRED = "纯本地模式不能这样操作，登录后可用"
+
+/** 登录渠道。数字与 Share 账号表里的 `loginType` 对齐：1 网页、4 客户端。 */
+const val LOGIN_TYPE_WEB = 1
+const val LOGIN_TYPE_CLIENT = 4
 
 /** 「本地关注」每轮并发拉几个人的主页时间线：并发再高容易被微博限流。 */
 private const val TAG_FEED_CONCURRENCY = 4
@@ -128,23 +144,102 @@ class Repo(private val context: Context, private val store: Store) {
 
     private val visitorLock = Mutex()
 
+    /** 续期要串行：并发进来的几个请求会同时看到同一个过期 gsid。 */
+    private val clientRefreshLock = Mutex()
+
+    init {
+        // 网页端每次都可能在响应里滚一份新的 SUB / ALF，收到就收进表里，不进缓存也不去重。
+        Api.cookieSink = { url, headers -> absorbCookies(url, headers) }
+    }
+
     /** 读数据用的 cookie：登录了就是账号的，纯本地模式下是访客的（可能还没领到）。 */
     fun cookie(): String? = session?.cookie ?: visitorCookie
 
-    fun hasSession(): Boolean = !session?.cookie.isNullOrBlank()
+    /**
+     * 把一次响应里的 `Set-Cookie` 合进当前会话。
+     *
+     * 这是登录态能留住的关键：网页端靠「隔几天来一次、每次都收回新 cookie」续命，
+     * 只读不写的话手里那份只会慢慢过期。纯本地模式下落到访客 cookie 上。
+     */
+    private fun absorbCookies(url: HttpUrl, setCookies: List<String>) {
+        if (setCookies.isEmpty()) return
+        val active = session
+        if (active == null) {
+            val seed = CookieVault.seed(visitorCookie.orEmpty(), ".${url.host}")
+            val merged = CookieVault.absorb(seed, url, setCookies)
+            val header = CookieVault.header(merged, "m.weibo.cn")
+            if (header.isBlank() || header == visitorCookie) return
+            visitorCookie = header
+            store.saveVisitorCookie(header)
+            return
+        }
+        val base = if (active.cookies.isEmpty()) CookieVault.seed(active.cookie) else active.cookies
+        val merged = CookieVault.absorb(base, url, setCookies)
+        if (merged == base) return
+        store.updateCookies(merged)
+        val header = CookieVault.header(merged, "m.weibo.cn")
+        if (!header.contains("SUB=")) {
+            // 服务端把 SUB 删了就是这个账号被登出了，内存里也立刻降级，别拿空壳继续请求。
+            session = null
+            return
+        }
+        session = active.copy(cookies = merged, cookie = header.ifBlank { active.cookie })
+        cachedConfig = null
+        configCookie = null
+        cachedConfigAt = 0L
+    }
+
+    /**
+     * 整表灌进 WebView，对应 Share 的 `C0353Gz.O000000o(account, true)`。
+     * 这样一来站内 WebView 用的永远是本地这一份，不会和 App 的登录态各走一路。
+     */
+    suspend fun injectCookies(cookies: Map<String, String> = session?.cookies.orEmpty()) {
+        if (cookies.isEmpty()) return
+        withContext(Dispatchers.Main) { CookieVault.inject(cookies) }
+    }
+
+    /**
+     * 要用客户端会话之前先确认 gsid 还能用，对应 Share 的 `C0484Lf.O00000oO()`：
+     * 会话不是客户端登录、或者 gsid 已经该换了，就现换一份；换不到返回 false，
+     * 调用方自己退回网页登录。
+     */
+    suspend fun ensureClientSession(): Boolean {
+        val active = session ?: return false
+        if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return false
+        if (System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) return true
+        return refreshClientSession()
+    }
+
+    fun hasSession(): Boolean = session?.loggedIn == true
 
     /** 纯本地模式：没有登录账号，只读浏览，关注全靠本机标记。 */
     val guest: Boolean get() = !hasSession()
 
     /** 写操作只认登录账号的 cookie，访客身份发出去只会被拒。 */
-    private fun loginCookie(): String = session?.cookie ?: throw ApiException(LOGIN_REQUIRED)
+    private fun loginCookie(): String =
+        session?.takeIf { it.loggedIn }?.cookie ?: throw ApiException(LOGIN_REQUIRED)
 
     /**
-     * 只读请求的统一入口。登录态直接走 [Api.get]；纯本地模式下换上访客 cookie，
+     * 只读请求的统一入口。登录态直接走 [Api.get]；客户端登录的会话被拒（`ok:-100` 或 432）时，
+     * 先拿 gsid 换一份新 cookie 再试一次。纯本地模式下换上访客 cookie，
      * 被拒（HTTP 432 或 `ok:-100`）就重领一次访客身份再试，还不行说明这个接口确实要登录。
      */
     private suspend fun get(url: String, cookie: String?, force: Boolean = false): JSONObject {
-        if (session != null || (cookie != null && cookie != visitorCookie)) return Api.get(url, cookie, force)
+        val active = session
+        if (active != null && active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
+            // 照 Share 的顺序：每次带登录态的请求之前先确认 gsid 还能用，换到了就直接用新 cookie。
+            ensureClientSession()
+            val root = try {
+                Api.get(url, cookie ?: session?.cookie ?: active.cookie, force)
+            } catch (e: ApiHttpException) {
+                if (e.code != 432) throw e
+                JSONObject().put("ok", -100)
+            }
+            if (root.optInt("ok", 1) != -100) return root
+            if (refreshClientSession()) return Api.get(url, cookie(), force = true)
+            return root
+        }
+        if (active != null || (cookie != null && cookie != visitorCookie)) return Api.get(url, cookie, force)
         val first = cookie ?: visitorFor(stale = null)
         val root = try {
             Api.get(url, first, force)
@@ -218,16 +313,21 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun st(): String = config().st
 
-    suspend fun loginWithCookie(cookie: String): Account? {
+    suspend fun loginWithCookie(
+        cookie: String,
+        cookies: Map<String, String> = CookieVault.seed(cookie),
+    ): Account? {
         val cfg = configFor(cookie, force = true)
         if (!cfg.loggedIn || cfg.uid.isBlank()) return null
         val user = runCatching { profileFor(cookie, cfg.uid, force = true) }.getOrNull()
         App.cache.clear()
         App.settings.applyLocalMode(false)
-        store.saveSession(cookie, cfg.uid)
+        store.saveSession(cookie, cfg.uid, cookies)
         session = store.session()
         cachedConfig = cfg
         configCookie = cookie
+        // 网页登录也把 cookie 灌回 WebView：站内打开的页面跟 App 用同一份登录态。
+        injectCookies(session?.cookies.orEmpty())
         val account = Account(
             uid = cfg.uid,
             name = user?.name.orEmpty(),
@@ -236,6 +336,123 @@ class Repo(private val context: Context, private val store: Store) {
         )
         store.saveAccount(account)
         return account
+    }
+
+    /** 发登录短信。图形验证码由服务端按风控决定要不要，这里不做本地拦截。 */
+    suspend fun sendLoginCode(phone: String, area: String = "") {
+        ClientLogin.sendCode(phone, area)
+    }
+
+    /**
+     * 客户端登录：一次拿到 cookie、gsid 和长期凭证。之后 cookie 过期可以用 gsid 续，
+     * 不用再把用户送回登录页。
+     */
+    suspend fun loginWithClient(phone: String, code: String, area: String = ""): Account {
+        var result = ClientLogin.verify(phone, area, code)
+        if (result.cookie.isBlank() && result.gsid.isNotBlank()) {
+            result = ClientLogin.refresh(result.uid, result.gsid)
+        }
+        if (result.cookie.isBlank()) throw ApiException("登录失败：没有拿到 Cookie")
+        // 容器会话下发的 cookie 不保证能用于 m.weibo.cn，这里改用容器接口验一次：
+        // 能读到未读数就说明 gsid + 签名链都被服务端认了。
+        val probe = runCatching {
+            ContainerApi.get(
+                "remind/unread_count",
+                session = Session(
+                    cookie = result.cookie,
+                    uid = result.uid,
+                    savedAt = System.currentTimeMillis(),
+                    gsid = result.gsid,
+                ),
+            )
+        }
+        if (probe.isFailure) {
+            val reason = probe.exceptionOrNull()?.message.orEmpty()
+            throw ApiException("登录成功，但容器会话不可用：$reason")
+        }
+        val uid = result.uid
+        val user = runCatching { profileFor(result.cookie, uid, force = true) }.getOrNull()
+        App.cache.clear()
+        App.settings.applyLocalMode(false)
+        store.saveClientSession(
+            uid,
+            result.gsid,
+            result.cookie,
+            result.accessToken,
+            result.expires,
+            result.cookies,
+        )
+        session = store.session()
+        cachedConfig = null
+        configCookie = null
+        cachedConfigAt = 0L
+        injectCookies(session?.cookies.orEmpty())
+        val account = Account(
+            uid = uid,
+            name = user?.name.orEmpty(),
+            avatar = user?.avatar.orEmpty(),
+            cookie = result.cookie,
+            gsid = result.gsid,
+            gsidAt = System.currentTimeMillis(),
+        )
+        store.saveAccount(account)
+        return account
+    }
+
+    /**
+     * 拿 gsid 换一份新 cookie。只换 cookie 和 gsid，昵称头像沿用账号列表里的旧值——
+     * 这里刻意不拉 profile，避免在持锁期间又走到 [get] 触发一次续期。
+     */
+    private suspend fun refreshClientSession(): Boolean = clientRefreshLock.withLock {
+        val active = session ?: return@withLock false
+        if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return@withLock false
+        val result = runCatching { ClientLogin.refresh(active.uid, active.gsid) }.getOrNull()
+            ?: return@withLock false
+        if (result.cookie.isBlank()) return@withLock false
+        val gsid = result.gsid.ifBlank { active.gsid }
+        val cookies = if (result.cookies.isEmpty()) active.cookies else result.cookies
+        store.updateClientSession(gsid, result.cookie, result.accessToken, result.expires, cookies)
+        session = store.session()
+        App.cache.clear()
+        cachedConfig = null
+        configCookie = null
+        cachedConfigAt = 0L
+        // 换完立刻刷进 WebView，站内页面不会拿着上一份过期的 cookie 去请求。
+        injectCookies(cookies)
+        val known = store.accounts().firstOrNull { it.uid == active.uid }
+        if (known != null) {
+            store.saveAccount(
+                known.copy(
+                    cookie = result.cookie,
+                    gsid = gsid,
+                    gsidAt = System.currentTimeMillis(),
+                )
+            )
+        }
+        true
+    }
+
+    /**
+     * 冷启动时顺手续一次。
+     *
+     * 客户端登录的会话距上次换 cookie 超过 [GSID_TTL_MS] 就现换一份；
+     * 网页登录的会话没法向服务端要凭证，只能像浏览器一样真的打开一次页面，
+     * 让微博把 `SUB` / `_T_WM` 重新下发一遍——这一步是网页登录能长期不掉的关键。
+     */
+    suspend fun refreshClientSessionIfStale() {
+        val active = session ?: return
+        if (active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
+            if (System.currentTimeMillis() - active.gsidAt >= GSID_TTL_MS) refreshClientSession()
+        } else if (active.loggedIn) {
+            webHeartbeat(active)
+        }
+        injectCookies(session?.cookies.orEmpty())
+    }
+
+    /** 隔几小时才真的打一次，冷启动频繁也不会反复请求。 */
+    private suspend fun webHeartbeat(active: Session) {
+        if (System.currentTimeMillis() - active.savedAt < WEB_HEARTBEAT_MS) return
+        runCatching { Api.getHtml("https://m.weibo.cn/", active.cookie) }
     }
 
     suspend fun container(

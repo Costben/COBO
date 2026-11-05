@@ -47,10 +47,15 @@ fun WeiboWebView(
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             if (useSessionCookie) {
-                App.repo.cookie()?.split(";")?.forEach { pair ->
-                    val trimmed = pair.trim()
-                    if (trimmed.contains("=")) {
-                        CookieManager.getInstance().setCookie("https://m.weibo.cn", trimmed)
+                val cookies = App.repo.session?.cookies
+                if (!cookies.isNullOrEmpty()) {
+                    com.cobo.app.data.CookieVault.plant(cookies)
+                } else {
+                    App.repo.cookie()?.split(";")?.forEach { pair ->
+                        val trimmed = pair.trim()
+                        if (trimmed.contains("=")) {
+                            CookieManager.getInstance().setCookie("https://m.weibo.cn", trimmed)
+                        }
                     }
                 }
             }

@@ -1,6 +1,5 @@
 package com.cobo.app.screen
 
-import android.webkit.CookieManager
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -20,6 +19,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.CookieVault
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
@@ -113,12 +113,13 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                 onBackAvailable = { canGoBack = it },
                 onPageFinished = {
                     if (saving) return@WeiboWebView
-                    val cookie = CookieManager.getInstance().getCookie("https://m.weibo.cn")
-                    if (cookie.isNullOrBlank() || !cookie.contains("SUB=")) return@WeiboWebView
+                    val cookies = CookieVault.readDomains()
+                    val header = CookieVault.header(cookies, "m.weibo.cn")
+                    if (header.isBlank() || !header.contains("SUB=")) return@WeiboWebView
                     saving = true
                     hint = "登录成功，正在保存…"
                     scope.launch {
-                        val account = runCatching { App.repo.loginWithCookie(cookie) }.getOrNull()
+                        val account = runCatching { App.repo.loginWithCookie(header, cookies) }.getOrNull()
                         if (account != null) {
                             hint = "已登录：${account.name.ifBlank { account.uid }}"
                             if (addAccount) {
@@ -145,6 +146,12 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                     text = hint,
                     fontSize = 12.sp,
                     color = COUITheme.colorScheme.onSurfaceSecondary,
+                )
+                // 客户端接口被拒时会自己跳回这里，所以这个入口留着没有副作用。
+                TextButton(
+                    text = "用手机号短信登录",
+                    onClick = { nav.push(Route.SmsLogin(addAccount, relogin)) },
+                    modifier = Modifier.testTag("login_sms"),
                 )
                 // 只在启动就落到登录页时给：从纯本地模式点进来登录的，返回键就能回去。
                 if (!addAccount && nav.stack.size == 1) {

@@ -593,6 +593,9 @@ data class Account(
     val name: String,
     val avatar: String,
     val cookie: String,
+    /** 客户端登录拿到的会话 id；网页登录的账号为空，不能静默续期。 */
+    val gsid: String = "",
+    val gsidAt: Long = 0L,
 )
 
 data class Draft(val text: String, val time: Long)
@@ -607,7 +610,27 @@ data class HistoryItem(
     val html: String = "",
 )
 
-data class Session(val cookie: String, val uid: String, val savedAt: Long)
+/**
+ * 登录态。[gsid] 非空表示这个会话是客户端登录来的，可以拿它走 `account/getoauth`
+ * 换一份新 cookie；网页登录的会话只有 cookie，靠响应里的 `Set-Cookie` 滚动续命。
+ */
+data class Session(
+    val cookie: String,
+    val uid: String,
+    val savedAt: Long,
+    val gsid: String = "",
+    val gsidAt: Long = 0L,
+    val accessToken: String = "",
+    val expires: Long = 0L,
+    val source: String = "web",
+    /** 登录渠道，对应 Share 的 `loginType`：1 网页、4 客户端。0 是早于这个字段的旧会话。 */
+    val loginType: Int = 0,
+    /** 域名 → 该域名下的 cookie（`\n` 分隔），见 [CookieVault]。 */
+    val cookies: Map<String, String> = emptyMap(),
+) {
+    /** 有没有 `SUB` 才是真的登录了；只剩 `XSRF-TOKEN` 这类 cookie 的会话是过期的空壳。 */
+    val loggedIn: Boolean get() = cookie.contains("SUB=")
+}
 
 data class Config(val uid: String, val st: String, val loggedIn: Boolean)
 

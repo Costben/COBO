@@ -361,9 +361,9 @@ access_token / gsid / s / i / aid  ...
 
 ## 7. 接入注意事项
 
-1. **UA 用自己**：`__weibo__11.6.3__android__` 是伪装官方客户端，服务端会按 UA 做能力判定，自建客户端应换成自己的标识。
-2. **`cum` 不是普通参数**：它由客户端私有算法对 URL path 计算，服务端按接口校验，纯 HTTP 客户端无法通用复现——这也是本项目改走 `m.weibo.cn` Web API 的原因。
-3. **`s` 与账号绑定**：换账号必须重新计算，不能跨账号复用。
-4. **Cookie 与 gsid 双轨**：网页登录拿 Cookie，`account/getoauth` 拿 gsid，两者要同时维护。
+1. **两条通道并存**：`m.weibo.cn` Web API（Cookie 会话）和 `api.weibo.cn/2` 容器端（`gsid` + `s`/`i`/`cum`）各自独立。登录页是网页的，就只写 Cookie；短信登录走容器端，拿到的是 `gsid`。两边不能混用凭证。
+2. **容器端目前被挡在客户端身份层**：`account/login` + 真 `gsid` 能拿回用户信息和 `oauth2.0.access_token`，但不再返回 `cookie`；数据接口一律 `{"errno":-105,"errmsg":"客户端身份校验失败"}`。补齐 `X-Log-Uid` / `X-Sessionid` / `X-Validator` 后结果不变，原因是 Share 3.9.6 使用的渠道号 `10B6395010` 已被退役——用它的完整参数发验证码，服务端直接回「客户端版本过低，请升级至最新版本」。
+3. **`cum` 由 `libwbutil.so` 计算**：输入是「`/2/` + path + `?` + 全部其它参数的编码串」，顺序不能变。`s` 按 uid 算，`i` 是固定设备号，三者都随 native 库打进包里。
+4. **Cookie 要按域名存**：`.weibo.cn`、`.weibo.com`、`passport.weibo.cn` 各一份，同名 cookie 在域名之间不共用。网页端每次响应都可能用 `Set-Cookie` 滚动 `SUB` / `ALF` / `_T_WM`，收到就要落盘，否则手里那份只会慢慢过期。
 5. **分片上传可简化**：小文件直接用 `statuses/upload.json` 即可，不必实现 MSS。
 6. **卡片协议是最大的工作量**：真正决定信息流观感的是 `card_type` 的渲染覆盖度，而不是列表控件本身。

@@ -77,6 +77,7 @@ import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SearchScreen
 import com.cobo.app.screen.SettingsScreen
+import com.cobo.app.screen.SmsLoginScreen
 import com.cobo.app.screen.TopicScreen
 import com.cobo.app.screen.VideoScreen
 import com.cobo.app.screen.VoteScreen
@@ -113,6 +114,9 @@ fun CoboRoot() {
     val nav = remember { NavState() }
     val scope = rememberCoroutineScope()
     SideEffect { nav.attach(scope) }
+
+    // 启动时顺手续一次登录态：客户端会话换 cookie，网页会话按浏览器的样子走一趟拿新 cookie。
+    LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
 
     // 启动时静默查一次更新：开关打开、且距上次检查超过节流窗口才真的发请求。
     LaunchedEffect(Unit) {
@@ -588,6 +592,7 @@ private fun RouteContent(route: Route, nav: NavState) {
     when (route) {
         Route.Main -> MainShell(nav)
         is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh, route.relogin)
+        is Route.SmsLogin -> SmsLoginScreen(nav, route.addAccount, route.relogin)
         is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
