@@ -31,17 +31,12 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.cobo.app.ui.blurEffectsEnabled
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
-import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Text
@@ -54,7 +49,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import kotlin.math.roundToInt
 
 /**
  * Weibo serves one picture at several sizes off the same path segment. Everything the app stores
@@ -239,17 +233,8 @@ class ImageSaver internal constructor(
 val LocalImageSaver = staticCompositionLocalOf<ImageSaver?> { null }
 
 /**
- * 长按呼出的保存菜单：直接用 COUI 的下拉菜单（demo 右上角三点那个），按手指位置弹出。
+ * 长按呼出的保存菜单：直接使用 COUI 标准的 [WindowListPopup] 悬浮菜单，对齐系统原生连续曲率圆角与边缘光。
  * [urls] == null 表示收起；收起动画期间靠上一次的列表把条目留住。
- *
- * 走 [WindowListPopup] 的独立窗口宿主：菜单收起时主窗口的视图树不动，底栏那块平台材质图层
- * 才不会丢帧；这个宿主在收起一开始就把触摸交还给页面，不用等动画播完才能接着滑。
- *
- * 独立窗口里没有页面可采样，图层也跨不了窗口，所以弹出那一刻用 PixelCopy 抓一帧页面、模糊好
- * 递进去当玻璃底，菜单在这张底上叠 80% 白和 COUI 的材质边（上高光、内阴影、外投影）。
- *
- * 入场/收起的缩放由 COUI 的菜单自己给（0→1 从锚点放大、缩回锚点），本文件只负责把按下点
- * 摆成一颗 1dp 的锚点，别在调用处再套一层缩放。
  */
 @Composable
 fun SaveImagesMenu(
@@ -283,53 +268,25 @@ fun SaveImagesMenu(
         }
     }
 
-    val point = precise?.touchPoint
-    // 独立窗口没有页面可以采样，玻璃底只能自己截一帧带进去。模糊关掉时菜单是实心底，不用截。
-    val snapshot = rememberPageSnapshot(urls != null && blurEffectsEnabled())
-    val popup: @Composable () -> Unit = {
-        // 独立窗口而不是主窗口里的浮层：底栏的玻璃含一块平台 View 遮罩，主窗口的视图树一变
-        // （浮层卸载），它作为独立 RenderNode 会丢一帧，整块玻璃跟着消失。菜单挪进自己的窗口
-        // 后主窗口结构不动。WindowListPopup 在收起开始就把窗口让出来，页面照样能继续滑。
-        WindowListPopup(
-            show = urls != null,
-            onDismissRequest = onDismiss,
-            onDismissFinished = {},
-            maxHeight = null,
-            staticBackdrop = snapshot?.image,
-            staticBackdropWindowSize = snapshot?.windowSize ?: IntSize.Zero,
-        ) {
-            val dismiss = LocalDismissState.current
-            ListPopupColumn {
-                actions.forEachIndexed { index, (label, action) ->
-                    DropdownImpl(
-                        item = DropdownItem(text = label),
-                        optionSize = actions.size,
-                        isSelected = false,
-                        index = index,
-                        groupKey = "save",
-                        onSelectedIndexChange = {
-                            action()
-                            dismiss?.invoke()
-                        },
-                    )
-                }
+    WindowListPopup(
+        show = urls != null,
+        onDismissRequest = onDismiss,
+        preciseClickState = precise,
+    ) {
+        val dismiss = LocalDismissState.current
+        ListPopupColumn {
+            actions.forEachIndexed { index, (label, action) ->
+                DropdownImpl(
+                    text = label,
+                    optionSize = actions.size,
+                    isSelected = false,
+                    index = index,
+                    onSelectedIndexChange = {
+                        action()
+                        dismiss?.invoke()
+                    },
+                )
             }
-        }
-    }
-
-    if (point == null || !point.isSpecified) {
-        // 无障碍点击不产生按下点，退回 COUI 的居中定位。
-        popup()
-    } else {
-        // 和 c001apk 三点菜单同一套锚定：把按下点当成一颗 1dp 的按钮，菜单右边缘对齐它、挂在它
-        // 下方，展开从这颗按钮长出来、收起缩回这颗按钮。走 preciseClickState 那条路是把菜单居中
-        // 压在手指上，缩放中心落在菜单自己的中线上，看着就是整块往上飘。
-        Box(Modifier.fillMaxSize()) {
-            Box(
-                Modifier
-                    .offset { IntOffset(point.x.roundToInt(), point.y.roundToInt()) }
-                    .size(1.dp)
-            ) { popup() }
         }
     }
 }

@@ -254,13 +254,7 @@ fun CoboRoot() {
             // HUD 独立于菜单，菜单收起之后它还要自己活 1.6 秒。
             Box(Modifier.fillMaxSize().zIndex(10f)) { SaveHud(saveState) }
 
-            // 菜单走独立窗口宿主（见 SaveImagesMenu）：收起一开始就把触摸交还给页面，不必等它
-            // 完全收回去才能滑屏。独立窗口采不到页面内容，菜单弹出时自己抓一帧页面当玻璃底；
-            // 这块 backdrop 只给本窗口里别的玻璃控件用。
-            //
-            // 弹窗宿主也挂在这里：COUI 的 OverlayDialog 走 glass surface，采不到 backdrop 就退回
-            // 不透明底色，胶囊按钮的半透明白底会直接糊在面板上。挂进 backdrop 之后面板才真的是
-            // 磨砂玻璃，按钮才浮得起来。
+            // 保存图片菜单与弹窗宿主均挂在根节点：遵循系统连续曲率超椭圆圆角与边缘光。
             Box(
                 Modifier
                     .fillMaxSize()
