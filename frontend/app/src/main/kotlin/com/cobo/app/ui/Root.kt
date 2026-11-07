@@ -59,7 +59,6 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
 import com.cobo.app.data.Pic
-import com.cobo.app.data.UpdateCheckInterval
 import com.cobo.app.data.Updater
 import com.cobo.app.screen.AccountsScreen
 import com.cobo.app.screen.ChangelogScreen
@@ -119,11 +118,9 @@ fun CoboRoot() {
     // 启动时顺手续一次登录态：客户端会话换 cookie，网页会话按浏览器的样子走一趟拿新 cookie。
     LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
 
-    // 启动时静默查一次更新：开关打开、且距上次检查超过节流窗口才真的发请求。
+    // 启动时静默查一次更新：开关打开后每次启动应用自动发请求。
     LaunchedEffect(Unit) {
         if (!App.settings.autoCheckUpdate) return@LaunchedEffect
-        val elapsed = System.currentTimeMillis() - App.settings.updateCheckedAt
-        if (elapsed < UpdateCheckInterval) return@LaunchedEffect
         App.checkUpdate(manual = false)
     }
 

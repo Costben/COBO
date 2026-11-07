@@ -150,7 +150,7 @@ class Settings(context: Context) {
     var confirmLike by mutableStateOf(sp.getBoolean("confirm_like", false))
         private set
 
-    /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
+    /** 上次检查更新的时间戳。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
 
