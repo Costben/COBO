@@ -40,8 +40,8 @@ import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
-import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -233,7 +233,8 @@ class ImageSaver internal constructor(
 val LocalImageSaver = staticCompositionLocalOf<ImageSaver?> { null }
 
 /**
- * 长按呼出的保存菜单：直接使用 COUI 标准的 [WindowListPopup] 悬浮菜单，对齐系统原生连续曲率圆角与边缘光。
+ * 长按呼出的保存菜单：使用 COUI 原生标准的 [OverlayListPopup] 悬浮菜单，
+ * 挂载于带有 [LocalBackdrop] 的浮层宿主，呈现半透明磨砂玻璃、连续曲率超椭圆圆角、高光边框与聚光灯光效。
  * [urls] == null 表示收起；收起动画期间靠上一次的列表把条目留住。
  */
 @Composable
@@ -268,7 +269,7 @@ fun SaveImagesMenu(
         }
     }
 
-    WindowListPopup(
+    OverlayListPopup(
         show = urls != null,
         onDismissRequest = onDismiss,
         preciseClickState = precise,
