@@ -146,6 +146,10 @@ class Settings(context: Context) {
     var blurEffects by mutableStateOf(sp.getBoolean("blur_effects", true))
         private set
 
+    /** 点赞前确认：点爱心之后先弹窗问一句，避免手滑。默认关，和以前一样点一下就赞；取消赞不拦。 */
+    var confirmLike by mutableStateOf(sp.getBoolean("confirm_like", false))
+        private set
+
     /** 上次检查更新的时间戳，用来做 [UpdateCheckInterval] 节流。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -251,6 +255,11 @@ class Settings(context: Context) {
     fun applyBlurEffects(value: Boolean) {
         blurEffects = value
         sp.edit().putBoolean("blur_effects", value).apply()
+    }
+
+    fun applyConfirmLike(value: Boolean) {
+        confirmLike = value
+        sp.edit().putBoolean("confirm_like", value).apply()
     }
 
     fun applyLocalFollowUid(uid: String) {

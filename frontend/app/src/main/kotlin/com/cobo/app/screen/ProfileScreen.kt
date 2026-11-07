@@ -385,6 +385,7 @@ fun ProfileContent(
                     onVideo = { nav.push(Route.Video(it.url, it.title)) },
                     onLike = {
                         scope.launch {
+                            if (!App.confirmLike(status.liked)) return@launch
                             runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
                                 items[index] = status.copy(
                                     liked = !status.liked,

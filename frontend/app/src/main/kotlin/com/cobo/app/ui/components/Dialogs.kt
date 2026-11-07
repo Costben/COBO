@@ -118,6 +118,8 @@ fun ConfirmDialog(
     title: String,
     message: String,
     confirmText: String = "确定",
+    /** 居中弹出（缩放淡入），不从底部滑上来。 */
+    centered: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -130,6 +132,8 @@ fun ConfirmDialog(
         title = title,
         summary = message,
         outsideMargin = DpSize(16.dp, 8.dp),
+        // 传 null 才交给窗口宽度判断；只有显式要居中时才把大屏形态固定打开。
+        largeScreen = if (centered) true else null,
         onDismissRequest = { show = false },
         onDismissFinished = {
             if (!settled) {

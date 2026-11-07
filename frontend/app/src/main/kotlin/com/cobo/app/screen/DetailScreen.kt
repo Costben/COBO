@@ -304,6 +304,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             onLike = {
                                 val s = status ?: return@StatusCard
                                 scope.launch {
+                                    if (!App.confirmLike(s.liked)) return@launch
                                     runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
                                         status = s.copy(
                                             liked = !s.liked,
@@ -416,11 +417,15 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         val at = comments.indexOfFirst { it.id == comment.id }
                         if (at < 0) return@CommentCard
                         val current = comments[at]
-                        comments[at] = current.copy(
-                            liked = !current.liked,
-                            likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
-                        )
                         scope.launch {
+                            // 先问再改：确认框弹着的这段时间列表可能刷新过，回来重新找一遍位置。
+                            if (!App.confirmLike(current.liked)) return@launch
+                            val now = comments.indexOfFirst { it.id == current.id }
+                            if (now < 0) return@launch
+                            comments[now] = current.copy(
+                                liked = !current.liked,
+                                likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
+                            )
                             // Comment likes have their own endpoints; api/attitudes/* is statuses only.
                             runCatching { App.repo.likeComment(current.id, current.liked) }
                                 .onFailure {
@@ -527,6 +532,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 onClick = {
                     val s = status ?: return@ActionIcon
                     scope.launch {
+                        if (!App.confirmLike(s.liked)) return@launch
                         runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
                             status = s.copy(
                                 liked = !s.liked,
@@ -643,11 +649,15 @@ private fun CommentCard(
         val at = replies.indexOfFirst { it.id == reply.id }
         if (at < 0) return
         val current = replies[at]
-        replies[at] = current.copy(
-            liked = !current.liked,
-            likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
-        )
         scope.launch {
+            // 同上：先问再改，确认期间列表可能刷新，回来重新找一遍位置。
+            if (!App.confirmLike(current.liked)) return@launch
+            val now = replies.indexOfFirst { it.id == current.id }
+            if (now < 0) return@launch
+            replies[now] = current.copy(
+                liked = !current.liked,
+                likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
+            )
             runCatching { App.repo.likeComment(current.id, current.liked) }
                 .onFailure {
                     val back = replies.indexOfFirst { it.id == current.id }

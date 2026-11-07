@@ -34,6 +34,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_feed_left_tab",
             "settings_feed_center_tab",
             "settings_feed_right_tab",
+            "settings_confirm_like",
             "settings_accounts",
             "settings_drafts",
             "settings_history",
@@ -94,6 +95,21 @@ class SettingsE2eTest : UiE2eTest() {
             waitUntil("预测性返回开关没有切回") { App.settings.predictiveBack == before }
         } finally {
             App.settings.applyPredictiveBack(before)
+        }
+    }
+
+    @Test
+    fun confirmLike_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.confirmLike
+        try {
+            scrollToTag("settings_confirm_like")
+            tapTag("settings_confirm_like")
+            waitUntil("点赞前确认开关没有切换") { App.settings.confirmLike != before }
+            tapTag("settings_confirm_like")
+            waitUntil("点赞前确认开关没有切回") { App.settings.confirmLike == before }
+        } finally {
+            App.settings.applyConfirmLike(before)
         }
     }
 

@@ -187,6 +187,7 @@ class FeedStore(
     suspend fun like(index: Int) {
         if (readOnly) return
         val status = items.getOrNull(index) ?: return
+        if (!App.confirmLike(status.liked)) return
         runCatching { App.repo.like(status.id, status.liked) }
             .onSuccess {
                 items[index] = status.copy(

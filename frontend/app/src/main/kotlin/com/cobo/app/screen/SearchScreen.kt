@@ -429,6 +429,7 @@ fun SearchScreen(nav: NavState) {
                                             onVideo = { nav.push(Route.Video(it.url, it.title)) },
                                             onLike = {
                                                 scope.launch {
+                                                    if (!App.confirmLike(status.liked)) return@launch
                                                     runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
                                                         weibo.items[index] = status.copy(
                                                             liked = !status.liked,

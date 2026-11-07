@@ -74,6 +74,7 @@ fun SettingsScreen(nav: NavState) {
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
     var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
+    var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
@@ -165,6 +166,18 @@ fun SettingsScreen(nav: NavState) {
                         title = "模糊效果",
                         summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
                         modifier = Modifier.testTag("settings_blur"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = confirmLike,
+                        onCheckedChange = {
+                            confirmLike = it
+                            App.settings.applyConfirmLike(it)
+                        },
+                        title = "点赞前确认",
+                        summary = "只在点赞时问一句，取消赞直接生效",
+                        modifier = Modifier.testTag("settings_confirm_like"),
                         cardListPosition = CardListPosition.Tail,
                     )
                 }
