@@ -66,6 +66,7 @@ import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
+import com.cobo.app.ui.resolveWeiboLink
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
@@ -273,8 +274,20 @@ fun SearchScreen(nav: NavState) {
         scope.launch { load(SearchTab.Weibo, reset = true, force = true) }
     }
 
-    // 话题结果点开就是该话题下的微博：换个关键词重新走一遍「微博」分类。
     fun openTopic(topic: TopicItem) {
+        val id = topic.containerId
+        if (id != null) {
+            nav.push(Route.SuperTopic(id, resolveWeiboLink(topic.scheme)
+                ?: "https://m.weibo.cn/p/index?containerid=$id"))
+            return
+        }
+        if (topic.scheme.isNotBlank()) {
+            resolveWeiboLink(topic.scheme)?.let {
+                nav.push(Route.Web(it, topic.title))
+                return
+            }
+        }
+        // Older results without a destination retain their keyword-search behavior.
         query = topic.title
         tab = SearchTab.Weibo
         scope.launch { runSearch(topic.title) }

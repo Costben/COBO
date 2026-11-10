@@ -123,6 +123,21 @@ class SearchParseTest {
     }
 
     @Test
+    fun sameNamedTopicsKeepDistinctServerDestinations() {
+        val id = "100808e1f868bf9980f09ab6908787d7eaf0f0"
+        val scheme = "sinaweibo://pageinfo?containerid=$id&extparam=example"
+        val root = JSONObject("""{"ok":1,"data":{"cards":[{"card_group":[
+            {"title_sub":"#同名#","scheme":"$scheme"},
+            {"title_sub":"#同名#","scheme":"https://m.weibo.cn/search?containerid=231522type%3D1%26q%3Dsame"}
+        ]}]}}""")
+        val topics = parseTopicCards(root)
+        assertEquals(2, topics.size)
+        assertEquals(id, topics[0].containerId)
+        assertEquals(scheme, topics[0].scheme)
+        assertEquals(null, topics[1].containerId)
+    }
+
+    @Test
     fun emptyPayloadReturnsEmptyLists() {
         assertTrue(parseUserCards(JSONObject("""{"ok":0}""")).isEmpty())
         assertTrue(parseTopicCards(JSONObject("""{"ok":0}""")).isEmpty())

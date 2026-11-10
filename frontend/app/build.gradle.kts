@@ -44,8 +44,8 @@ android {
 
 dependencies {
     val coui = "io.github.suqi8.coui.kmp"
-    // Rolling coordinate: ../coui republishes it on every commit (.githooks/publish-rolling-snapshot.sh).
-    val couiVersion = "1.2.0-SNAPSHOT"
+    // Immutable ArtPlus Maven tree pinned in settings.gradle.kts.
+    val couiVersion = "1.2.0-d756fe5c-SNAPSHOT"
 
     implementation("$coui:coui-ui:$couiVersion")
     implementation("$coui:coui-icons:$couiVersion")

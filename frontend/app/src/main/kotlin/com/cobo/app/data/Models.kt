@@ -520,7 +520,13 @@ data class CommentPage(
 data class HotItem(val title: String, val scheme: String, val label: String = "", val rank: Int = 0)
 
 /** 搜索「话题」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论两项计数。 */
-data class TopicItem(val title: String, val desc1: String = "", val desc2: String = "")
+data class TopicItem(
+    val title: String,
+    val desc1: String = "",
+    val desc2: String = "",
+    val scheme: String = "",
+    val containerId: String? = null,
+)
 
 data class MessageItem(
     val id: String,
@@ -747,11 +753,16 @@ fun parseTopicCards(root: JSONObject?): List<TopicItem> {
             val item = group.optJSONObject(j) ?: continue
             val title = item.str("title_sub").trim('#', ' ', '\u00a0')
             if (title.isBlank()) continue
-            if (title in topics) continue
-            topics[title] = TopicItem(
+            val scheme = item.str("scheme")
+            val containerId = superTopicId(item.str("containerid")) ?: superTopicId(scheme)
+            val key = containerId ?: scheme.ifBlank { title }
+            if (key in topics) continue
+            topics[key] = TopicItem(
                 title = title,
                 desc1 = item.str("desc1"),
                 desc2 = item.str("desc2"),
+                scheme = scheme,
+                containerId = containerId,
             )
         }
     }

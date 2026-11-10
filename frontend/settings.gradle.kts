@@ -23,9 +23,17 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
-        // COUI is consumed from the local fork as the rolling 1.2.0-SNAPSHOT, which its git hooks
-        // republish on every commit; run ../coui/.githooks/publish-rolling-snapshot.sh to publish by hand.
-        maven { url = uri("../../coui/build/repository/local") }
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "pinnedArtPlusCoui"
+                    url = uri("https://raw.githubusercontent.com/Costben/ArtPlus/63bcad6dc055680e2cbc58640abcbf0329b9250d/third_party/coui-repo")
+                }
+            }
+            filter {
+                includeGroup("io.github.suqi8.coui.kmp")
+            }
+        }
     }
 }
 
