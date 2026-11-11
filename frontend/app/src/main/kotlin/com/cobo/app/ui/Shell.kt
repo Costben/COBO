@@ -126,16 +126,21 @@ import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.GlassContainer
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
+import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
+import io.github.suqi8.coui.kmp.basic.couiGlassSurface
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.basic.materialShadowEdge
+import io.github.suqi8.coui.kmp.basic.rememberGlassHighlight
 import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -1226,6 +1231,11 @@ private fun FeedTitleRow(
 // segment instead (COUIPressFeedbackHelper).
 private val FeedTabPressSpring = spring<Float>(dampingRatio = 1f, stiffness = 438.65f)
 
+// COUI 分段条的玻璃材质按原生模糊 sigma 与库内 px→dp 的换算系数传参，这里照抄同一组数值，
+// 顶栏分段条的模糊强度才和系统一致。
+private const val SegmentGlassBlurSigmaPx = 25f
+private const val SegmentGlassSigmaScale = 0.45f
+
 @Composable
 private fun FeedTabs(
     pager: PagerState,
@@ -1240,11 +1250,17 @@ private fun FeedTabs(
     modifier: Modifier = Modifier,
 ) {
     val scheme = COUITheme.colorScheme
-    // ColorOS's opaque segment capsule (COUI `opaqueTabRowColors`): #353535 / #E2E3E4 container,
-    // translucent white indicator over it.
+    // ColorOS's segment capsule in its "transparent blur highlight" tier: the container is glass over
+    // the page, so only the indicator keeps a fill. Light mode keeps the #0F000000 tint, dark mode the
+    // #1FFFFFFF one, both laid over a blurred backdrop and lit on the rim.
     val dark = scheme.background.luminance() < 0.5f
+    // 模糊不可用（关掉模糊效果、系统省电、低于 Android 13）时退回原来的不透明胶囊。
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
+    val backdrop = LocalBackdrop.current
+    val glassHighlight = rememberGlassHighlight(GlassContainer.Small, backdrop)
+    val containerEdge = TabRowDefaults.containerStroke(dark)
+    val indicatorEdge = TabRowDefaults.indicatorStroke(dark)
     val labels = feedTabs.map { it.label }
     val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
@@ -1331,11 +1347,22 @@ private fun FeedTabs(
 
     BoxWithConstraints(
         modifier
-            // Opaque 40dp capsule, the same height as the search action in the header row.
+            // Glass 40dp capsule, the same height as the search action in the header row. Same
+            // material as COUI's "transparent blur highlight" segment bar: blurred page content with
+            // a lit rim, and the old opaque capsule when blur cannot run.
             .requiredHeight(40.dp)
             .width(containerWidth)
-            .clip(CouiSegmentCapsuleShape)
-            .background(containerColor),
+            .couiGlassSurface(
+                backdrop = backdrop,
+                shape = CouiSegmentCapsuleShape,
+                containerColor = containerColor,
+                fallback = Modifier.clip(CouiSegmentCapsuleShape).background(containerColor),
+                blurRadius = with(density) { (SegmentGlassBlurSigmaPx / SegmentGlassSigmaScale).toDp().value },
+                blendColors = TabRowDefaults.segmentBlurColors(dark),
+                highlight = glassHighlight,
+            )
+            .materialShadowEdge(stroke = containerEdge, fallback = Modifier)
+            .clip(CouiSegmentCapsuleShape),
     ) {
         val drawW = with(density) { (motion.width * indicatorScale).toDp() }
         val drawH = with(density) { (motion.height * indicatorScale).toDp() }
@@ -1351,7 +1378,8 @@ private fun FeedTabs(
                 )
                 .size(width = drawW, height = drawH)
                 .clip(CouiSegmentCapsuleShape)
-                .background(indicatorColor),
+                .background(indicatorColor)
+                .materialShadowEdge(stroke = indicatorEdge, fallback = Modifier),
         )
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
