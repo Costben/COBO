@@ -400,4 +400,39 @@ object CoboIcons {
             }
         }.build()
     }
+
+    /** 网页查看：地球经纬线轮廓，外径与多线视觉字重对齐 COUI Regular 顶栏图标。 */
+    val Globe: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Globe",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.45f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(20.8f, 12f)
+                curveTo(20.8f, 16.86f, 16.86f, 20.8f, 12f, 20.8f)
+                curveTo(7.14f, 20.8f, 3.2f, 16.86f, 3.2f, 12f)
+                curveTo(3.2f, 7.14f, 7.14f, 3.2f, 12f, 3.2f)
+                curveTo(16.86f, 3.2f, 20.8f, 7.14f, 20.8f, 12f)
+                close()
+                moveTo(15.6f, 12f)
+                curveTo(15.6f, 16.86f, 13.99f, 20.8f, 12f, 20.8f)
+                curveTo(10.01f, 20.8f, 8.4f, 16.86f, 8.4f, 12f)
+                curveTo(8.4f, 7.14f, 10.01f, 3.2f, 12f, 3.2f)
+                curveTo(13.99f, 3.2f, 15.6f, 7.14f, 15.6f, 12f)
+                close()
+                moveTo(3.73f, 9f)
+                horizontalLineTo(20.27f)
+                moveTo(3.73f, 15f)
+                horizontalLineTo(20.27f)
+            }
+        }.build()
+    }
 }
