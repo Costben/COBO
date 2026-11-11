@@ -280,10 +280,14 @@ fun CoboRoot() {
                         onDismiss = { saveTargets = null },
                         state = saveState,
                     )
-                    COUIPopupHost()
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
                 }
+                // 弹层宿主不提供 rootBackdrop：rootBackdrop 平时没有消费者、处于停止录制状态，
+                // 弹层第一个读到它就会让它开始录制，整棵树重录一帧，压在下面的底栏玻璃会闪一下。
+                // 让它自己回落到打开处的 backdrop（也就是用户正在看的那一页），既不再触发重录，
+                // 弹层模糊的也还是它背后真实的内容。
+                COUIPopupHost()
             }
 
             // 更新提示挂在根节点：自动检查与设置页的手动检查都往 App.pendingUpdate 里写。
