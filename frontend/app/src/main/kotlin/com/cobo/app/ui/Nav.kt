@@ -132,7 +132,6 @@ sealed interface Route {
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
     data class Relations(val uid: String, val kind: RelationKind) : Route
-    data object Search : Route
     data class Publish(val draft: String = "") : Route
     data class Chat(val uid: String, val name: String) : Route
     data class Web(val url: String, val title: String) : Route

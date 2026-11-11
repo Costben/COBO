@@ -1,11 +1,17 @@
 package com.cobo.app.ui
 
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -14,8 +20,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -29,13 +37,16 @@ import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -44,24 +55,46 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
@@ -69,13 +102,25 @@ import com.cobo.app.R
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.nearbyCoords
+import com.cobo.app.screen.BindSearchSuggestionsEffect
 import com.cobo.app.screen.FeedFilter
 import com.cobo.app.screen.FeedStore
 import com.cobo.app.screen.LocalHome
 import com.cobo.app.screen.LocalMessagesPlaceholder
 import com.cobo.app.screen.MessagesScreen
 import com.cobo.app.screen.ProfileContent
+import com.cobo.app.screen.SearchDiscoverState
+import com.cobo.app.screen.SearchResultsState
 import com.cobo.app.screen.TimelineScreen
+import com.cobo.app.screen.dismissHistoryEditingOnTap
+import com.cobo.app.screen.rememberSearchDiscoverState
+import com.cobo.app.screen.rememberSearchResultsState
+import com.cobo.app.screen.searchDiscoverItems
+import com.cobo.app.screen.searchHorizontalPadding
+import com.cobo.app.screen.searchResultsItems
+import com.cobo.app.ui.components.navBottomPadding
+import io.github.suqi8.coui.kmp.anim.COUIInEase
+import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
@@ -88,28 +133,28 @@ import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
+import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
-import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.ExpandableIndicator
-import io.github.suqi8.coui.kmp.icon.basic.Search
 import io.github.suqi8.coui.kmp.icon.extended.Add
-import io.github.suqi8.coui.kmp.icon.extended.ContactsCircle
-import io.github.suqi8.coui.kmp.icon.extended.Home
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 internal sealed class FeedTabSpec {
@@ -161,6 +206,7 @@ fun MainShell(nav: NavState) {
     val tab = nav.mainTab
     val holder = rememberSaveableStateHolder()
     val backdrop = rememberLayerBackdrop()
+    val searchBackdrop = rememberLayerBackdrop()
     val blur = blurEffectsEnabled()
     val scope = rememberCoroutineScope()
     // The bar floats over all three pages, so the line it ends at is reported once here and read
@@ -299,6 +345,8 @@ fun MainShell(nav: NavState) {
     }
 
     val feedHasTabs = feedTabs.size > 1
+    val galleryDensity = rememberGalleryDensity()
+    val barTitleHeightPx = with(galleryDensity) { FeedTitleRowHeight.toPx() }
     // The top bar floats over the lists; the first row starts below it and later rows scroll under.
     // 栏钉在自己的密度上，页面按系统密度排版，所以这里要按像素换算回当前密度。
     // 消息 and 我 wear the feed's title row alone, so their bar is exactly one row tall.
@@ -311,6 +359,136 @@ fun MainShell(nav: NavState) {
         topBarHeight
     }
     var feedCollapse by remember { mutableFloatStateOf(0f) }
+    var feedSearchQuery by remember { mutableStateOf("") }
+    var feedSearchExpanded by remember { mutableStateOf(false) }
+    val panelProgress = remember { Animatable(0f) }
+    val panelAlpha = remember { Animatable(0f) }
+    val panelMounted by remember {
+        derivedStateOf {
+            feedSearchExpanded || panelProgress.value > 0.001f || panelAlpha.value > 0.001f
+        }
+    }
+    val discoverState = rememberSearchDiscoverState()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    // 首页搜索展开期间锁定标题行不折叠，防止部分折叠或软键盘弹出时挤压/裁切搜索胶囊；收起后恢复跟踪列表滚动。
+    val rawCollapseTarget = (feedCollapse / barTitleHeightPx).coerceIn(0f, 1f)
+    val collapseTarget = if (tab == 0 && feedSearchExpanded) 0f else rawCollapseTarget
+    val collapseShown = remember { Animatable(collapseTarget) }
+    var wasSearchExpanded by remember { mutableStateOf(feedSearchExpanded) }
+    LaunchedEffect(collapseTarget, feedSearchExpanded) {
+        val searchTransition = (wasSearchExpanded != feedSearchExpanded) || (feedSearchExpanded && collapseShown.value > 0f)
+        wasSearchExpanded = feedSearchExpanded
+        if (abs(collapseTarget - collapseShown.value) > 0.6f || searchTransition) {
+            collapseShown.animateTo(collapseTarget, tween(MainTabFadeMillis))
+        } else {
+            collapseShown.snapTo(collapseTarget)
+        }
+    }
+    val collapsed = collapseShown.value
+
+    val homeResultsState = rememberSearchResultsState(scope)
+
+    val openFeedSearch: () -> Unit = {
+        discoverState.clearEditing()
+        homeResultsState.clearResults()
+        feedSearchQuery = ""
+        feedSearchExpanded = true
+    }
+    val cancelFeedSearch: () -> Unit = {
+        keyboard?.hide()
+        focusManager.clearFocus()
+        discoverState.clearEditing()
+        feedSearchExpanded = false
+    }
+    val closeFeedSearchImmediately: suspend () -> Unit = {
+        keyboard?.hide()
+        focusManager.clearFocus()
+        discoverState.clearEditing()
+        homeResultsState.clearResults()
+        feedSearchQuery = ""
+        feedSearchExpanded = false
+        panelProgress.snapTo(0f)
+        panelAlpha.snapTo(0f)
+    }
+    val submitHomeSearch: (String) -> Unit = { raw ->
+        val keyword = raw.trim()
+        if (keyword.isNotEmpty()) {
+            feedSearchQuery = keyword
+            keyboard?.hide()
+            focusManager.clearFocus()
+            discoverState.clearEditing()
+            homeResultsState.runSearch(keyword, discoverState)
+        }
+    }
+
+    LaunchedEffect(feedSearchExpanded) {
+        if (feedSearchExpanded) {
+            scope.launch { discoverState.ensureHotLoaded() }
+            coroutineScope {
+                launch {
+                    panelAlpha.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 220, easing = COUIInEase),
+                    )
+                }
+                launch {
+                    panelProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(
+                            dampingRatio = SearchSpringDamping,
+                            stiffness = SearchSpringStiffnessExpand,
+                            visibilityThreshold = 0.001f,
+                        ),
+                    )
+                }
+            }
+        } else if (panelProgress.value > 0f || panelAlpha.value > 0f) {
+            coroutineScope {
+                launch {
+                    panelAlpha.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(
+                            durationMillis = 220,
+                            delayMillis = 200,
+                            easing = COUIOutEase,
+                        ),
+                    )
+                }
+                launch {
+                    panelProgress.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(
+                            dampingRatio = SearchSpringDamping,
+                            stiffness = SearchSpringStiffnessCollapse,
+                            visibilityThreshold = 0.001f,
+                        ),
+                    )
+                }
+            }
+            if (!feedSearchExpanded) {
+                homeResultsState.clearResults()
+                feedSearchQuery = ""
+                discoverState.clearEditing()
+            }
+        }
+    }
+
+    LaunchedEffect(tab) {
+        if (tab != 0 && (feedSearchExpanded || feedSearchQuery.isNotEmpty() || panelProgress.value > 0f || panelAlpha.value > 0f)) {
+            closeFeedSearchImmediately()
+        }
+    }
+
+    BindSearchSuggestionsEffect(
+        state = discoverState,
+        query = feedSearchQuery,
+        active = tab == 0 && feedSearchExpanded,
+        submitted = homeResultsState.submitted,
+    )
+
+    val feedPanelCovering = tab == 0 && panelMounted
 
     Box(Modifier.fillMaxSize()) {
         // The bar floats over the page, so the line it ends at is reported from the bar itself and
@@ -321,6 +499,7 @@ fun MainShell(nav: NavState) {
                     .fillMaxSize()
                     .layerBackdropIf(blur, backdrop)
                     .background(pageContainerColor())
+                    .then(if (feedPanelCovering) Modifier.clearAndSetSemantics {} else Modifier),
             ) {
                 // The bottom bar only switches on tap, so the page carries the transition itself:
                 // both tabs stay composed through the same state holder and cross-fade.
@@ -364,32 +543,30 @@ fun MainShell(nav: NavState) {
             }
         }
 
-        // 顶栏材质要靠 LocalEdgeToEdge 才会画：COUI 只在内容真的铺到状态栏下面时才肯采样，
-        // 否则把内容第一行抹成一条平色横带（顶栏「糊成一团」）。页面 contentPadding 把 topInset
-        // 放在列表自己身上，滚动时内容确实从顶栏底下过，这里直接开。
+        // Layer 2: 顶栏模糊材质层 + 首页分段标签行（在搜索面板之下，展开时会被面板盖住）。
         CompositionLocalProvider(
             LocalBackdrop provides if (blur) backdrop else null,
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                MainTopBar(
+                MainBarUnderlay(
                     tab = tab,
-                    nav = nav,
                     feedPager = feedPager,
                     feedTabs = feedTabs,
                     guest = guest,
                     centerTab = centerTab,
-                    collapsePx = feedCollapse,
+                    collapsed = collapsed,
+                    titleHeightPx = barTitleHeightPx,
+                    searchExpanded = feedSearchExpanded,
+                    panelCovering = feedPanelCovering,
                     bounds = topBarBounds,
                     onCenterSelected = { item ->
                         App.settings.applyFeedCenterTab(item)
-                        // 这几条流按本机标记拼，标记是在主页改的，切过来时重拉一次才看得到。
                         if (item == FeedTabItem.Special || item == FeedTabItem.Secret ||
                             item == FeedTabItem.Local
                         ) {
                             scope.launch { storeFor(item).refresh() }
                         }
-                        // 中间栏永远排在左栏后面：左栏没隐藏就是第二页。
                         val targetPage = if (leftTab != FeedTabItem.None) 1 else 0
                         scope.launch { feedPager.animateScrollToPage(targetPage) }
                     },
@@ -398,24 +575,94 @@ fun MainShell(nav: NavState) {
             }
         }
 
+        // Layer 3: 悬浮底部导航栏（在面板之下，展开时被面板盖住）。
         CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
             PinnedBarDensity {
                 FloatingBottomBar(
                     tab = tab,
-                    onTab = nav::setTab,
+                    onTab = { target -> if (!feedPanelCovering) nav.setTab(target) },
                     // 刷新键跟随当前页：消息页刷消息，其余仍走微博回顶刷新。
                     onRefresh = {
-                        if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
+                        if (!feedPanelCovering) {
+                            if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
+                        }
                     },
-                    onFeedTop = { App.requestFeedTop() },
+                    onFeedTop = { if (!feedPanelCovering) App.requestFeedTop() },
                     onPublish = {
-                        if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
+                        if (!feedPanelCovering) {
+                            if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
+                        }
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .then(if (feedPanelCovering) Modifier.clearAndSetSemantics {} else Modifier),
+                )
+            }
+        }
+
+        // Layer 4: 首页搜索向下展开的整屏面板（从屏幕顶 0 铺满到屏幕底部，位于顶栏渐变材质之下、底栏之上）。
+        if (tab == 0 && panelMounted) {
+            HomeSearchOverlay(
+                topBarHeight = topBarHeight,
+                blur = blur,
+                searchBackdrop = searchBackdrop,
+                searchExpanded = feedSearchExpanded,
+                panelProgress = { panelProgress.value },
+                panelAlpha = { panelAlpha.value },
+                searchQuery = feedSearchQuery,
+                discoverState = discoverState,
+                resultsState = homeResultsState,
+                nav = nav,
+                scope = scope,
+                onSelectKeyword = submitHomeSearch,
+                onRetryHot = { scope.launch { discoverState.loadHot(force = true) } },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        // Layer 5: 标题行与展开后的 TopAppBarSearchBar（在最顶层，确保搜索胶囊和“取消”按钮不被面板遮挡）。
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blur) {
+                if (tab == 0 && panelMounted) searchBackdrop else backdrop
+            } else {
+                null
+            },
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                MainTitleRow(
+                    tab = tab,
+                    nav = nav,
+                    guest = guest,
+                    collapsed = collapsed,
+                    titleHeightPx = barTitleHeightPx,
+                    searchQuery = feedSearchQuery,
+                    onSearchQueryChange = {
+                        if (it != feedSearchQuery) discoverState.clearEditing()
+                        feedSearchQuery = it
+                        if (it.isBlank()) homeResultsState.clearResults()
+                    },
+                    searchExpanded = feedSearchExpanded,
+                    onSearchOpen = openFeedSearch,
+                    onSearchCancel = cancelFeedSearch,
+                    onSearchSubmit = submitHomeSearch,
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                 )
             }
         }
     }
+
+    val inHomeSearchResults =
+        nav.stack.size == 1 && tab == 0 && feedSearchExpanded && homeResultsState.submitted.isNotEmpty()
+    if (inHomeSearchResults) {
+        BackHandler {
+            homeResultsState.clearResults()
+            feedSearchQuery = ""
+            discoverState.clearEditing()
+            scope.launch { discoverState.ensureHotLoaded() }
+        }
+    }
+    key(feedSearchExpanded, inHomeSearchResults) { CoboPredictiveBackHandler(nav) }
 }
 
 /**
@@ -441,28 +688,22 @@ private val FloatingBarContentGap = 50.dp
 /** Cross-fade length for a bottom-bar tab switch. */
 private const val MainTabFadeMillis = 220
 
-/**
- * The floating bar over the three tabs.
- *
- * The material is one platform backdrop blur for the whole bar, never two. Two of them fading
- * against each other made the incoming one blur the outgoing one's veil as well: that band under
- * the title darkened to more than either tab shows at rest, then snapped back the frame the old
- * layer was dropped — the flash the tab switch used to have. So only the content cross-fades here,
- * and the material's height follows the tab instead (the feed wears an extra segment row).
- */
 @Composable
-private fun MainTopBar(
+private fun MainBarUnderlay(
     tab: Int,
-    nav: NavState,
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
     guest: Boolean,
     centerTab: FeedTabItem,
-    collapsePx: Float,
+    collapsed: Float,
+    titleHeightPx: Float,
+    searchExpanded: Boolean,
+    panelCovering: Boolean,
     bounds: TopBarBounds,
     onCenterSelected: (FeedTabItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val pageBarHeight = statusBarTop + FeedTitleRowHeight
     val feedHasTabs = feedTabs.size > 1
@@ -471,24 +712,6 @@ private fun MainTopBar(
     } else {
         pageBarHeight
     }
-    val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
-    val collapseTarget = (collapsePx / titleHeightPx).coerceIn(0f, 1f)
-    // 折叠量只认 Animatable 的当前值这一条来源：以前在「动画值」和「目标值」之间切换，
-    // 掉帧让目标一步跨过动画阈值时，会先按目标值折没一帧、动画启动后又弹回旧值，闪一下才上移。
-    val collapseShown = remember { Animatable(collapseTarget) }
-    LaunchedEffect(collapseTarget) {
-        if (abs(collapseTarget - collapseShown.value) > 0.6f) {
-            collapseShown.animateTo(collapseTarget, tween(MainTabFadeMillis))
-        } else {
-            collapseShown.snapTo(collapseTarget)
-        }
-    }
-    val collapsed = collapseShown.value
-    // 只有微博页会把标题行折进状态栏。切走时把这个折叠量收回 0，材质才不会停在上一页的位置。
-    // 折叠时上移的只有材质：内容的折叠轨迹一直是按「栏顶 = 0」写的（标题往上折、分段行往下贴），
-    // 原来材质和内容是一层套一层，两个等量反向的偏移互相抵消；这里内容已经移出材质节点，
-    // 就不要再给它补偏移，否则折叠量会被算两遍。
-    // 两个动画量都在布局/绘制阶段才读（下面的 lambda 里），否则每一帧都会把整条栏重新组合一遍。
     val feedWeight = animateFloatAsState(
         targetValue = if (tab == 0) 1f else 0f,
         animationSpec = tween(MainTabFadeMillis),
@@ -500,6 +723,11 @@ private fun MainTopBar(
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarMaterialHeight",
     )
+    var filterMenuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(searchExpanded, tab) {
+        if (searchExpanded || tab != 0) filterMenuExpanded = false
+    }
+
     Box(modifier) {
         AppBarSurface(
             modifier = Modifier
@@ -521,71 +749,251 @@ private fun MainTopBar(
                     }
             )
         }
-        Crossfade(
-            targetState = tab,
-            animationSpec = tween(MainTabFadeMillis),
-            label = "mainBarContent",
-        ) { page ->
-            BarContent(
-                tab = page,
-                nav = nav,
-                feedPager = feedPager,
-                feedTabs = feedTabs,
-                guest = guest,
-                centerTab = centerTab,
-                collapsed = collapsed,
-                onCenterSelected = onCenterSelected,
-            )
+        AnimatedVisibility(
+            visible = tab == 0 && feedHasTabs,
+            enter = fadeIn(tween(MainTabFadeMillis)),
+            exit = fadeOut(tween(MainTabFadeMillis)),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = statusBarTop)
+                    .then(if (panelCovering) Modifier.clearAndSetSemantics {} else Modifier),
+            ) {
+                Spacer(Modifier.height(FeedTitleRowHeight))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+                        .graphicsLayer { translationY = -collapsed * titleHeightPx },
+                ) {
+                    FeedTabs(
+                        pager = feedPager,
+                        feedTabs = feedTabs,
+                        filterMenu = !guest,
+                        centerTab = centerTab,
+                        filterMenuExpanded = filterMenuExpanded,
+                        onFilterMenuDismiss = { filterMenuExpanded = false },
+                        onCenterSelected = {
+                            filterMenuExpanded = false
+                            onCenterSelected(it)
+                        },
+                        onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
+                        onFilterClick = { filterMenuExpanded = true },
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val SearchSpringDamping = 0.8f
+private val SearchSpringStiffnessExpand = ((2.0 * Math.PI / 0.55) * (2.0 * Math.PI / 0.55)).toFloat()
+private val SearchSpringStiffnessCollapse = ((2.0 * Math.PI / 0.45) * (2.0 * Math.PI / 0.45)).toFloat()
+
+private class SearchPanelClipShape(
+    private val progress: Float,
+    private val minHeightPx: Float,
+) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val bottom = (minHeightPx + (size.height - minHeightPx) * progress.coerceIn(0f, 1f))
+            .coerceIn(0f, size.height)
+        return Outline.Rectangle(Rect(0f, 0f, size.width, bottom))
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is SearchPanelClipShape &&
+            other.progress == progress &&
+            other.minHeightPx == minHeightPx
+
+    override fun hashCode(): Int = 31 * progress.hashCode() + minHeightPx.hashCode()
+}
+
+@Composable
+private fun HomeSearchOverlay(
+    topBarHeight: Dp,
+    blur: Boolean,
+    searchBackdrop: LayerBackdrop,
+    searchExpanded: Boolean,
+    panelProgress: () -> Float,
+    panelAlpha: () -> Float,
+    searchQuery: String,
+    discoverState: SearchDiscoverState,
+    resultsState: SearchResultsState,
+    nav: NavState,
+    scope: CoroutineScope,
+    onSelectKeyword: (String) -> Unit,
+    onRetryHot: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val surfaceColor = pageContainerColor()
+    val listState = rememberLazyListState()
+    val horizontalPadding = searchHorizontalPadding()
+    val density = LocalDensity.current
+    val topBarHeightPx = with(density) { topBarHeight.toPx() }
+
+    LaunchedEffect(listState, resultsState.submitted, resultsState.tab, resultsState.stateFor(resultsState.tab).count) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { last ->
+                if (resultsState.submitted.isBlank()) return@collect
+                val tabState = resultsState.stateFor(resultsState.tab)
+                if (!tabState.started || tabState.end || tabState.count == 0) return@collect
+                if (last >= tabState.count - 2) resultsState.load(resultsState.tab, reset = false, force = false)
+            }
+    }
+
+    val suggesting = searchQuery.isNotBlank() && searchQuery.trim() != resultsState.submitted
+    val showingResults = resultsState.submitted.isNotBlank() && !suggesting && searchQuery.isNotBlank()
+
+    LaunchedEffect(showingResults, resultsState.submitted, suggesting, resultsState.tab) {
+        listState.scrollToItem(0)
+    }
+
+    val activeSelectKeyword: (String) -> Unit = { keyword ->
+        if (searchExpanded) onSelectKeyword(keyword)
+    }
+
+    Box(modifier) {
+        val history = App.settings.searchHistory
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val p = panelProgress()
+                    alpha = panelAlpha().coerceIn(0f, 1f)
+                    if (p < 0.999f) {
+                        clip = true
+                        shape = SearchPanelClipShape(p, topBarHeightPx)
+                    } else {
+                        clip = false
+                    }
+                }
+                .layerBackdropIf(blur, searchBackdrop)
+                .background(surfaceColor)
+                .then(
+                    if (searchExpanded) {
+                        Modifier
+                            .dismissHistoryEditingOnTap(discoverState)
+                            .testTag("home_search_panel")
+                    } else {
+                        Modifier.pointerInput(Unit) {}
+                    },
+                ),
+        ) {
+            CompositionLocalProvider(LocalBackdrop provides if (blur) searchBackdrop else null) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 0.dp,
+                        top = glassBarContentTop(topBarHeight, 8.dp),
+                        end = 0.dp,
+                        bottom = 16.dp + navBottomPadding(),
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (!showingResults) {
+                        searchDiscoverItems(
+                            state = discoverState,
+                            suggesting = suggesting,
+                            history = history.toList(),
+                            onSelectKeyword = activeSelectKeyword,
+                            onRetryHot = onRetryHot,
+                        )
+                    } else {
+                        searchResultsItems(
+                            state = resultsState,
+                            nav = nav,
+                            horizontalPadding = horizontalPadding,
+                            scope = scope,
+                            onSelectKeyword = activeSelectKeyword,
+                        )
+                    }
+                }
+            }
+        }
+
+        // 搜索面板自己的顶栏渐变模糊材质（单行搜索栏高度，与首页常态顶栏及消息/我页一致；模糊关闭时退回实色）。
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blur) searchBackdrop else null,
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                val barHeight = statusBarTop + FeedTitleRowHeight
+                AppBarSurface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth(),
+                    containerColor = surfaceColor,
+                    scrollFraction = panelAlpha,
+                ) {
+                    Box(Modifier.fillMaxWidth().height(barHeight))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun BarContent(
+private fun MainTitleRow(
     tab: Int,
     nav: NavState,
-    feedPager: PagerState,
-    feedTabs: List<FeedTabSpec>,
     guest: Boolean,
-    centerTab: FeedTabItem,
     collapsed: Float,
-    onCenterSelected: (FeedTabItem) -> Unit,
+    titleHeightPx: Float,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    searchExpanded: Boolean,
+    onSearchOpen: () -> Unit,
+    onSearchCancel: () -> Unit,
+    onSearchSubmit: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    when (tab) {
-        0 -> FeedHeader(
-            feedPager = feedPager,
-            feedTabs = feedTabs,
-            filterMenu = !guest,
-            centerTab = centerTab,
-            collapsed = collapsed,
-            onCenterSelected = onCenterSelected,
-            onSearch = { nav.push(Route.Search) },
-        )
+    Crossfade(
+        targetState = tab,
+        animationSpec = tween(MainTabFadeMillis),
+        modifier = modifier,
+        label = "mainTitleRow",
+    ) { page ->
+        when (page) {
+            0 -> FeedTitleRow(
+                collapsed = collapsed,
+                titleHeightPx = titleHeightPx,
+                searchQuery = searchQuery,
+                onSearchQueryChange = onSearchQueryChange,
+                searchExpanded = searchExpanded,
+                onSearchOpen = onSearchOpen,
+                onSearchCancel = onSearchCancel,
+                onSearchSubmit = onSearchSubmit,
+            )
 
-        1 -> PageTitleBar(
-            title = "消息",
-            actions = {
-                if (!guest) {
-                    SearchBarActionButton(
-                        text = "通知",
-                        onClick = { nav.push(Route.Web("https://m.weibo.cn/message/", "通知")) },
-                        modifier = Modifier.testTag("top_notice"),
-                    )
-                }
-            },
-        )
+            1 -> PageTitleBar(
+                title = "消息",
+                actions = {
+                    if (!guest) {
+                        SearchBarActionButton(
+                            text = "通知",
+                            onClick = { nav.push(Route.Web("https://m.weibo.cn/message/", "通知")) },
+                            modifier = Modifier.testTag("top_notice"),
+                        )
+                    }
+                },
+            )
 
-        else -> PageTitleBar(
-            title = "我",
-            actions = {
-                HighlightedIconButton(
-                    onClick = { nav.push(Route.Settings) },
-                    modifier = Modifier.couiTopAppBarActionItem().testTag("top_settings"),
-                ) {
-                    Icon(COUIIcons.Settings, "设置", Modifier.size(24.dp))
-                }
-            },
-        )
+            else -> PageTitleBar(
+                title = "我",
+                actions = {
+                    HighlightedIconButton(
+                        onClick = { nav.push(Route.Settings) },
+                        modifier = Modifier.couiTopAppBarActionItem().testTag("top_settings"),
+                    ) {
+                        Icon(COUIIcons.Settings, "设置", Modifier.size(24.dp))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -639,85 +1047,147 @@ private val FeedTabTags = listOf("feed_tab_circle", "feed_tab_follow", "feed_tab
 /** Height of the feed header's title row; the list folds exactly this much away when it scrolls. */
 internal val FeedTitleRowHeight = 44.dp
 
-/**
- * Two-row feed header: the title sits at the top left and folds away as the list scrolls, while
- * the segment row stays pinned under the status bar.
- */
 @Composable
-private fun FeedHeader(
-    feedPager: PagerState,
-    feedTabs: List<FeedTabSpec>,
-    filterMenu: Boolean,
-    centerTab: FeedTabItem,
+private fun FeedTitleRow(
     collapsed: Float,
-    onCenterSelected: (FeedTabItem) -> Unit,
-    onSearch: () -> Unit,
+    titleHeightPx: Float,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    searchExpanded: Boolean,
+    onSearchOpen: () -> Unit,
+    onSearchCancel: () -> Unit,
+    onSearchSubmit: (String) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val scheme = COUITheme.colorScheme
-    val titleHeightPx = with(LocalDensity.current) { FeedTitleRowHeight.toPx() }
-    var filterMenuExpanded by remember { mutableStateOf(false) }
+    val blur = blurEffectsEnabled()
+
     Column(
         Modifier
             .fillMaxWidth()
             .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
     ) {
         Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
-            // Only the title folds away under the status bar; clipping the whole row cut the
-            // search button's halo off in a straight line.
-            Box(Modifier.fillMaxSize().clipToBounds()) {
-                Box(Modifier.fillMaxSize().graphicsLayer {
-                    translationY = -collapsed * titleHeightPx
-                }) {
-                    Text(
-                        stringResource(R.string.app_name),
-                        color = scheme.onSurface.copy(alpha = 1f - collapsed),
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 16.dp, bottom = 6.dp),
-                    )
-                }
-            }
-            HighlightedIconButton(
-                onClick = onSearch,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = TopAppBarDefaults.ActionIconPadding)
-                    .couiTopAppBarActionItem()
+            Box(
+                Modifier
+                    .fillMaxWidth()
                     .graphicsLayer {
                         // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
                         translationY = -collapsed * titleHeightPx / 2f
                         alpha = 1f - collapsed
-                    }
-                    .testTag("top_search"),
-            ) {
-                Icon(COUIIcons.Basic.Search, "搜索", Modifier.size(24.dp))
-            }
-        }
-        if (feedTabs.size > 1) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-                    .graphicsLayer { translationY = -collapsed * titleHeightPx },
-            ) {
-                FeedTabs(
-                    pager = feedPager,
-                    feedTabs = feedTabs,
-                    filterMenu = filterMenu,
-                    centerTab = centerTab,
-                    filterMenuExpanded = filterMenuExpanded,
-                    onFilterMenuDismiss = { filterMenuExpanded = false },
-                    onCenterSelected = {
-                        filterMenuExpanded = false
-                        onCenterSelected(it)
                     },
-                    onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
-                    onFilterClick = { filterMenuExpanded = true },
-                    modifier = Modifier.align(Alignment.Center),
+            ) {
+                TopAppBarSearchBar(
+                    query = searchQuery,
+                    onQueryChange = onSearchQueryChange,
+                    expanded = searchExpanded,
+                    onExpandedChange = { isExpanded ->
+                        if (isExpanded) onSearchOpen() else onSearchCancel()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onPreviewKeyEvent { event ->
+                            val enter = event.key == Key.Enter ||
+                                event.key == Key.NumPadEnter ||
+                                event.key == Key.Search
+                            if (searchExpanded && event.type == KeyEventType.KeyDown && enter) {
+                                onSearchSubmit(searchQuery)
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    placeholder = "搜索微博 / 用户 / 话题",
+                    cancelText = "取消",
+                    onSearch = onSearchSubmit,
+                    onCancel = onSearchCancel,
+                    enabled = searchExpanded || collapsed < 0.95f,
+                    searchButtonContentDescription = "搜索",
+                    gradientColor = Color.Transparent,
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            val clearTint = scheme.onSurface.copy(alpha = 0.28f)
+                            Canvas(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .semantics { contentDescription = "清除" }
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = { onSearchQueryChange("") },
+                                    ),
+                            ) {
+                                val unit = size.width / 36f
+                                drawCircle(clearTint, radius = 9f * unit)
+                                val path = Path().apply {
+                                    moveTo(18f, 16.868f)
+                                    lineTo(15.031f, 13.898f)
+                                    lineTo(13.899f, 15.03f)
+                                    lineTo(16.869f, 18f)
+                                    lineTo(13.898f, 20.97f)
+                                    lineTo(15.03f, 22.101f)
+                                    lineTo(18f, 19.131f)
+                                    lineTo(20.97f, 22.101f)
+                                    lineTo(22.102f, 20.969f)
+                                    lineTo(19.132f, 18f)
+                                    lineTo(22.101f, 15.03f)
+                                    lineTo(20.969f, 13.899f)
+                                    close()
+                                }
+                                withTransform({ scale(unit, unit, Offset.Zero) }) {
+                                    drawPath(path, Color.White)
+                                }
+                            }
+                        }
+                    },
+                    titleContent = {
+                        // Only the title folds away under the status bar; clipping the whole row
+                        // cuts the search button's halo and shared transition overlay off.
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(FeedTitleRowHeight)
+                                .clipToBounds(),
+                        ) {
+                            Text(
+                                stringResource(R.string.app_name),
+                                color = scheme.onSurface,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(bottom = 6.dp)
+                                    .graphicsLayer {
+                                        // 外层已移动 -collapsed * titleHeightPx / 2f，这里补齐另一半以保持原轨迹。
+                                        translationY = -collapsed * titleHeightPx / 2f
+                                    },
+                            )
+                        }
+                    },
                 )
+            }
+            if (!searchExpanded && collapsed < 0.95f) {
+                val endInset = if (Build.VERSION.SDK_INT >= 34 && blur) 20.dp else 16.dp
+                Box(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = endInset)
+                        .graphicsLayer { translationY = -collapsed * titleHeightPx / 2f },
+                ) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .semantics {
+                                role = Role.Button
+                                onClick {
+                                    onSearchOpen()
+                                    true
+                                }
+                            }
+                            .testTag("top_search"),
+                    )
+                }
             }
         }
     }

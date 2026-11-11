@@ -39,16 +39,7 @@ class Settings(context: Context) {
 
     /** Recent queries, newest first. Backed by `search_history` as a JSON array. */
     val searchHistory = mutableStateListOf<String>().also { list ->
-        val raw = sp.getString("search_history", null)
-        if (!raw.isNullOrBlank()) {
-            runCatching {
-                val arr = JSONArray(raw)
-                for (i in 0 until arr.length()) {
-                    val item = arr.optString(i).trim()
-                    if (item.isNotEmpty() && item !in list) list.add(item)
-                }
-            }
-        }
+        list.addAll(parseSearchHistoryJson(sp.getString("search_history", null)))
     }
 
     // 0 = follow system, 1 = light, 2 = dark
@@ -165,13 +156,13 @@ class Settings(context: Context) {
 
     /** Records a submitted query, newest first, keeping at most [SearchHistoryLimit] entries. */
     fun pushSearchHistory(keyword: String) {
-        val query = keyword.trim()
-        if (query.isEmpty()) return
-        searchHistory.remove(query)
-        searchHistory.add(0, query)
-        while (searchHistory.size > SearchHistoryLimit) {
-            searchHistory.removeAt(searchHistory.lastIndex)
-        }
+        if (!pushSearchHistoryItem(searchHistory, keyword, SearchHistoryLimit)) return
+        saveSearchHistory()
+    }
+
+    /** Removes a single entry from [searchHistory] and persists the change. */
+    fun removeSearchHistory(keyword: String) {
+        if (!removeSearchHistoryItem(searchHistory, keyword)) return
         saveSearchHistory()
     }
 
@@ -181,9 +172,7 @@ class Settings(context: Context) {
     }
 
     private fun saveSearchHistory() {
-        val arr = JSONArray()
-        searchHistory.forEach(arr::put)
-        sp.edit().putString("search_history", arr.toString()).apply()
+        sp.edit().putString("search_history", encodeSearchHistoryJson(searchHistory)).apply()
     }
 
     fun applyFeedTab(value: Int) {
@@ -306,3 +295,42 @@ class Settings(context: Context) {
         return next
     }
 }
+
+internal fun parseSearchHistoryJson(raw: String?): List<String> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val arr = JSONArray(raw)
+        buildList(arr.length()) {
+            for (i in 0 until arr.length()) {
+                val item = arr.optString(i).trim()
+                if (item.isNotEmpty() && item !in this) add(item)
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+internal fun encodeSearchHistoryJson(history: List<String>): String {
+    val arr = JSONArray()
+    history.forEach(arr::put)
+    return arr.toString()
+}
+
+internal fun pushSearchHistoryItem(
+    history: MutableList<String>,
+    keyword: String,
+    limit: Int = 10,
+): Boolean {
+    val query = keyword.trim()
+    if (query.isEmpty()) return false
+    history.remove(query)
+    history.add(0, query)
+    while (history.size > limit) {
+        history.removeAt(history.lastIndex)
+    }
+    return true
+}
+
+internal fun removeSearchHistoryItem(
+    history: MutableList<String>,
+    keyword: String,
+): Boolean = history.remove(keyword)
