@@ -43,8 +43,8 @@
 | 层 | 选型 |
 | :--- | :--- |
 | 语言 / UI | Kotlin 2.4 · Jetpack Compose 1.11 |
-| 设计系统 | [COUI](https://github.com/suqi8/coui)（ColorOS 17 组件库，本地快照） |
-| 构建 | AGP 9.3.1 · Gradle 9.8.2 · JDK 21 |
+| 设计系统 | [COUI](https://github.com/suqi8/coui)（ColorOS 17 组件库，固定 ArtPlus Maven 快照） |
+| 构建 | AGP 9.3.1 · Gradle 9.8.2 · JDK 17 |
 | 网络 | OkHttp 4.12 |
 | 图片 | Coil 3.6 |
 | 视频 | Media3 ExoPlayer 1.11 |
@@ -70,7 +70,7 @@ Cobo COUI/
 │   │       ├── data/             # API、模型、缓存、设置
 │   │       ├── screen/           # 页面
 │   │       └── ui/               # 导航、主题、组件
-│   ├── scripts/publish-coui.sh   # 发布本地 COUI 到本地 Maven 仓库
+│   ├── scripts/publish-coui.sh   # 可选：有兼容源码 fork 时发布本地 COUI
 │   ├── scripts/e2e.sh            # 真机端到端测试
 │   └── gradlew                   # Gradle 9.8.2
 ├── docs/                         # 设计文档与截图
@@ -81,16 +81,15 @@ Cobo COUI/
 
 ```bash
 cd frontend
-./scripts/publish-coui.sh          # 首次构建前：把 COUI 快照发布到本地 Maven 仓库
-./gradlew :app:assembleRelease     # 产物：app/build/outputs/apk/release/app-release.apk
+./gradlew :app:assembleDebug       # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`settings.gradle.kts` 从同级目录 `../../coui/build/repository/local` 解析 COUI，构建前先确保该仓库已 `publishToMavenLocal`。
+需要 JDK 17 和安装了 API 37、Build Tools 37.0.0 的 Android SDK。在 `frontend/local.properties` 设置 `sdk.dir`。COUI 使用精确版本 `1.2.0-d756fe5c-SNAPSHOT`，Maven 仓库固定到 ArtPlus 提交 `63bcad6dc055680e2cbc58640abcbf0329b9250d`。常规构建无需本地发布步骤。
 
 ## 安装
 
 ```bash
-adb install -r --no-incremental app/build/outputs/apk/release/app-release.apk
+adb install -r --no-incremental app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## 测试

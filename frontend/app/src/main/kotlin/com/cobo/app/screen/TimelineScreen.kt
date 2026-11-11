@@ -167,6 +167,7 @@ class FeedStore(
         if (loading || end || refreshing || fetching) return
         val cursor = sinceId ?: return
         loading = true
+        error = null
         try {
             lock.withLock {
                 val page = loader(cursor, false)

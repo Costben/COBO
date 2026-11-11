@@ -821,6 +821,51 @@ class Repo(private val context: Context, private val store: Store) {
         return out
     }
 
+    suspend fun superTopic(containerId: String, sinceId: String? = null): SuperTopicPage {
+        val id = superTopicId(containerId) ?: throw ApiException("无效的超话地址")
+        if (!hasSession()) throw ApiException("超话需要登录后查看", "-100")
+        val cursor = sinceId?.takeIf { it.isNotBlank() }
+        if (cursor != null && !cursor.matches(Regex("[0-9]+"))) throw ApiException("无效的超话翻页参数")
+        val params = mapOf(
+            "containerid" to "${id}_-_feed",
+            "since_id" to cursor,
+        )
+        val root = try {
+            get(Api.url("https://m.weibo.cn/api/container/getIndex", params), loginCookie(), force = true)
+        } catch (e: ApiHttpException) {
+            if (e.code == 432) throw ApiException("超话需要登录后查看", "432")
+            throw ApiException("超话加载失败（HTTP ${e.code}）")
+        } catch (e: ApiException) {
+            if (e.errno == "-100" || e.message == GUEST_BLOCKED) {
+                throw ApiException("超话需要登录后查看", "-100")
+            }
+            throw ApiException("超话加载失败")
+        }
+        return parseSuperTopic(root, id)
+    }
+
+    suspend fun searchSuperTopics(query: String): List<TopicItem> {
+        if (!hasSession()) throw ApiException("超话需要登录后查看", "-100")
+        return try {
+            searchIndex("100103type=1&q=$query", 1, true, ::parseSuperTopicSearch)
+                .map { topic ->
+                    if (topic.title == "超话") {
+                        val id = topic.containerId ?: throw ApiException("超话身份缺失")
+                        topic.copy(title = superTopic(id).info.title)
+                    } else topic
+                }
+        } catch (e: ApiHttpException) {
+            if (e.code == 432) throw ApiException("超话需要登录后查看", "432")
+            throw ApiException("超话搜索失败（HTTP ${e.code}）")
+        } catch (e: ApiException) {
+            if (e.errno == "432") throw ApiException("超话需要登录后查看", "432")
+            if (e.errno == "-100" || e.message == GUEST_BLOCKED) {
+                throw ApiException("超话需要登录后查看", "-100")
+            }
+            throw ApiException("超话搜索失败")
+        }
+    }
+
     suspend fun search(
         query: String,
         page: Int = 1,

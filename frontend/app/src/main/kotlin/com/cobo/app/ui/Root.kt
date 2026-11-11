@@ -60,6 +60,7 @@ import androidx.compose.ui.zIndex
 import com.cobo.app.App
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Updater
+import com.cobo.app.data.superTopicId
 import com.cobo.app.screen.AccountsScreen
 import com.cobo.app.screen.ChangelogScreen
 import com.cobo.app.screen.ChatScreen
@@ -78,6 +79,7 @@ import com.cobo.app.screen.SearchScreen
 import com.cobo.app.screen.SettingsScreen
 import com.cobo.app.screen.SmsLoginScreen
 import com.cobo.app.screen.TopicScreen
+import com.cobo.app.screen.SuperTopicScreen
 import com.cobo.app.screen.VideoScreen
 import com.cobo.app.screen.VoteScreen
 import com.cobo.app.screen.WebScreen
@@ -139,10 +141,17 @@ fun CoboRoot() {
             val statusId = weiboStatusId(url)
             val uid = weiboUserId(url)
             val mention = weiboMentionName(url)
+            val topicId = superTopicId(url)
+            val current = nav.stack.lastOrNull()?.route
+            val readOnly = current is Route.SuperTopic || (current is Route.Detail && current.readOnly)
             when {
-                voteId != null -> nav.push(Route.Vote(voteId))
+                topicId != null -> nav.push(Route.SuperTopic(topicId, resolveWeiboLink(url)
+                    ?: "https://m.weibo.cn/p/index?containerid=$topicId"))
+                voteId != null -> nav.push(if (readOnly) {
+                    Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
+                } else Route.Vote(voteId))
                 isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
-                statusId != null -> nav.push(Route.Detail(statusId, ""))
+                statusId != null -> nav.push(Route.Detail(statusId, "", readOnly))
                 uid != null -> nav.push(Route.Profile(uid))
                 // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
                 mention != null -> scope.launch {
@@ -156,12 +165,18 @@ fun CoboRoot() {
                 isWeiboShortLink(url) -> scope.launch {
                     val resolved = App.repo.resolveShortUrl(url)
                     val vid = weiboVoteId(resolved)
-                    if (vid != null) {
-                        nav.push(Route.Vote(vid))
+                    val resolvedTopicId = superTopicId(resolved)
+                    if (resolvedTopicId != null) {
+                        nav.push(Route.SuperTopic(resolvedTopicId, resolveWeiboLink(resolved)
+                            ?: "https://m.weibo.cn/p/index?containerid=$resolvedTopicId"))
+                    } else if (vid != null) {
+                        nav.push(if (readOnly) {
+                            Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$vid", "投票")
+                        } else Route.Vote(vid))
                     } else {
                         val sid = weiboStatusId(resolved)
                         if (sid != null) {
-                            nav.push(Route.Detail(sid, ""))
+                            nav.push(Route.Detail(sid, "", readOnly))
                         } else {
                             resolveWeiboLink(resolved)?.let { nav.push(Route.Web(it, "网页")) }
                         }
@@ -617,6 +632,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Chat -> ChatScreen(nav, route.uid, route.name)
         is Route.Web -> WebScreen(nav, route.url, route.title)
         is Route.Container -> ContainerScreen(nav, route.cid, route.title)
+        is Route.SuperTopic -> SuperTopicScreen(nav, route.containerId, route.fallbackUrl)
         Route.Drafts -> DraftsScreen(nav)
         Route.History -> HistoryScreen(nav)
         Route.Accounts -> AccountsScreen(nav)

@@ -119,7 +119,7 @@ fun StatusCard(
         }
         if (status.isVote) {
             Spacer(Modifier.height(8.dp))
-            StatusVoteCard(status = status)
+            StatusVoteCard(status = status, actionsEnabled = actionsEnabled)
         }
         StatusMedia(status, compact, onImage, onVideo)
         if (status.retweeted != null) {
@@ -127,6 +127,7 @@ fun StatusCard(
             RetweetBlock(
                 status = status.retweeted,
                 compact = compact,
+                actionsEnabled = actionsEnabled,
                 onOpen = onOpen,
                 onOpenQuoted = onOpenQuoted,
                 onUser = onUser,
@@ -448,6 +449,7 @@ fun RetweetBlock(
     onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
+    actionsEnabled: Boolean = true,
 ) {
     val scheme = COUITheme.colorScheme
     // The quoted post is a page of its own: it opens from the block it is drawn in and comes back
@@ -480,7 +482,7 @@ fun RetweetBlock(
         }
         if (status.isVote) {
             Spacer(Modifier.height(6.dp))
-            StatusVoteCard(status = status)
+            StatusVoteCard(status = status, actionsEnabled = actionsEnabled)
         }
         StatusMedia(status, true, onImage, onVideo)
     }
@@ -490,7 +492,17 @@ fun RetweetBlock(
 fun StatusVoteCard(
     status: Status,
     modifier: Modifier = Modifier,
+    actionsEnabled: Boolean = true,
 ) {
+    if (!actionsEnabled) {
+        Text(
+            text = "投票内容请通过网页查看",
+            modifier = modifier,
+            color = COUITheme.colorScheme.onSurfaceSecondary,
+            fontSize = 13.sp,
+        )
+        return
+    }
     val linkHandler = LocalLinkHandler.current
     val scope = rememberCoroutineScope()
     val scheme = COUITheme.colorScheme
