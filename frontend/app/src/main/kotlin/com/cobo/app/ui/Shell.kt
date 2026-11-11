@@ -101,6 +101,7 @@ import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
+import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.nearbyCoords
 import com.cobo.app.screen.BindSearchSuggestionsEffect
 import com.cobo.app.screen.FeedFilter
@@ -361,6 +362,7 @@ fun MainShell(nav: NavState) {
     var feedCollapse by remember { mutableFloatStateOf(0f) }
     var feedSearchQuery by remember { mutableStateOf("") }
     var feedSearchExpanded by remember { mutableStateOf(false) }
+    val panelAnimation = App.settings.searchPanelAnimation
     val panelProgress = remember { Animatable(0f) }
     val panelAlpha = remember { Animatable(0f) }
     val panelMounted by remember {
@@ -426,47 +428,65 @@ fun MainShell(nav: NavState) {
     LaunchedEffect(feedSearchExpanded) {
         if (feedSearchExpanded) {
             scope.launch { discoverState.ensureHotLoaded() }
-            coroutineScope {
-                launch {
+            when (panelAnimation) {
+                // 面板从搜索栏下沿往下长出来。
+                SearchPanelAnimation.Vertical -> coroutineScope {
+                    launch {
+                        panelAlpha.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = SearchPanelFadeMillis, easing = COUIInEase),
+                        )
+                    }
+                    launch {
+                        panelProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = spring(
+                                dampingRatio = SearchSpringDamping,
+                                stiffness = SearchSpringStiffnessExpand,
+                                visibilityThreshold = 0.001f,
+                            ),
+                        )
+                    }
+                }
+                // 整块面板淡入，没有几何变化。
+                SearchPanelAnimation.Fade -> {
+                    panelProgress.snapTo(1f)
                     panelAlpha.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = 220, easing = COUIInEase),
-                    )
-                }
-                launch {
-                    panelProgress.animateTo(
-                        targetValue = 1f,
-                        animationSpec = spring(
-                            dampingRatio = SearchSpringDamping,
-                            stiffness = SearchSpringStiffnessExpand,
-                            visibilityThreshold = 0.001f,
-                        ),
+                        animationSpec = tween(durationMillis = SearchPanelFadeMillis, easing = COUIInEase),
                     )
                 }
             }
         } else if (panelProgress.value > 0f || panelAlpha.value > 0f) {
-            coroutineScope {
-                launch {
-                    panelAlpha.animateTo(
-                        targetValue = 0f,
-                        animationSpec = tween(
-                            durationMillis = 220,
-                            delayMillis = 200,
-                            easing = COUIOutEase,
-                        ),
-                    )
+            when (panelAnimation) {
+                SearchPanelAnimation.Vertical -> coroutineScope {
+                    launch {
+                        panelAlpha.animateTo(
+                            targetValue = 0f,
+                            animationSpec = tween(
+                                durationMillis = SearchPanelFadeMillis,
+                                delayMillis = 200,
+                                easing = COUIOutEase,
+                            ),
+                        )
+                    }
+                    launch {
+                        panelProgress.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = SearchSpringDamping,
+                                stiffness = SearchSpringStiffnessCollapse,
+                                visibilityThreshold = 0.001f,
+                            ),
+                        )
+                    }
                 }
-                launch {
-                    panelProgress.animateTo(
-                        targetValue = 0f,
-                        animationSpec = spring(
-                            dampingRatio = SearchSpringDamping,
-                            stiffness = SearchSpringStiffnessCollapse,
-                            visibilityThreshold = 0.001f,
-                        ),
-                    )
-                }
+                SearchPanelAnimation.Fade -> panelAlpha.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = SearchPanelFadeMillis, easing = COUIOutEase),
+                )
             }
+            panelProgress.snapTo(0f)
             if (!feedSearchExpanded) {
                 homeResultsState.clearResults()
                 feedSearchQuery = ""
@@ -476,7 +496,9 @@ fun MainShell(nav: NavState) {
     }
 
     LaunchedEffect(tab) {
-        if (tab != 0 && (feedSearchExpanded || feedSearchQuery.isNotEmpty() || panelProgress.value > 0f || panelAlpha.value > 0f)) {
+        if (tab != 0 && (feedSearchExpanded || feedSearchQuery.isNotEmpty() ||
+                panelProgress.value > 0f || panelAlpha.value > 0f)
+        ) {
             closeFeedSearchImmediately()
         }
     }
@@ -607,6 +629,7 @@ fun MainShell(nav: NavState) {
                 blur = blur,
                 searchBackdrop = searchBackdrop,
                 searchExpanded = feedSearchExpanded,
+                panelAnimation = panelAnimation,
                 panelProgress = { panelProgress.value },
                 panelAlpha = { panelAlpha.value },
                 searchQuery = feedSearchQuery,
@@ -788,16 +811,20 @@ private fun MainBarUnderlay(
     }
 }
 
+private const val SearchPanelFadeMillis = 220
+
 private const val SearchSpringDamping = 0.8f
 private val SearchSpringStiffnessExpand = ((2.0 * Math.PI / 0.55) * (2.0 * Math.PI / 0.55)).toFloat()
 private val SearchSpringStiffnessCollapse = ((2.0 * Math.PI / 0.45) * (2.0 * Math.PI / 0.45)).toFloat()
 
+/** 上下扩展：从搜索栏下沿往下放，裁掉还没展开的部分。 */
 private class SearchPanelClipShape(
     private val progress: Float,
-    private val minHeightPx: Float,
+    private val topBarHeightPx: Float,
 ) : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
-        val bottom = (minHeightPx + (size.height - minHeightPx) * progress.coerceIn(0f, 1f))
+        val p = progress.coerceIn(0f, 1f)
+        val bottom = (topBarHeightPx + (size.height - topBarHeightPx) * p)
             .coerceIn(0f, size.height)
         return Outline.Rectangle(Rect(0f, 0f, size.width, bottom))
     }
@@ -805,9 +832,9 @@ private class SearchPanelClipShape(
     override fun equals(other: Any?): Boolean =
         other is SearchPanelClipShape &&
             other.progress == progress &&
-            other.minHeightPx == minHeightPx
+            other.topBarHeightPx == topBarHeightPx
 
-    override fun hashCode(): Int = 31 * progress.hashCode() + minHeightPx.hashCode()
+    override fun hashCode(): Int = 31 * progress.hashCode() + topBarHeightPx.hashCode()
 }
 
 @Composable
@@ -816,6 +843,7 @@ private fun HomeSearchOverlay(
     blur: Boolean,
     searchBackdrop: LayerBackdrop,
     searchExpanded: Boolean,
+    panelAnimation: SearchPanelAnimation,
     panelProgress: () -> Float,
     panelAlpha: () -> Float,
     searchQuery: String,
@@ -832,6 +860,7 @@ private fun HomeSearchOverlay(
     val horizontalPadding = searchHorizontalPadding()
     val density = LocalDensity.current
     val topBarHeightPx = with(density) { topBarHeight.toPx() }
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     LaunchedEffect(listState, resultsState.submitted, resultsState.tab, resultsState.stateFor(resultsState.tab).count) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
@@ -862,7 +891,7 @@ private fun HomeSearchOverlay(
                 .graphicsLayer {
                     val p = panelProgress()
                     alpha = panelAlpha().coerceIn(0f, 1f)
-                    if (p < 0.999f) {
+                    if (panelAnimation != SearchPanelAnimation.Fade && p < 0.999f) {
                         clip = true
                         shape = SearchPanelClipShape(p, topBarHeightPx)
                     } else {
@@ -920,7 +949,6 @@ private fun HomeSearchOverlay(
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val barHeight = statusBarTop + FeedTitleRowHeight
                 AppBarSurface(
                     modifier = Modifier

@@ -30,6 +30,19 @@ enum class FeedTabItem(val key: String, val label: String, val tag: String) {
     }
 }
 
+/** 首页搜索面板展开、收回的方式。 */
+enum class SearchPanelAnimation(val key: String, val label: String) {
+    Vertical("vertical", "上下扩展"),
+    Fade("fade", "淡入淡出"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): SearchPanelAnimation {
+            return entries.firstOrNull { it.key == key } ?: Fade
+        }
+    }
+}
+
 class Settings(context: Context) {
     private val sp = context.getSharedPreferences("app", Context.MODE_PRIVATE)
 
@@ -141,6 +154,12 @@ class Settings(context: Context) {
     var confirmLike by mutableStateOf(sp.getBoolean("confirm_like", false))
         private set
 
+    /** 首页搜索面板的展开方式：上下扩展、淡入淡出、从搜索按钮展开。默认淡入淡出。 */
+    var searchPanelAnimation by mutableStateOf(
+        SearchPanelAnimation.fromKey(sp.getString("search_panel_animation", null))
+    )
+        private set
+
     /** 上次检查更新的时间戳。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -249,6 +268,11 @@ class Settings(context: Context) {
     fun applyConfirmLike(value: Boolean) {
         confirmLike = value
         sp.edit().putBoolean("confirm_like", value).apply()
+    }
+
+    fun applySearchPanelAnimation(value: SearchPanelAnimation) {
+        searchPanelAnimation = value
+        sp.edit().putString("search_panel_animation", value.key).apply()
     }
 
     fun applyLocalFollowUid(uid: String) {

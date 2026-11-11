@@ -30,6 +30,7 @@ import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.FeedTabItem
+import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.layerBackdropIf
@@ -74,6 +75,7 @@ fun SettingsScreen(nav: NavState) {
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
     var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
+    var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
     var message by remember { mutableStateOf("") }
     var about by remember { mutableStateOf(false) }
@@ -87,6 +89,7 @@ fun SettingsScreen(nav: NavState) {
     var pickFeedLeft by remember { mutableStateOf(false) }
     var pickFeedCenter by remember { mutableStateOf(false) }
     var pickFeedRight by remember { mutableStateOf(false) }
+    var pickSearchPanelAnimation by remember { mutableStateOf(false) }
 
     // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
     val accounts = remember(localFollowUid) { App.store.accounts() }
@@ -167,6 +170,14 @@ fun SettingsScreen(nav: NavState) {
                         summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
                         modifier = Modifier.testTag("settings_blur"),
                         cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "搜索面板动画",
+                        modifier = Modifier.testTag("settings_search_panel_anim"),
+                        summary = searchPanelAnimation.label,
+                        cardListPosition = CardListPosition.Middle,
+                        onClick = { pickSearchPanelAnimation = true },
                     )
                     PreferenceDivider()
                     SwitchPreference(
@@ -519,6 +530,23 @@ fun SettingsScreen(nav: NavState) {
             },
         )
     }
+
+    if (pickSearchPanelAnimation) {
+        OptionPicker(
+            title = "搜索面板动画",
+            options = SearchPanelAnimation.entries.map { it.key to it.label },
+            selectedKey = searchPanelAnimation.key,
+            tagPrefix = "search_panel_anim",
+            groupKey = "search-panel-anim",
+            onDismiss = { pickSearchPanelAnimation = false },
+            onPick = { key ->
+                val picked = SearchPanelAnimation.fromKey(key)
+                App.settings.applySearchPanelAnimation(picked)
+                searchPanelAnimation = picked
+                pickSearchPanelAnimation = false
+            },
+        )
+    }
 }
 
 /**
@@ -604,8 +632,30 @@ private fun FeedTabPicker(
     onDismiss: () -> Unit,
     onPick: (FeedTabItem) -> Unit,
 ) {
+    OptionPicker(
+        title = title,
+        options = options.map { it.key to it.label },
+        selectedKey = selected.key,
+        tagPrefix = "feed_tab",
+        groupKey = "feed-tabs",
+        onDismiss = onDismiss,
+        onPick = { key -> options.firstOrNull { it.key == key }?.let(onPick) ?: onDismiss() },
+    )
+}
+
+/** 单列选项弹窗：[options] 是 key 到显示文案，选中项等窗口收完再交出去。 */
+@Composable
+private fun OptionPicker(
+    title: String,
+    options: List<Pair<String, String>>,
+    selectedKey: String,
+    tagPrefix: String,
+    groupKey: String,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
     var show by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<FeedTabItem?>(null) }
+    var result by remember { mutableStateOf<String?>(null) }
     var settled by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
 
@@ -634,16 +684,16 @@ private fun FeedTabPicker(
                 propagateMinConstraints = true,
             ) {
                 ListPopupColumn {
-                    options.forEachIndexed { index, opt ->
+                    options.forEachIndexed { index, (key, label) ->
                         DropdownImpl(
-                            item = DropdownItem(text = opt.label),
+                            item = DropdownItem(text = label),
                             optionSize = options.size,
-                            isSelected = opt == selected,
+                            isSelected = key == selectedKey,
                             index = index,
-                            modifier = Modifier.testTag("feed_tab_option_${opt.key}"),
-                            groupKey = "feed-tabs",
+                            modifier = Modifier.testTag("${tagPrefix}_option_$key"),
+                            groupKey = groupKey,
                             onSelectedIndexChange = {
-                                result = options[it]
+                                result = options[it].first
                                 show = false
                             },
                         )
