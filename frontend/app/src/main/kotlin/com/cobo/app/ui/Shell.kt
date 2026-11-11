@@ -126,21 +126,22 @@ import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
-import io.github.suqi8.coui.kmp.basic.GlassContainer
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.basic.MaterialStrokeParams
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
+import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
 import io.github.suqi8.coui.kmp.basic.couiGlassSurface
+import io.github.suqi8.coui.kmp.basic.couiTouchMotion
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.basic.materialShadowEdge
-import io.github.suqi8.coui.kmp.basic.rememberGlassHighlight
 import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -1258,8 +1259,14 @@ private fun FeedTabs(
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
     val backdrop = LocalBackdrop.current
-    val glassHighlight = rememberGlassHighlight(GlassContainer.Small, backdrop)
-    val containerEdge = TabRowDefaults.containerStroke(dark)
+    // 系统分段条在原生材质下用 TYPE_FRAMEWORK_CAPSULE_6 画外圈（深色 0.8、浅色 0.6），
+    // CAPSULE_11（深色 0.1）只是画不了原生材质时的兜底，亮度差好几倍。
+    //
+    // 0.8 是 shader 的 alpha 上限，实际沿轮廓还有渐变衰减：系统页面上沿的高光只比胶囊内部亮
+    // 约 42（内部 26 → 峰值 68），下沿约 29。换算成有效 alpha 约 0.18。直接按 0.8 画就是一条白线。
+    val containerEdge = MaterialStrokeParams.frameworkCapsule6(dark).let {
+        it.copy(edgeAlpha = it.edgeAlpha * 0.22f)
+    }
     val indicatorEdge = TabRowDefaults.indicatorStroke(dark)
     val labels = feedTabs.map { it.label }
     val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
@@ -1352,16 +1359,23 @@ private fun FeedTabs(
             // a lit rim, and the old opaque capsule when blur cannot run.
             .requiredHeight(40.dp)
             .width(containerWidth)
-            .couiGlassSurface(
-                backdrop = backdrop,
+            // 与 COUI 分段条一致：玻璃底 + 框架胶囊描边是唯一一圈高光，按压时整条形变并亮起跟手光斑。
+            // 不再叠通用玻璃按钮的高光，那一圈的转角几何与胶囊描边不同，两圈叠在一起圆角会走样。
+            .couiTouchMotion(
+                surface = Modifier
+                    .couiGlassSurface(
+                        backdrop = backdrop,
+                        shape = CouiSegmentCapsuleShape,
+                        containerColor = containerColor,
+                        fallback = Modifier.clip(CouiSegmentCapsuleShape).background(containerColor),
+                        blurRadius = with(density) { (SegmentGlassBlurSigmaPx / SegmentGlassSigmaScale).toDp().value },
+                        blendColors = TabRowDefaults.segmentBlurColors(dark),
+                    ),
                 shape = CouiSegmentCapsuleShape,
-                containerColor = containerColor,
-                fallback = Modifier.clip(CouiSegmentCapsuleShape).background(containerColor),
-                blurRadius = with(density) { (SegmentGlassBlurSigmaPx / SegmentGlassSigmaScale).toDp().value },
-                blendColors = TabRowDefaults.segmentBlurColors(dark),
-                highlight = glassHighlight,
+                lightParams = SpotLightDefaults.capsuleParams2(dark),
+                pressScaleEnabled = true,
+                consumeDrag = false,
             )
-            .materialShadowEdge(stroke = containerEdge, fallback = Modifier)
             .clip(CouiSegmentCapsuleShape),
     ) {
         val drawW = with(density) { (motion.width * indicatorScale).toDp() }
@@ -1370,6 +1384,14 @@ private fun FeedTabs(
         val drawLeftDp = drawCenterXDp - drawW / 2f
         val drawTopDp = (40.dp - drawH) / 2f
 
+        // 外圈高光：普通 alpha 混合，和系统 shader 的 blendEdge 一致。亮度已在 containerEdge
+        // 里按系统的有效 alpha 收过（0.8 × 0.22 ≈ 0.18），这里不再叠 Overlay——那样会把
+        // 亮度变成底色的倍数，背景一变就对不上。深色下上沿约比内部亮 40，与系统页面一致。
+        Box(
+            Modifier
+                .matchParentSize()
+                .materialShadowEdge(stroke = containerEdge, fallback = Modifier),
+        )
         Box(
             Modifier
                 .offset(
