@@ -187,7 +187,6 @@ fun SettingsScreen(nav: NavState) {
                             App.settings.applyConfirmLike(it)
                         },
                         title = "点赞前确认",
-                        summary = "只在点赞时问一句，取消赞直接生效",
                         modifier = Modifier.testTag("settings_confirm_like"),
                         cardListPosition = CardListPosition.Tail,
                     )
