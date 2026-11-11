@@ -131,7 +131,6 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
-import io.github.suqi8.coui.kmp.basic.MaterialStrokeParams
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
@@ -1259,14 +1258,9 @@ private fun FeedTabs(
     val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
     val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
     val backdrop = LocalBackdrop.current
-    // 系统分段条在原生材质下用 TYPE_FRAMEWORK_CAPSULE_6 画外圈（深色 0.8、浅色 0.6），
-    // CAPSULE_11（深色 0.1）只是画不了原生材质时的兜底，亮度差好几倍。
-    //
-    // 0.8 是 shader 的 alpha 上限，实际沿轮廓还有渐变衰减：系统页面上沿的高光只比胶囊内部亮
-    // 约 42（内部 26 → 峰值 68），下沿约 29。换算成有效 alpha 约 0.18。直接按 0.8 画就是一条白线。
-    val containerEdge = MaterialStrokeParams.frameworkCapsule6(dark).let {
-        it.copy(edgeAlpha = it.edgeAlpha * 0.22f)
-    }
+    // 外圈用 COUI 分段条那套胶囊 6 号描边，亮度已按系统页实测收到有效 alpha 约 0.18（见
+    // TabRowDefaults.containerStroke），和系统页面一致，不再在这里另抄一份系数。
+    val containerEdge = TabRowDefaults.containerStroke(dark)
     val indicatorEdge = TabRowDefaults.indicatorStroke(dark)
     val labels = feedTabs.map { it.label }
     val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
