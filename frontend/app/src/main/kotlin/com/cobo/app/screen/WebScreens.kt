@@ -114,7 +114,7 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                 onPageFinished = {
                     if (saving) return@WeiboWebView
                     val cookies = CookieVault.readDomains()
-                    val header = CookieVault.header(cookies, "m.weibo.cn")
+                    val header = CookieVault.authHeader(cookies, "m.weibo.cn")
                     if (header.isBlank() || !header.contains("SUB=")) return@WeiboWebView
                     saving = true
                     hint = "登录成功，正在保存…"

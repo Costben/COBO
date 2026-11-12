@@ -3,6 +3,7 @@ package com.cobo.app.ui
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
@@ -15,7 +16,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,10 +33,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
@@ -69,7 +69,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -90,6 +89,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -101,7 +101,10 @@ import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
+import com.cobo.app.data.FeedTabSelection
+import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.SearchPanelAnimation
+import com.cobo.app.data.feedTabOptions
 import com.cobo.app.data.nearbyCoords
 import com.cobo.app.screen.BindSearchSuggestionsEffect
 import com.cobo.app.screen.FeedFilter
@@ -132,17 +135,15 @@ import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
-import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
+import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
-import io.github.suqi8.coui.kmp.basic.couiGlassSurface
-import io.github.suqi8.coui.kmp.basic.couiTouchMotion
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
-import io.github.suqi8.coui.kmp.basic.materialShadowEdge
 import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
+import io.github.suqi8.coui.kmp.blur.isBlurEnabled
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.ExpandableIndicator
@@ -158,7 +159,6 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -173,23 +173,31 @@ internal sealed class FeedTabSpec {
     /** 只有中间栏带「更多」菜单：它列的就是「微博中间栏内容」那份选项。 */
     abstract val isCenter: Boolean
 
-    data class Custom(val item: FeedTabItem, val position: String, val guest: Boolean) : FeedTabSpec() {
-        override val key: String get() = "${position}_${item.key}"
-        override val label: String get() = item.label
-        override val tag: String get() = item.tag
+    data class Custom(val selection: FeedTabSelection, val position: String, val guest: Boolean) : FeedTabSpec() {
+        override val key: String get() = "${position}_${selection.key}"
+        override val label: String get() = selection.label
+        override val tag: String get() = if (selection.isGroup) {
+            "feed_tab_group_${selection.group?.gid.orEmpty()}"
+        } else {
+            selection.item.tag
+        }
         override val isFollow: Boolean get() = false
         override val isCenter: Boolean get() = position == "center"
-        override val emptyText: String get() = when (item) {
-            FeedTabItem.Follow -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有关注的人"
-            FeedTabItem.Circle -> "好友圈还没有内容"
-            FeedTabItem.Recommend -> "这里还没有微博"
-            FeedTabItem.Local -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有本地关注"
-            FeedTabItem.Original -> "还没有原创微博"
-            FeedTabItem.Special -> "特别关注还没有内容"
-            FeedTabItem.Secret -> "还没有悄悄关注的人"
-            FeedTabItem.Favorites -> "还没有收藏的微博"
-            FeedTabItem.Nearby -> "附近需要定位\n到设置的「附近」里打开定位，或选一座城市"
-            FeedTabItem.None -> "这里还没有微博"
+        override val emptyText: String get() = when {
+            selection.isGroup -> "「${selection.label}」还没有内容"
+            else -> when (selection.item) {
+                FeedTabItem.Follow -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有关注的人"
+                FeedTabItem.Circle -> "好友圈还没有内容"
+                FeedTabItem.Recommend -> "这里还没有微博"
+                FeedTabItem.Local -> if (guest) "还没有本地关注的人\n在别人主页点「本地关注」，他的微博会出现在这里" else "还没有本地关注"
+                FeedTabItem.Original -> "还没有原创微博"
+                FeedTabItem.Special -> "特别关注还没有内容"
+                FeedTabItem.Secret -> "还没有悄悄关注的人"
+                FeedTabItem.Favorites -> "还没有收藏的微博"
+                FeedTabItem.Nearby -> "附近需要定位\n到设置的「附近」里打开定位，或选一座城市"
+                FeedTabItem.Group -> "在顶栏的「更多」里选一个关注分组"
+                FeedTabItem.None -> "这里还没有微博"
+            }
         }
     }
 
@@ -230,36 +238,43 @@ fun MainShell(nav: NavState) {
     // 一份好友流，显示时统一叫「全部」；纯本地模式没有好友流，仍按「本地关注」走。
     val filter = if (guest) FeedFilter.Local else FeedFilter.All
     val friendsStore = remember {
-        FeedStore("friends") { cursor, force -> App.repo.friends(cursor, force) }
+        FeedStore("friends", resumable = true) { cursor, force -> App.repo.friends(cursor, force) }
     }
     val filterStores = remember {
         mapOf(
             FeedFilter.All to friendsStore,
             FeedFilter.Following to friendsStore,
-            FeedFilter.Original to FeedStore("original") { cursor, force ->
+            FeedFilter.Original to FeedStore("original", resumable = true) { cursor, force ->
                 originalFeed(cursor, force)
             },
             FeedFilter.Unread to FeedStore("unread") { _, _ -> FeedPage(emptyList(), null) },
-            FeedFilter.Favorites to FeedStore("favorites") { _, force -> App.repo.favorites(force) },
-            FeedFilter.Special to FeedStore("special") { cursor, force ->
+            FeedFilter.Favorites to FeedStore("favorites", resumable = true) { _, force ->
+                App.repo.favorites(force)
+            },
+            FeedFilter.Special to FeedStore("special", resumable = true) { cursor, force ->
                 App.repo.special(cursor, force)
             },
-            FeedFilter.Circle to FeedStore("circle") { cursor, force -> App.repo.circle(cursor, force) },
-            FeedFilter.Secret to FeedStore("secret") { cursor, force ->
+            FeedFilter.Circle to FeedStore("circle", resumable = true) { cursor, force ->
+                App.repo.circle(cursor, force)
+            },
+            FeedFilter.Secret to FeedStore("secret", resumable = true) { cursor, force ->
                 App.repo.secret(cursor, force)
             },
-            FeedFilter.Local to FeedStore("local", readOnly = true) { cursor, force ->
+            FeedFilter.Local to FeedStore("local", readOnly = true, resumable = true) { cursor, force ->
                 App.repo.localFollows(cursor, force)
             },
         )
     }
-    val recommendStore = remember { FeedStore("102803", readOnly = guest) }
+    val recommendStore = remember { FeedStore("102803", readOnly = guest, resumable = true) }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
 
+    // 关注分组：分组是账号里的数据，gid 不同就是不同的一条流，一组一个 store。
+    val groupStores = remember { HashMap<String, FeedStore>() }
+
     // 附近：坐标来自设备定位或用户选的城市，换位置之后这条流要整条重来。
     val nearbyStore = remember {
-        FeedStore("nearby") { cursor, force ->
+        FeedStore("nearby", resumable = true) { cursor, force ->
             val coords = nearbyCoords(App.context)
             if (coords == null) {
                 FeedPage(emptyList(), null)
@@ -277,7 +292,7 @@ fun MainShell(nav: NavState) {
         }
     }
 
-    fun storeFor(item: FeedTabItem): FeedStore = when (item) {
+    fun storeFor(selection: FeedTabSelection): FeedStore = when (selection.item) {
         FeedTabItem.Follow -> followStore
         FeedTabItem.Circle -> circleStore
         FeedTabItem.Recommend -> recommendStore
@@ -287,41 +302,55 @@ fun MainShell(nav: NavState) {
         FeedTabItem.Secret -> filterStores.getValue(FeedFilter.Secret)
         FeedTabItem.Favorites -> filterStores.getValue(FeedFilter.Favorites)
         FeedTabItem.Nearby -> nearbyStore
+        FeedTabItem.Group -> selection.group?.let { group ->
+            groupStores.getOrPut(group.gid) {
+                FeedStore("group_${group.gid}", resumable = true) { cursor, _ ->
+                    App.repo.groupFeed(group.gid, cursor)
+                }
+            }
+        } ?: friendsStore
         FeedTabItem.None -> friendsStore
     }
 
     // 动态构建主页 Tab 列表：左栏（若非隐藏） + 中间栏（不可隐藏） + 右栏（若非隐藏）
     val feedTabs: List<FeedTabSpec> = remember(leftTab, centerTab, rightTab, filter, guest) {
         buildList {
-            if (leftTab != FeedTabItem.None) {
-                if (leftTab == FeedTabItem.Follow) {
-                    add(FeedTabSpec.Follow(filter, guest, "left"))
-                } else {
-                    add(FeedTabSpec.Custom(leftTab, "left", guest))
+            // 关注分组是账号里的数据：纯本地模式读不到，这一栏退回「本地关注」。
+            fun addColumn(selection: FeedTabSelection, position: String) {
+                val effective = if (guest && selection.isGroup) FeedTabSelection(FeedTabItem.Follow) else selection
+                when (effective.item) {
+                    FeedTabItem.None -> Unit
+                    FeedTabItem.Follow -> add(FeedTabSpec.Follow(filter, guest, position))
+                    else -> add(FeedTabSpec.Custom(effective, position, guest))
                 }
             }
-            if (centerTab == FeedTabItem.Follow) {
-                add(FeedTabSpec.Follow(filter, guest, "center"))
-            } else {
-                add(FeedTabSpec.Custom(centerTab, "center", guest))
-            }
-            if (rightTab != FeedTabItem.None) {
-                if (rightTab == FeedTabItem.Follow) {
-                    add(FeedTabSpec.Follow(filter, guest, "right"))
-                } else {
-                    add(FeedTabSpec.Custom(rightTab, "right", guest))
-                }
-            }
+            addColumn(leftTab, "left")
+            addColumn(centerTab, "center")
+            addColumn(rightTab, "right")
         }
     }
 
     val feedStores = feedTabs.map { spec ->
         when (spec) {
             is FeedTabSpec.Follow -> followStore
-            is FeedTabSpec.Custom -> storeFor(spec.item)
+            is FeedTabSpec.Custom -> storeFor(spec.selection)
         }
     }
     val feedEmptyTexts = feedTabs.map { it.emptyText }
+
+    // 「更多」菜单里的关注分组。分组列表在网页版，只在打开菜单时取一次（Repo 里还有一层缓存）；
+    // 拉不到就只显示内置流，不影响其它栏。
+    var feedGroups by remember { mutableStateOf<List<FollowGroup>>(emptyList()) }
+    val loadFeedGroups: () -> Unit = {
+        if (!guest) {
+            scope.launch {
+                runCatching { App.repo.followGroups() }
+                    .onSuccess { feedGroups = it }
+            }
+        }
+    }
+    LaunchedEffect(guest) { loadFeedGroups() }
+    val centerOptions = feedTabOptions(feedGroups, allowNone = false, current = centerTab)
 
     val followIndex = feedTabs.indexOfFirst { it.isFollow }.coerceAtLeast(0)
     val initialPage = feedTabs.indexOfFirst { it.key == App.settings.feedTabKey }.takeIf { it >= 0 }
@@ -337,7 +366,7 @@ fun MainShell(nav: NavState) {
             App.settings.applyFeedTabKey(currentTab.key)
             val legacyKind = when {
                 currentTab.isFollow -> 1
-                currentTab is FeedTabSpec.Custom && currentTab.item == FeedTabItem.Circle -> 0
+                currentTab is FeedTabSpec.Custom && currentTab.selection.item == FeedTabItem.Circle -> 0
                 else -> 2
             }
             App.settings.applyFeedTab(legacyKind)
@@ -582,19 +611,20 @@ fun MainShell(nav: NavState) {
                     feedTabs = feedTabs,
                     guest = guest,
                     centerTab = centerTab,
+                    centerOptions = centerOptions,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
                     searchExpanded = feedSearchExpanded,
                     panelCovering = feedPanelCovering,
                     bounds = topBarBounds,
-                    onCenterSelected = { item ->
-                        App.settings.applyFeedCenterTab(item)
-                        if (item == FeedTabItem.Special || item == FeedTabItem.Secret ||
-                            item == FeedTabItem.Local
-                        ) {
-                            scope.launch { storeFor(item).refresh() }
-                        }
-                        val targetPage = if (leftTab != FeedTabItem.None) 1 else 0
+                    onMenuOpened = loadFeedGroups,
+                    onCenterSelected = { selection ->
+                        App.settings.applyFeedCenterTab(selection)
+                        // 只补一次「还没拉到过 / 上次失败」的流：已经加载好的分组和它的续看位置
+                        // 留给 TimelinePage，不要在切回来的时候冲掉。
+                        val target = storeFor(selection)
+                        if (target.error != null) scope.launch { target.refresh() }
+                        val targetPage = if (leftTab.item != FeedTabItem.None) 1 else 0
                         scope.launch { feedPager.animateScrollToPage(targetPage) }
                     },
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
@@ -722,13 +752,15 @@ private fun MainBarUnderlay(
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
     guest: Boolean,
-    centerTab: FeedTabItem,
+    centerTab: FeedTabSelection,
+    centerOptions: List<FeedTabSelection>,
     collapsed: Float,
     titleHeightPx: Float,
     searchExpanded: Boolean,
     panelCovering: Boolean,
     bounds: TopBarBounds,
-    onCenterSelected: (FeedTabItem) -> Unit,
+    onMenuOpened: () -> Unit,
+    onCenterSelected: (FeedTabSelection) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -754,6 +786,10 @@ private fun MainBarUnderlay(
     var filterMenuExpanded by remember { mutableStateOf(false) }
     LaunchedEffect(searchExpanded, tab) {
         if (searchExpanded || tab != 0) filterMenuExpanded = false
+    }
+    // 打开菜单时补一次分组列表：设置里改过分组、或者在网页版新加了分组，这里跟着更新。
+    LaunchedEffect(filterMenuExpanded) {
+        if (filterMenuExpanded) onMenuOpened()
     }
 
     Box(modifier) {
@@ -800,6 +836,7 @@ private fun MainBarUnderlay(
                         feedTabs = feedTabs,
                         filterMenu = !guest,
                         centerTab = centerTab,
+                        centerOptions = centerOptions,
                         filterMenuExpanded = filterMenuExpanded,
                         onFilterMenuDismiss = { filterMenuExpanded = false },
                         onCenterSelected = {
@@ -1226,291 +1263,154 @@ private fun FeedTitleRow(
     }
 }
 
-// COUI's segment control opts out of LocalIndication — COUIIndication paints a rectangular state
-// layer over the whole tab bounds, which reads as a square shadow — and scales the pressed
-// segment instead (COUIPressFeedbackHelper).
-private val FeedTabPressSpring = spring<Float>(dampingRatio = 1f, stiffness = 438.65f)
-
-// COUI 分段条的玻璃材质按原生模糊 sigma 与库内 px→dp 的换算系数传参，这里照抄同一组数值，
-// 顶栏分段条的模糊强度才和系统一致。
-private const val SegmentGlassBlurSigmaPx = 25f
-private const val SegmentGlassSigmaScale = 0.45f
-
+/**
+ * 首页顶栏的分段选择器。
+ *
+ * 外观与交互全部来自 `../coui` 的 [TabRowWithContour]（胶囊玻璃材质 + 选中胶囊落影 + 跟手高光），
+ * 这里只负责三件事：把页面尺寸固定成三格等宽、把中间那格接上关注分组菜单、把点击与左右拖动
+ * 都换算成翻页。
+ */
 @Composable
 private fun FeedTabs(
     pager: PagerState,
     feedTabs: List<FeedTabSpec>,
     filterMenu: Boolean,
-    centerTab: FeedTabItem,
+    centerTab: FeedTabSelection,
+    centerOptions: List<FeedTabSelection>,
     filterMenuExpanded: Boolean,
     onFilterMenuDismiss: () -> Unit,
-    onCenterSelected: (FeedTabItem) -> Unit,
+    onCenterSelected: (FeedTabSelection) -> Unit,
     onSelect: (Int) -> Unit,
     onFilterClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scheme = COUITheme.colorScheme
-    // ColorOS's segment capsule in its "transparent blur highlight" tier: the container is glass over
-    // the page, so only the indicator keeps a fill. Light mode keeps the #0F000000 tint, dark mode the
-    // #1FFFFFFF one, both laid over a blurred backdrop and lit on the rim.
-    val dark = scheme.background.luminance() < 0.5f
-    // 模糊不可用（关掉模糊效果、系统省电、低于 Android 13）时退回原来的不透明胶囊。
-    val containerColor = if (dark) Color(0xFF353535) else Color(0xFFE2E3E4)
-    val indicatorColor = if (dark) Color(0x33FFFFFF) else Color(0xB2FFFFFF)
     val backdrop = LocalBackdrop.current
-    // 外圈用 COUI 分段条那套胶囊 6 号描边，亮度已按系统页实测收到有效 alpha 约 0.18（见
-    // TabRowDefaults.containerStroke），和系统页面一致，不再在这里另抄一份系数。
-    val containerEdge = TabRowDefaults.containerStroke(dark)
-    val indicatorEdge = TabRowDefaults.indicatorStroke(dark)
+    // 透明模糊那档要 API 34+（原生 RuntimeShader）且用户没关模糊，否则退回不透明胶囊。
+    // 这里的判断和库内一致，颜色也跟着换，免得玻璃档还挂着一层不透明底色。
+    val glass = backdrop != null && isBlurEnabled() && Build.VERSION.SDK_INT >= 34
     val labels = feedTabs.map { it.label }
-    val interactions = remember(feedTabs.size) { List(feedTabs.size) { MutableInteractionSource() } }
-    val pressed = interactions.map { it.collectIsPressedAsState() }
-    val indicatorScale by animateFloatAsState(
-        targetValue = if (pressed.getOrNull(pager.currentPage)?.value == true) 0.96f else 1f,
-        animationSpec = FeedTabPressSpring,
-        label = "feedTabIndicatorScale",
-    )
-    // 三格同宽，按「4 个字 + 箭头」预留，字数是 2/3/4 时胶囊和位置都不动。
-    // 用 sp 折算，系统字体放大时格子跟着变宽，不会被截断。
+
+    // 三格同宽，按「4 个字 + 箭头」预留：分组名是 2/3/4 个字时胶囊和格子都不动。
+    // 用 sp 折算，系统字体放大时格子跟着变宽；先落到 px 再折算回去，容器宽度与库内
+    // 「最小宽度 × 格数 + 两侧内边距」严格相等，不会因为取整差 1px 被判定溢出而退回纯色行。
     val density = LocalDensity.current
-    val segmentWidth = with(density) { (4 * 13).sp.toDp() } + 2.dp + 10.dp + 22.dp
-    val containerWidth = segmentWidth * feedTabs.size + 8.dp
-    val segmentWidthPx = with(density) { segmentWidth.toPx() }
-    val restHeightPx = with(density) { 32.dp.toPx() }
-    val padPx = with(density) { 4.dp.toPx() }
+    val segmentWidthPx = with(density) { ((4 * 14).sp.toDp() + 2.dp + 10.dp + 22.dp).roundToPx() }
+    val contourPadPx = with(density) { TabRowDefaults.TabRowWithContourPadding.roundToPx() }
+    val segmentWidth = with(density) { segmentWidthPx.toDp() }
+    val containerWidth = with(density) { (segmentWidthPx * feedTabs.size + contourPadPx * 2).toDp() }
 
-    fun centerFor(index: Int): Float = padPx + index * segmentWidthPx + segmentWidthPx / 2f
-    val firstCenter = centerFor(0)
-    val lastCenter = centerFor(max(0, feedTabs.size - 1))
-
-    val initialPage = pager.currentPage.coerceIn(0, max(0, feedTabs.size - 1))
-    val motion = remember {
-        CouiSegmentIndicatorMotion(
-            center = centerFor(initialPage),
-            width = segmentWidthPx,
-            height = restHeightPx,
-        )
+    // 点一下先把指示器挪过去、再让列表跟上；等 pager 停稳就把临时值交还给 pager。
+    // 不跟 pager 的中间页走，长距离切换时指示器不会一格一格地过。
+    var pendingPage by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(pager.currentPage, pager.isScrollInProgress) {
+        if (!pager.isScrollInProgress) pendingPage = null
     }
-    LaunchedEffect(motion) { motion.animate() }
+    val selectedIndex = (pendingPage ?: pager.targetPage).coerceIn(0, max(0, feedTabs.lastIndex))
 
-    var lastSettledPage by remember { mutableIntStateOf(initialPage) }
-    LaunchedEffect(pager.currentPage, segmentWidthPx) {
-        val target = pager.currentPage.coerceIn(0, max(0, feedTabs.size - 1))
-        if (target != lastSettledPage) {
-            lastSettledPage = target
-            motion.select(
-                targetCenter = centerFor(target),
-                targetWidth = segmentWidthPx,
-                restHeight = restHeightPx,
-                firstCenter = firstCenter,
-                lastCenter = lastCenter,
-                maxExtraWidth = with(density) { 16.dp.toPx() },
+    TabRowWithContour(
+        tabs = labels,
+        selectedTabIndex = selectedIndex,
+        onTabSelected = { index ->
+            if (index != pager.currentPage) pendingPage = index
+            onSelect(index)
+        },
+        // 中间那格同时是「关注」和分组菜单的入口：点它切过来的同时把菜单弹出来。
+        onTabClick = { index ->
+            if (filterMenu && feedTabs.getOrNull(index)?.isCenter == true) onFilterClick()
+        },
+        modifier = modifier.width(containerWidth),
+        colors = if (glass) {
+            TabRowDefaults.tabRowColors(
+                contentColor = scheme.onSurface,
+                selectedContentColor = scheme.onSurface,
             )
-        }
-    }
-
-    LaunchedEffect(pager.currentPageOffsetFraction, pager.isScrollInProgress) {
-        if (pager.isScrollInProgress && !motion.isRunning) {
-            val pageFloat = (pager.currentPage + pager.currentPageOffsetFraction).coerceIn(
-                0f,
-                (feedTabs.size - 1).coerceAtLeast(0).toFloat()
+        } else {
+            TabRowDefaults.opaqueTabRowColors(
+                contentColor = scheme.onSurface,
+                selectedContentColor = scheme.onSurface,
             )
-            val center = padPx + pageFloat * segmentWidthPx + segmentWidthPx / 2f
-            val offsetAbs = abs(pager.currentPageOffsetFraction)
-            val stretchFactor = sin(offsetAbs * PI.toFloat()).coerceIn(0f, 1f)
-            val dynHeight = restHeightPx * (1f - 0.1f * stretchFactor)
-            val dynWidth = segmentWidthPx + with(density) { 14.dp.toPx() } * stretchFactor
-            motion.updateDrag(center, dynWidth, dynHeight)
-        }
-    }
-
-    val handleSelect: (Int) -> Unit = { index ->
-        lastSettledPage = index
-        motion.select(
-            targetCenter = centerFor(index),
-            targetWidth = segmentWidthPx,
-            restHeight = restHeightPx,
-            firstCenter = firstCenter,
-            lastCenter = lastCenter,
-            maxExtraWidth = with(density) { 16.dp.toPx() },
-        )
-        onSelect(index)
-    }
-
-    val effectivePage = if (segmentWidthPx > 0f) {
-        ((motion.centerX - padPx - segmentWidthPx / 2f) / segmentWidthPx).coerceIn(
-            0f,
-            (feedTabs.size - 1).coerceAtLeast(0).toFloat()
-        )
-    } else {
-        0f
-    }
-
-    BoxWithConstraints(
-        modifier
-            // Glass 40dp capsule, the same height as the search action in the header row. Same
-            // material as COUI's "transparent blur highlight" segment bar: blurred page content with
-            // a lit rim, and the old opaque capsule when blur cannot run.
-            .requiredHeight(40.dp)
-            .width(containerWidth)
-            // 与 COUI 分段条一致：玻璃底 + 框架胶囊描边是唯一一圈高光，按压时整条形变并亮起跟手光斑。
-            // 不再叠通用玻璃按钮的高光，那一圈的转角几何与胶囊描边不同，两圈叠在一起圆角会走样。
-            .couiTouchMotion(
-                surface = Modifier
-                    .couiGlassSurface(
-                        backdrop = backdrop,
-                        shape = CouiSegmentCapsuleShape,
-                        containerColor = containerColor,
-                        fallback = Modifier.clip(CouiSegmentCapsuleShape).background(containerColor),
-                        blurRadius = with(density) { (SegmentGlassBlurSigmaPx / SegmentGlassSigmaScale).toDp().value },
-                        blendColors = TabRowDefaults.segmentBlurColors(dark),
-                    ),
-                shape = CouiSegmentCapsuleShape,
-                lightParams = SpotLightDefaults.capsuleParams2(dark),
-                pressScaleEnabled = true,
-                consumeDrag = false,
-            )
-            .clip(CouiSegmentCapsuleShape),
-    ) {
-        val drawW = with(density) { (motion.width * indicatorScale).toDp() }
-        val drawH = with(density) { (motion.height * indicatorScale).toDp() }
-        val drawCenterXDp = with(density) { motion.centerX.toDp() }
-        val drawLeftDp = drawCenterXDp - drawW / 2f
-        val drawTopDp = (40.dp - drawH) / 2f
-
-        // 外圈高光：普通 alpha 混合，和系统 shader 的 blendEdge 一致。亮度已在 containerEdge
-        // 里按系统的有效 alpha 收过（0.8 × 0.22 ≈ 0.18），这里不再叠 Overlay——那样会把
-        // 亮度变成底色的倍数，背景一变就对不上。深色下上沿约比内部亮 40，与系统页面一致。
-        Box(
-            Modifier
-                .matchParentSize()
-                .materialShadowEdge(stroke = containerEdge, fallback = Modifier),
-        )
-        Box(
-            Modifier
-                .offset(
-                    x = drawLeftDp,
-                    y = drawTopDp,
-                )
-                .size(width = drawW, height = drawH)
-                .clip(CouiSegmentCapsuleShape)
-                .background(indicatorColor)
-                .materialShadowEdge(stroke = indicatorEdge, fallback = Modifier),
-        )
-        Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            feedTabs.forEachIndexed { index, spec ->
-                val menu = filterMenu && spec.isCenter
-                FeedTabSegment(
-                    label = spec.label,
-                    index = index,
-                    tag = spec.tag,
-                    page = effectivePage,
-                    interactionSource = interactions[index],
-                    pressed = pressed[index].value,
-                    modifier = Modifier.weight(1f),
-                    showArrow = menu,
-                    onClick = {
-                        handleSelect(index)
-                        if (menu) onFilterClick()
-                    },
+        },
+        minWidth = segmentWidth,
+        maxWidth = segmentWidth,
+        segmentPadding = 8.dp,
+        backdrop = backdrop,
+        commitOnRelease = true,
+        dragSelectionEnabled = true,
+        touchMotionEnabled = true,
+        tabModifier = { index -> Modifier.testTag(feedTabs[index].tag) },
+        tabContent = { index, label, active ->
+            val menu = filterMenu && feedTabs.getOrNull(index)?.isCenter == true
+            // 两态同色，和系统 SegmentButton 一致：靠滑块和字重区分选中，不靠灰一档。
+            val labelColor = scheme.onSurface
+            Box(
+                Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
                 ) {
+                    Text(
+                        label,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = labelColor,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        // 箭头固定占一格，文字让出这一段：长分组名不会把箭头挤出格子。
+                        modifier = Modifier.widthIn(max = segmentWidth - 12.dp - if (menu) 12.dp else 0.dp),
+                    )
                     if (menu) {
-                        OverlayListPopup(
-                            show = filterMenuExpanded,
-                            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-                            onDismissRequest = onFilterMenuDismiss,
-                        ) {
-                            val dismiss = LocalDismissState.current
-                            ListPopupColumn {
-                                // 和设置里的「微博中间栏内容」同一份选项：好友流在分割线上面，
-                                // 其余能放进中间栏的流都在下面。
-                                val options = FeedTabItem.entries.filter { it != FeedTabItem.None }
-                                options.forEachIndexed { optionIndex, item ->
-                                    DropdownImpl(
-                                        item = DropdownItem(
-                                            text = if (item == FeedTabItem.Follow) "全部" else item.label,
-                                        ),
-                                        optionSize = options.size,
-                                        isSelected = item == centerTab,
-                                        index = optionIndex,
-                                        // One divider after "全部"; the feeds below stay one group.
-                                        groupKey = if (optionIndex == 0) "all" else "filters",
-                                        onSelectedIndexChange = {
-                                            onCenterSelected(options[it])
-                                            dismiss?.invoke()
-                                        },
-                                    )
+                        Spacer(Modifier.width(2.dp))
+                        Icon(
+                            COUIIcons.Basic.ExpandableIndicator,
+                            contentDescription = null,
+                            tint = labelColor,
+                            modifier = Modifier.size(10.dp),
+                        )
+                    }
+                }
+                if (menu) {
+                    OverlayListPopup(
+                        show = filterMenuExpanded,
+                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                        onDismissRequest = onFilterMenuDismiss,
+                    ) {
+                        val dismiss = LocalDismissState.current
+                        ListPopupColumn {
+                            // 和设置里的「微博中间栏内容」同一份选项：好友流在分割线上面，
+                            // 其余内置流跟着，账号里的关注分组排在最后一段。
+                            centerOptions.forEachIndexed { optionIndex, option ->
+                                val groupKey = when {
+                                    option.item == FeedTabItem.Follow -> "all"
+                                    option.isGroup -> "groups"
+                                    else -> "filters"
                                 }
+                                DropdownImpl(
+                                    item = DropdownItem(
+                                        text = if (option.item == FeedTabItem.Follow) "全部" else option.label,
+                                        summary = if (option.isGroup) "关注分组" else null,
+                                    ),
+                                    optionSize = centerOptions.size,
+                                    isSelected = option.key == centerTab.key,
+                                    index = optionIndex,
+                                    // One divider after "全部"; the rest of the built-in feeds and
+                                    // the custom follow groups each stay one group.
+                                    groupKey = groupKey,
+                                    onSelectedIndexChange = {
+                                        onCenterSelected(centerOptions[it])
+                                        dismiss?.invoke()
+                                    },
+                                )
                             }
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun FeedTabSegment(
-    label: String,
-    index: Int,
-    tag: String,
-    page: Float,
-    interactionSource: MutableInteractionSource,
-    pressed: Boolean,
-    modifier: Modifier = Modifier,
-    showArrow: Boolean,
-    onClick: () -> Unit,
-    popup: @Composable () -> Unit = {},
-) {
-    val scheme = COUITheme.colorScheme
-    val amount = (1f - abs(page - index)).coerceIn(0f, 1f)
-    val labelScale by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = FeedTabPressSpring,
-        label = "feedTabLabelScale",
+        },
     )
-    Box(
-        modifier = modifier
-            .fillMaxHeight()
-            .graphicsLayer {
-                scaleX = labelScale
-                scaleY = labelScale
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            )
-            .testTag(tag),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                label,
-                fontSize = 13.sp,
-                fontWeight = if (amount >= 0.5f) FontWeight.Medium else FontWeight.Normal,
-                color = lerp(scheme.onSurfaceSecondary, scheme.onSurface, amount),
-                maxLines = 1,
-                softWrap = false,
-            )
-            if (showArrow) {
-                Icon(
-                    COUIIcons.Basic.ExpandableIndicator,
-                    contentDescription = null,
-                    tint = lerp(scheme.onSurfaceSecondary, scheme.onSurface, amount),
-                    modifier = Modifier.size(10.dp),
-                )
-            }
-        }
-        popup()
-    }
 }
 
 @Composable

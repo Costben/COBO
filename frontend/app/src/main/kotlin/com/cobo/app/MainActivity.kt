@@ -16,6 +16,7 @@ import com.cobo.app.ui.isDarkTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         App.init(this)
+        App.startRoute = intent?.getStringExtra("cobo.route")
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

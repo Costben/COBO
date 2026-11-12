@@ -21,6 +21,12 @@ enum class FeedTabItem(val key: String, val label: String, val tag: String) {
     Secret("secret", "悄悄关注", "feed_tab_secret"),
     Favorites("favorites", "收藏", "feed_tab_favorites"),
     Nearby("nearby", "附近", "feed_tab_nearby"),
+
+    /**
+     * 自建的关注分组。分组本身是账号里的数据，页面上按分组逐个列出，选中哪个由
+     * [FeedTabSelection.group] 决定；单独留下这一项只用来表示「分组」这一类。
+     */
+    Group("group", "关注分组", "feed_tab_group"),
     ;
 
     companion object {
@@ -28,6 +34,52 @@ enum class FeedTabItem(val key: String, val label: String, val tag: String) {
             return entries.firstOrNull { it.key == key } ?: default
         }
     }
+}
+
+/**
+ * 首页某一栏看什么。内置流直接用 [item]；关注分组是 [item] 为 [FeedTabItem.Group]
+ * 再加上具体那一组的 gid 与名字 —— 分组是账号里的数据，不能写进枚举。
+ */
+data class FeedTabSelection(
+    val item: FeedTabItem,
+    val group: FollowGroup? = null,
+) {
+    /** 分组跟着 gid 走：同一栏里换个分组就是换了一条流。 */
+    val key: String
+        get() = when {
+            item != FeedTabItem.Group -> item.key
+            group != null -> "group_${group.gid}"
+            else -> FeedTabItem.Group.key
+        }
+
+    val label: String
+        get() = when {
+            item != FeedTabItem.Group -> item.label
+            group != null -> group.title.ifBlank { FeedTabItem.Group.label }
+            else -> FeedTabItem.Group.label
+        }
+
+    val isGroup: Boolean get() = item == FeedTabItem.Group && group != null
+}
+
+/**
+ * 设置与顶栏「更多」菜单共用的一份选项：内置流在前，关注分组跟在后。
+ *
+ * 当前选中的分组即使这次没拉到（分组被删了、或者还没加载完）也留在列表里，
+ * 否则那一栏会突然没有对应项、而且没法改回去。
+ */
+fun feedTabOptions(
+    groups: List<FollowGroup>,
+    allowNone: Boolean,
+    current: FeedTabSelection? = null,
+): List<FeedTabSelection> = buildList {
+    if (allowNone) add(FeedTabSelection(FeedTabItem.None))
+    FeedTabItem.entries
+        .filter { it != FeedTabItem.None && it != FeedTabItem.Group }
+        .forEach { add(FeedTabSelection(it)) }
+    groups.forEach { add(FeedTabSelection(FeedTabItem.Group, it)) }
+    current?.takeIf { it.isGroup && groups.none { group -> group.gid == it.group?.gid } }
+        ?.let { add(it) }
 }
 
 /** 首页搜索面板展开、收回的方式。 */
@@ -48,6 +100,12 @@ class Settings(context: Context) {
 
     private companion object {
         const val SearchHistoryLimit = 10
+
+        /** 续看位置在 SharedPreferences 里的前缀，后面接流的 key。 */
+        const val ScrollKeyPrefix = "scroll_"
+
+        /** 首页停在某个关注分组时 [feedTabKey] 里的标记，见 [FeedTabSelection.key]。 */
+        const val GroupKeyMarker = "group_"
     }
 
     /** Recent queries, newest first. Backed by `search_history` as a JSON array. */
@@ -75,22 +133,16 @@ class Settings(context: Context) {
     )
         private set
 
-    /** 自定义微博页左侧栏浏览内容（默认好友圈，可设为隐藏或其他内容）。 */
-    var feedLeftTab by mutableStateOf(
-        FeedTabItem.fromKey(sp.getString("feed_left_tab", null), FeedTabItem.Circle)
-    )
+    /** 自定义微博页左侧栏浏览内容（默认好友圈，可设为隐藏、内置流或某个关注分组）。 */
+    var feedLeftTab by mutableStateOf(loadFeedSelection("feed_left", FeedTabItem.Circle))
         private set
 
     /** 自定义微博页中间栏浏览内容（默认关注，不可设为隐藏）。 */
-    var feedCenterTab by mutableStateOf(
-        FeedTabItem.fromKey(sp.getString("feed_center_tab", null), FeedTabItem.Follow)
-    )
+    var feedCenterTab by mutableStateOf(loadFeedSelection("feed_center", FeedTabItem.Follow))
         private set
 
-    /** 自定义微博页右侧栏浏览内容（默认推荐，可设为隐藏或其他内容）。 */
-    var feedRightTab by mutableStateOf(
-        FeedTabItem.fromKey(sp.getString("feed_right_tab", null), FeedTabItem.Recommend)
-    )
+    /** 自定义微博页右侧栏浏览内容（默认推荐，可设为隐藏、内置流或某个关注分组）。 */
+    var feedRightTab by mutableStateOf(loadFeedSelection("feed_right", FeedTabItem.Recommend))
         private set
 
     /** 记录当前停留的微博页栏标识（例如 "left_circle", "follow", "right_recommend"）。 */
@@ -199,20 +251,80 @@ class Settings(context: Context) {
         sp.edit().putInt("feed_tab_v3", feedTab).apply()
     }
 
-    fun applyFeedLeftTab(item: FeedTabItem) {
-        feedLeftTab = item
-        sp.edit().putString("feed_left_tab", item.key).apply()
+    fun applyFeedLeftTab(selection: FeedTabSelection) {
+        feedLeftTab = selection
+        saveFeedSelection("feed_left", selection)
     }
 
-    fun applyFeedCenterTab(item: FeedTabItem) {
-        if (item == FeedTabItem.None) return
-        feedCenterTab = item
-        sp.edit().putString("feed_center_tab", item.key).apply()
+    fun applyFeedCenterTab(selection: FeedTabSelection) {
+        if (selection.item == FeedTabItem.None) return
+        feedCenterTab = selection
+        saveFeedSelection("feed_center", selection)
     }
 
-    fun applyFeedRightTab(item: FeedTabItem) {
-        feedRightTab = item
-        sp.edit().putString("feed_right_tab", item.key).apply()
+    fun applyFeedRightTab(selection: FeedTabSelection) {
+        feedRightTab = selection
+        saveFeedSelection("feed_right", selection)
+    }
+
+    /**
+     * 某个首页栏上次停在哪儿：卡片下标与偏了几像素。按流分开记，
+     * 「关注」和「推荐」各记各的，切栏不会互相带跑。
+     */
+    fun feedScroll(key: String): Pair<Int, Int>? {
+        val raw = sp.getString(ScrollKeyPrefix + key, null) ?: return null
+        val parts = raw.split(',')
+        if (parts.size != 2) return null
+        val index = parts[0].toIntOrNull() ?: return null
+        val offset = parts[1].toIntOrNull() ?: return null
+        return index.coerceAtLeast(0) to offset.coerceAtLeast(0)
+    }
+
+    fun applyFeedScroll(key: String, index: Int, offset: Int) {
+        sp.edit()
+            .putString(ScrollKeyPrefix + key, "${index.coerceAtLeast(0)},${offset.coerceAtLeast(0)}")
+            .apply()
+    }
+
+    /**
+     * 清掉所有栏的续看位置。滚动位置是按流记的、不分账号，换账号后必须一起清：
+     * 否则新账号进来会按上一个人的卡片下标落位，第 3 栏可能直接跳到第 80 条。
+     */
+    fun clearFeedScrolls() {
+        val editor = sp.edit()
+        sp.all.keys.filter { it.startsWith(ScrollKeyPrefix) }.forEach(editor::remove)
+        editor.apply()
+    }
+
+    /**
+     * 换账号 / 退出登录时把三栏内容复位。关注分组是账号里的数据，gid 换了账号就不存在，
+     * 留着只会让首页出现一条打不开的空栏（中间栏不可隐藏，还会顶掉「关注」）。
+     */
+    fun clearGroupFeedTabs() {
+        if (feedLeftTab.isGroup) applyFeedLeftTab(FeedTabSelection(FeedTabItem.Circle))
+        if (feedCenterTab.isGroup) applyFeedCenterTab(FeedTabSelection(FeedTabItem.Follow))
+        if (feedRightTab.isGroup) applyFeedRightTab(FeedTabSelection(FeedTabItem.Recommend))
+        // 栏标识形如 "center_group_5012345"：带上位置前缀，用 contains 才兜得住。
+        if (feedTabKey.isEmpty() || feedTabKey.contains(GroupKeyMarker)) {
+            applyFeedTabKey(FeedTabItem.Follow.key)
+        }
+    }
+
+    private fun loadFeedSelection(prefix: String, default: FeedTabItem): FeedTabSelection {
+        val item = FeedTabItem.fromKey(sp.getString("${prefix}_tab", null), default)
+        if (item != FeedTabItem.Group) return FeedTabSelection(item)
+        val gid = sp.getString("${prefix}_group_gid", "").orEmpty()
+        val title = sp.getString("${prefix}_group_title", "").orEmpty()
+        // 只存到「分组」这一档但没有具体组时退回内置的默认流，免得首页出现一条空栏。
+        return if (gid.isBlank()) FeedTabSelection(default) else FeedTabSelection(item, FollowGroup(gid, title))
+    }
+
+    private fun saveFeedSelection(prefix: String, selection: FeedTabSelection) {
+        sp.edit()
+            .putString("${prefix}_tab", selection.item.key)
+            .putString("${prefix}_group_gid", selection.group?.gid.orEmpty())
+            .putString("${prefix}_group_title", selection.group?.title.orEmpty())
+            .apply()
     }
 
     /** 附近改回跟设备定位走。 */

@@ -29,9 +29,11 @@ import androidx.compose.ui.unit.sp
 import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
-import com.cobo.app.data.FeedTabItem
+import com.cobo.app.data.FeedTabSelection
+import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
+import com.cobo.app.data.feedTabOptions
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
@@ -86,10 +88,21 @@ fun SettingsScreen(nav: NavState) {
     var feedLeftTab by remember { mutableStateOf(App.settings.feedLeftTab) }
     var feedCenterTab by remember { mutableStateOf(App.settings.feedCenterTab) }
     var feedRightTab by remember { mutableStateOf(App.settings.feedRightTab) }
+    var feedGroups by remember { mutableStateOf<List<FollowGroup>>(emptyList()) }
     var pickFeedLeft by remember { mutableStateOf(false) }
     var pickFeedCenter by remember { mutableStateOf(false) }
     var pickFeedRight by remember { mutableStateOf(false) }
     var pickSearchPanelAnimation by remember { mutableStateOf(false) }
+
+    // 关注分组是账号里的数据：只在真的要选栏位内容时才去网页版拉一次，拉不到就只列内置流。
+    LaunchedEffect(pickFeedLeft, pickFeedCenter, pickFeedRight) {
+        if (guest || !(pickFeedLeft || pickFeedCenter || pickFeedRight)) return@LaunchedEffect
+        runCatching { App.repo.followGroups() }.onSuccess { feedGroups = it }
+    }
+    // 纯本地模式取不到分组，就别把上次存的分组当成一个可选但选不动的项列出来。
+    val leftOptions = feedTabOptions(feedGroups, allowNone = true, current = if (guest) null else feedLeftTab)
+    val centerOptions = feedTabOptions(feedGroups, allowNone = false, current = if (guest) null else feedCenterTab)
+    val rightOptions = feedTabOptions(feedGroups, allowNone = true, current = if (guest) null else feedRightTab)
 
     // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
     val accounts = remember(localFollowUid) { App.store.accounts() }
@@ -494,10 +507,11 @@ fun SettingsScreen(nav: NavState) {
         FeedTabPicker(
             title = "微博左侧栏内容",
             selected = feedLeftTab,
+            options = leftOptions,
             onDismiss = { pickFeedLeft = false },
-            onPick = { item ->
-                App.settings.applyFeedLeftTab(item)
-                feedLeftTab = item
+            onPick = { selection ->
+                App.settings.applyFeedLeftTab(selection)
+                feedLeftTab = selection
                 pickFeedLeft = false
             },
         )
@@ -507,11 +521,11 @@ fun SettingsScreen(nav: NavState) {
         FeedTabPicker(
             title = "微博中间栏内容",
             selected = feedCenterTab,
-            options = FeedTabItem.entries.filter { it != FeedTabItem.None },
+            options = centerOptions,
             onDismiss = { pickFeedCenter = false },
-            onPick = { item ->
-                App.settings.applyFeedCenterTab(item)
-                feedCenterTab = item
+            onPick = { selection ->
+                App.settings.applyFeedCenterTab(selection)
+                feedCenterTab = selection
                 pickFeedCenter = false
             },
         )
@@ -521,10 +535,11 @@ fun SettingsScreen(nav: NavState) {
         FeedTabPicker(
             title = "微博右侧栏内容",
             selected = feedRightTab,
+            options = rightOptions,
             onDismiss = { pickFeedRight = false },
-            onPick = { item ->
-                App.settings.applyFeedRightTab(item)
-                feedRightTab = item
+            onPick = { selection ->
+                App.settings.applyFeedRightTab(selection)
+                feedRightTab = selection
                 pickFeedRight = false
             },
         )
@@ -626,10 +641,10 @@ private fun LocalFollowPicker(
 @Composable
 private fun FeedTabPicker(
     title: String,
-    selected: FeedTabItem,
-    options: List<FeedTabItem> = FeedTabItem.entries,
+    selected: FeedTabSelection,
+    options: List<FeedTabSelection>,
     onDismiss: () -> Unit,
-    onPick: (FeedTabItem) -> Unit,
+    onPick: (FeedTabSelection) -> Unit,
 ) {
     OptionPicker(
         title = title,
@@ -637,6 +652,7 @@ private fun FeedTabPicker(
         selectedKey = selected.key,
         tagPrefix = "feed_tab",
         groupKey = "feed-tabs",
+        summaryOf = { key -> if (options.firstOrNull { it.key == key }?.isGroup == true) "关注分组" else null },
         onDismiss = onDismiss,
         onPick = { key -> options.firstOrNull { it.key == key }?.let(onPick) ?: onDismiss() },
     )
@@ -652,6 +668,8 @@ private fun OptionPicker(
     groupKey: String,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,
+    /** 第二行小字，没有就不显示。 */
+    summaryOf: (String) -> String? = { null },
 ) {
     var show by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
@@ -685,7 +703,7 @@ private fun OptionPicker(
                 ListPopupColumn {
                     options.forEachIndexed { index, (key, label) ->
                         DropdownImpl(
-                            item = DropdownItem(text = label),
+                            item = DropdownItem(text = label, summary = summaryOf(key)),
                             optionSize = options.size,
                             isSelected = key == selectedKey,
                             index = index,

@@ -147,6 +147,8 @@ sealed interface Route {
     data class Images(val pics: List<Pic>, val index: Int) : Route
     data class Video(val url: String, val title: String) : Route
     data class Vote(val voteId: String) : Route
+    /** 临时对比页，验完删。 */
+    data object TabLab : Route
 }
 
 class NavEntry(
@@ -180,7 +182,14 @@ class NavEntry(
 @Stable
 class NavState {
     val stack = mutableStateListOf<NavEntry>(
-        NavEntry(if (App.repo.hasSession() || App.settings.localMode) Route.Main else Route.Login())
+        NavEntry(
+            when {
+                App.startRoute == "tablab" -> Route.TabLab
+                App.startRoute == "main" -> Route.Main
+                App.repo.hasSession() || App.settings.localMode -> Route.Main
+                else -> Route.Login()
+            }
+        )
     )
 
     private var host: CoroutineScope? = null

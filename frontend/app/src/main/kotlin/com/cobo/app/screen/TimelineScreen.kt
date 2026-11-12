@@ -54,10 +54,13 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 enum class FeedFilter(val label: String, val emptyText: String) {
@@ -73,11 +76,17 @@ enum class FeedFilter(val label: String, val emptyText: String) {
 }
 
 class FeedStore(
-    private val cid: String,
+    /** 这条流的标识：默认取数容器用它，快照与滚动位置也按它分文件。 */
+    val key: String,
     /** 只读的流：卡片照常展示，但不给点赞 / 评论 / 转发。 */
     val readOnly: Boolean = false,
+    /**
+     * 把已经拉到的列表和游标存盘，冷启动时接着上次看到的地方继续。
+     * 只给首页那几栏开：别的地方进来应该是一条新流，不该沿用上次的列表。
+     */
+    val resumable: Boolean = false,
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
-        App.repo.container(cid, sinceId = cursor, force = force)
+        App.repo.container(key, sinceId = cursor, force = force)
     },
 ) {
     val items = mutableStateListOf<Status>()
@@ -103,6 +112,15 @@ class FeedStore(
     var generation by mutableIntStateOf(0)
         private set
 
+    /** 这一份列表是从上次的快照填回来的，不是这次新拉的。 */
+    var resumed by mutableStateOf(false)
+        private set
+
+    /** 快照恢复后要落到的位置，由界面取走一次。 */
+    private var pendingScroll: Pair<Int, Int>? = null
+
+    fun takePendingScroll(): Pair<Int, Int>? = pendingScroll.also { pendingScroll = null }
+
     // 静默加载与主动刷新分开：只有后者驱动下拉动画，切 tab 触发的首次加载不播。
     private var fetching = false
 
@@ -119,7 +137,38 @@ class FeedStore(
         if (loaded) return
         lock.withLock {
             if (loaded) return@withLock
-            fetch(force = false)
+            if (resumable) resume()
+            if (!loaded) fetch(force = false)
+        }
+    }
+
+    /**
+     * 冷启动把上一次的列表填回来：翻过几页、游标在哪、有没有到底，全都跟关掉之前一样，
+     * 不再重发请求；位置由 [App.settings] 里记的那一条补上。
+     */
+    private suspend fun resume() {
+        val snapshot = withContext(Dispatchers.IO) {
+            runCatching { App.snapshots.load(App.repo.session?.uid.orEmpty(), key) }.getOrNull()
+        } ?: return
+        if (snapshot.items.isEmpty()) return
+        items.clear()
+        items.addAll(snapshot.items)
+        sinceId = snapshot.sinceId
+        end = snapshot.end
+        loaded = true
+        resumed = true
+        pendingScroll = App.settings.feedScroll(key)
+    }
+
+    private suspend fun persist() {
+        if (!resumable || items.isEmpty() || items.size > SnapshotMaxItems) return
+        val snapshotItems = items.toList()
+        val cursor = sinceId
+        val atEnd = end
+        withContext(Dispatchers.IO) {
+            runCatching {
+                App.snapshots.save(App.repo.session?.uid.orEmpty(), key, snapshotItems, cursor, atEnd)
+            }
         }
     }
 
@@ -152,7 +201,10 @@ class FeedStore(
             sinceId = page.sinceId
             end = unique.isEmpty()
             loaded = true
+            // 这次是真的拉回来了，列表不再代表「上次的快照」，后面的刷新该照常回顶。
+            resumed = false
             generation++
+            persist()
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -175,6 +227,7 @@ class FeedStore(
                 page.items.forEach { if (known.add(it.id)) items.add(it) }
                 sinceId = page.sinceId
                 if (page.items.isEmpty()) end = true
+                persist()
             }
         } catch (c: CancellationException) {
             throw c
@@ -352,6 +405,36 @@ private fun TimelinePage(
                 if (last >= store.items.size - 2 && store.items.isNotEmpty()) store.loadMore()
             }
     }
+    // 快照恢复之后落回上次停下的那张卡片。只落一次：之后的位置归 LazyListState 自己管。
+    // 落位之前不能开始记位置：那一刻列表还是空的，(0,0) 会把存档里的位置直接盖掉。
+    var scrollReady by remember(store) { mutableStateOf(false) }
+    LaunchedEffect(store, store.loaded) {
+        if (!store.loaded) return@LaunchedEffect
+        // 从快照填回来的列表算「已经看过」：下一次刷新要回到顶部，不能把人留在旧位置上。
+        if (store.resumed) memory.seen = true
+        val target = store.takePendingScroll()
+        if (target != null) {
+            val last = store.items.lastIndex
+            if (last >= 0) listState.scrollToItem(target.first.coerceIn(0, last), target.second)
+        }
+        scrollReady = true
+    }
+    // 停在哪要记住：进程被杀之后再进来，快照填好就直接落到这里。滚动中不写，停稳一会儿再写，
+    // 一路划过去只留最后一处位置。
+    LaunchedEffect(listState, store, scrollReady) {
+        if (!store.resumable || !scrollReady) return@LaunchedEffect
+        snapshotFlow {
+            Triple(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listState.isScrollInProgress,
+            )
+        }.collectLatest { (index, offset, scrolling) ->
+            if (scrolling) return@collectLatest
+            delay(ScrollSaveDelayMillis)
+            App.settings.applyFeedScroll(store.key, index, offset)
+        }
+    }
 
     FullPagePullToRefresh(
         isRefreshing = store.refreshing,
@@ -473,6 +556,12 @@ private suspend fun LazyListState.glideToTop() {
 
 /** 刷新头最短可见时间：空列表/命中缓存时也要让界面看到一次 `refreshing = true`。 */
 private const val MinRefreshVisibleMillis = 320L
+
+/** 列表停稳多久才记位置：一路划过去只留最后一处。 */
+private const val ScrollSaveDelayMillis = 260L
+
+/** 续看快照最多存多少条：再多写盘就慢了，这个深度足够接上位置。 */
+private const val SnapshotMaxItems = 300
 
 private const val GlideSeconds = 0.3f
 // Short trips still get a visible ride: the floor is low enough that a one-card hop takes about

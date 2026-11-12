@@ -104,6 +104,42 @@ object CookieVault {
         return joinHeader(merged.map { "${it.key}=${it.value}" })
     }
 
+    /**
+     * 认证用请求头：先按 host 拼，缺 `SUB` 再从表里任意微博域补上。
+     *
+     * 网页登录时 `SUB` 有时只落在 `passport.weibo.cn` 这个域上，按 `m.weibo.cn` 拼出来
+     * 就没有它。只按域名匹配的话，下一次把响应里的 cookie 收进表再重算一遍，登录态就
+     * 变成一串没有 `SUB` 的空壳；而且登录完成那一刻写下的 cookie 也会缺 `SUB`。
+     * 表里每个域都属于同一个账号，这里按 `SUB` / `SUBP` 兜底，不跨域名搬别的 cookie。
+     */
+    fun authHeader(cookies: Map<String, String>, host: String): String {
+        if (cookies.isEmpty()) return ""
+        val merged = LinkedHashMap<String, String>()
+        fun absorbLines(domain: String) {
+            for (line in cookies[domain].orEmpty().split('\n')) {
+                val index = line.indexOf('=')
+                if (index <= 0) continue
+                merged[line.substring(0, index).trim()] = line.substring(index + 1).trim()
+            }
+        }
+        for (domain in cookies.keys.filter { matches(it, host) }.sortedBy { it.length }) {
+            absorbLines(domain)
+        }
+        for (name in listOf("SUB", "SUBP")) {
+            if (!merged[name].isNullOrBlank()) continue
+            val fallback = cookies.keys
+                .filter { isWeibo(it) && matches(it, host).not() }
+                .sortedByDescending { it.length }
+                .firstOrNull { domain ->
+                    cookies[domain].orEmpty().split('\n').any {
+                        it.substringBefore('=').trim() == name && it.substringAfter('=', "").isNotBlank()
+                    }
+                } ?: continue
+            absorbLines(fallback)
+        }
+        return joinHeader(merged.map { "${it.key}=${it.value}" })
+    }
+
     private fun matches(domain: String, host: String): Boolean {
         val bare = domain.trimStart('.')
         return host.equals(bare, ignoreCase = true) || host.endsWith(domain, ignoreCase = true)

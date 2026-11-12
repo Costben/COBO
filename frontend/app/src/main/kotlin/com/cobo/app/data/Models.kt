@@ -368,7 +368,9 @@ data class Status(
 
             var video: VideoInfo? = null
             val page = o.optJSONObject("page_info")
-            if (page != null && page.str("type") == "video") {
+            // m.weibo.cn 把视频标成 type=video；weibo.com 网页版（关注分组那条流）给的是
+            // type=11 + object_type=video，只认 type 会把视频当成纯文字。
+            if (page != null && (page.str("type") == "video" || page.str("object_type") == "video")) {
                 val media = page.optJSONObject("media_info")
                 val url = media?.str("stream_url_hd")?.ifBlank { media.str("stream_url") }
                     ?.ifBlank { media.str("mp4_720p_mp4") }
@@ -593,6 +595,9 @@ data class ChatPage(
     val title: String,
     val total: Int,
 )
+
+/** 微博「关注分组」：gid 是分组 id，title 是分组名。分组属于账号，换账号就是另一套。 */
+data class FollowGroup(val gid: String, val title: String)
 
 data class Account(
     val uid: String,

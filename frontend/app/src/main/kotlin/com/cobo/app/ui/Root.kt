@@ -645,6 +645,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Images -> ImageViewerScreen(nav, route.pics, route.index)
         is Route.Video -> VideoScreen(nav, route.url, route.title)
         is Route.Vote -> VoteScreen(nav, route.voteId)
+        Route.TabLab -> TabBarLabScreen()
     }
 }
 

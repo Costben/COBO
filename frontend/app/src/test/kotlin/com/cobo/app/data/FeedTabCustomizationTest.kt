@@ -20,6 +20,7 @@ class FeedTabCustomizationTest {
         assertEquals(FeedTabItem.Special, FeedTabItem.fromKey("special", FeedTabItem.Circle))
         assertEquals(FeedTabItem.Secret, FeedTabItem.fromKey("secret", FeedTabItem.Circle))
         assertEquals(FeedTabItem.Favorites, FeedTabItem.fromKey("favorites", FeedTabItem.Circle))
+        assertEquals(FeedTabItem.Group, FeedTabItem.fromKey("group", FeedTabItem.Circle))
     }
 
     @Test
@@ -30,8 +31,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun defaultCombination_hasThreeTabs() {
-        val left = FeedTabItem.Circle
-        val right = FeedTabItem.Recommend
+        val left = FeedTabSelection(FeedTabItem.Circle)
+        val right = FeedTabSelection(FeedTabItem.Recommend)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -51,8 +52,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun hideLeft_resultsInTwoTabs() {
-        val left = FeedTabItem.None
-        val right = FeedTabItem.Recommend
+        val left = FeedTabSelection(FeedTabItem.None)
+        val right = FeedTabSelection(FeedTabItem.Recommend)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -65,8 +66,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun hideRight_resultsInTwoTabs() {
-        val left = FeedTabItem.Circle
-        val right = FeedTabItem.None
+        val left = FeedTabSelection(FeedTabItem.Circle)
+        val right = FeedTabSelection(FeedTabItem.None)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -79,8 +80,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun hideBoth_resultsInSingleTabWithoutTabBar() {
-        val left = FeedTabItem.None
-        val right = FeedTabItem.None
+        val left = FeedTabSelection(FeedTabItem.None)
+        val right = FeedTabSelection(FeedTabItem.None)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -94,8 +95,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun sameTabsOnLeftAndRight_supported() {
-        val left = FeedTabItem.Local
-        val right = FeedTabItem.Local
+        val left = FeedTabSelection(FeedTabItem.Local)
+        val right = FeedTabSelection(FeedTabItem.Local)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -114,8 +115,8 @@ class FeedTabCustomizationTest {
 
     @Test
     fun customLeftAndRight_supported() {
-        val left = FeedTabItem.Local
-        val right = FeedTabItem.Circle
+        val left = FeedTabSelection(FeedTabItem.Local)
+        val right = FeedTabSelection(FeedTabItem.Circle)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left, right, filter)
@@ -127,9 +128,9 @@ class FeedTabCustomizationTest {
 
     @Test
     fun customCenter_supported() {
-        val left = FeedTabItem.None
-        val center = FeedTabItem.Recommend
-        val right = FeedTabItem.None
+        val left = FeedTabSelection(FeedTabItem.None)
+        val center = FeedTabSelection(FeedTabItem.Recommend)
+        val right = FeedTabSelection(FeedTabItem.None)
         val filter = FeedFilter.Following
 
         val tabs = buildTabs(left = left, center = center, right = right, filter = filter)
@@ -138,34 +139,79 @@ class FeedTabCustomizationTest {
         assertFalse(tabs[0].isFollow)
     }
 
-    private fun buildTabs(
-        left: FeedTabItem,
-        right: FeedTabItem,
-        filter: FeedFilter,
-        guest: Boolean = false,
-    ): List<FeedTabSpec> = buildTabs(left, FeedTabItem.Follow, right, filter, guest)
+    @Test
+    fun groupSelection_showsGroupNameAndOwnKey() {
+        val left = FeedTabSelection(FeedTabItem.None)
+        val center = FeedTabSelection(FeedTabItem.Group, FollowGroup("5012345", "同事"))
+        val right = FeedTabSelection(FeedTabItem.None)
+        val filter = FeedFilter.Following
+
+        val tabs = buildTabs(left = left, center = center, right = right, filter = filter)
+        assertEquals(1, tabs.size)
+        assertEquals("center_group_5012345", tabs[0].key)
+        assertEquals("同事", tabs[0].label)
+        assertEquals("feed_tab_group_5012345", tabs[0].tag)
+        assertEquals("「同事」还没有内容", tabs[0].emptyText)
+    }
+
+    @Test
+    fun groupSelection_switchingGroupSwitchesTabKey() {
+        val first = FeedTabSelection(FeedTabItem.Group, FollowGroup("a", "同事"))
+        val second = FeedTabSelection(FeedTabItem.Group, FollowGroup("b", "朋友"))
+        assertTrue("换一个分组就是换了一条流", first.key != second.key)
+        assertEquals("关注分组", FeedTabSelection(FeedTabItem.Group).label)
+    }
+
+    @Test
+    fun feedTabOptions_listsBuiltInsThenGroups() {
+        val groups = listOf(FollowGroup("a", "同事"), FollowGroup("b", "朋友"))
+        val options = feedTabOptions(groups, allowNone = true)
+
+        assertEquals(FeedTabItem.None, options.first().item)
+        assertEquals(
+            FeedTabItem.entries.count { it != FeedTabItem.None && it != FeedTabItem.Group },
+            options.count { !it.isGroup && it.item != FeedTabItem.None },
+        )
+        assertEquals(listOf("同事", "朋友"), options.filter { it.isGroup }.map { it.label })
+        assertTrue(options.none { it.item == FeedTabItem.Group && it.group == null })
+    }
+
+    @Test
+    fun feedTabOptions_keepsCurrentGroupWhenItIsMissing() {
+        val current = FeedTabSelection(FeedTabItem.Group, FollowGroup("gone", "已删除的分组"))
+        val options = feedTabOptions(emptyList(), allowNone = false, current = current)
+
+        assertTrue(options.contains(current))
+    }
 
     private fun buildTabs(
-        left: FeedTabItem,
-        center: FeedTabItem,
-        right: FeedTabItem,
+        left: FeedTabSelection,
+        right: FeedTabSelection,
+        filter: FeedFilter,
+        guest: Boolean = false,
+    ): List<FeedTabSpec> = buildTabs(left, FeedTabSelection(FeedTabItem.Follow), right, filter, guest)
+
+    private fun buildTabs(
+        left: FeedTabSelection,
+        center: FeedTabSelection,
+        right: FeedTabSelection,
         filter: FeedFilter,
         guest: Boolean = false,
     ): List<FeedTabSpec> = buildList {
-        if (left != FeedTabItem.None) {
-            if (left == FeedTabItem.Follow) {
+        if (left.item != FeedTabItem.None) {
+            if (left.item == FeedTabItem.Follow) {
                 add(FeedTabSpec.Follow(filter, guest, "left"))
             } else {
                 add(FeedTabSpec.Custom(left, "left", guest))
             }
         }
-        if (center == FeedTabItem.Follow) {
+        if (center.item == FeedTabItem.Follow) {
             add(FeedTabSpec.Follow(filter, guest, "center"))
         } else {
             add(FeedTabSpec.Custom(center, "center", guest))
         }
-        if (right != FeedTabItem.None) {
-            if (right == FeedTabItem.Follow) {
+        if (right.item != FeedTabItem.None) {
+            if (right.item == FeedTabItem.Follow) {
                 add(FeedTabSpec.Follow(filter, guest, "right"))
             } else {
                 add(FeedTabSpec.Custom(right, "right", guest))

@@ -164,12 +164,17 @@ class SettingsE2eTest : UiE2eTest() {
         scrollToTag("settings_feed_left_tab")
         tapTag("settings_feed_left_tab")
         waitText("微博左侧栏内容")
-        waitText("不显示此栏")
+        waitText("隐藏")
         tapTag("feed_tab_option_none")
         waitText("设置")
-        assertEquals(com.cobo.app.data.FeedTabItem.None, App.settings.feedLeftTab)
+        assertEquals(
+            com.cobo.app.data.FeedTabItem.None,
+            App.settings.feedLeftTab.item,
+        )
 
         // 恢复默认设置
-        App.settings.applyFeedLeftTab(com.cobo.app.data.FeedTabItem.Circle)
+        App.settings.applyFeedLeftTab(
+            com.cobo.app.data.FeedTabSelection(com.cobo.app.data.FeedTabItem.Circle),
+        )
     }
 }

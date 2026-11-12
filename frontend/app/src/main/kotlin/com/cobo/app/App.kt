@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.cobo.app.data.CacheStore
+import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -48,6 +49,10 @@ object App {
     lateinit var cache: CacheStore
         private set
 
+    /** 首页时间线的续看快照，见 [FeedSnapshotStore]。 */
+    lateinit var snapshots: FeedSnapshotStore
+        private set
+
     /** Coil 专用客户端：微博附件域名要带登录 cookie。 */
     val imageClient: OkHttpClient by lazy {
         OkHttpClient.Builder().addInterceptor { chain ->
@@ -68,6 +73,9 @@ object App {
 
     var feedVersion by mutableIntStateOf(0)
         private set
+
+    /** 临时：`am start --es cobo.route tablab` 直接进顶栏对比页，验完删。 */
+    var startRoute: String? = null
 
     /** 正在检查更新：设置页那一行据此换成「正在检查…」。 */
     var checkingUpdate by mutableStateOf(false)
@@ -194,6 +202,7 @@ object App {
         store = Store(this.context)
         FollowTags.attach(store)
         cache = CacheStore(this.context)
+        snapshots = FeedSnapshotStore(this.context)
         repo = Repo(this.context, store)
         settings = Settings(this.context)
     }

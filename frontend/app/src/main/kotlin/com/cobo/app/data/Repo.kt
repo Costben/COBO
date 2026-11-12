@@ -38,6 +38,12 @@ private const val LIKE_COOLDOWN_MS = 1500L
 /** 特别关注名单缓存时间：名单变动不频繁，翻页时不必每页重拉。 */
 private const val SPECIAL_UIDS_TTL_MS = 5 * 60 * 1000L
 
+/** 关注分组列表缓存：分组只在网页版改，开一次「更多」菜单不必每次打一遍 weibo.com。 */
+private const val GROUP_FEED_PAGE_SIZE = 25
+private const val FOLLOW_GROUPS_TTL_MS = 10 * 60 * 1000L
+
+/** 分组时间线一页拉多少条，和网页版「我的分组」一致。 */
+
 /** 关注 / 粉丝列表接口固定一页 20 人；粉丝列表按已拉取的条数翻页。 */
 private const val RELATION_PAGE_SIZE = 20
 
@@ -105,6 +111,33 @@ private fun tagFeedCut(fetched: Map<String, List<Status>>, size: Int): Long? =
         .mapNotNull { it.id.toLongOrNull() }
         .sortedDescending()
         .elementAtOrNull(size - 1)
+
+/**
+ * 网页版分组表：分类下每一项的 `group` 才是分组，`gid` 是分组 id、`title` 是名字。
+ *
+ * 只认「我的分组」——用户自己在微博里建的分组都在这里，`groupstimeline` 也只认这批 gid。
+ * 「默认分组」里是全部关注 / 最新微博 / 原创这些微博内置的固定组（它们的 gid 传给
+ * `groupstimeline` 会直接回「列表不存在」），而且都有各自的入口了，不能混进来。
+ * 特别关注 / 互相关注 / 悄悄关注 虽然也在分组表里，但首页已各有一个入口，跳过不重复列。
+ */
+internal fun parseFollowGroups(root: JSONObject?): List<FollowGroup> {
+    val categories = root?.optJSONArray("groups") ?: return emptyList()
+    val groups = LinkedHashMap<String, FollowGroup>()
+    for (i in 0 until categories.length()) {
+        val category = categories.optJSONObject(i) ?: continue
+        if (category.str("title") != "我的分组") continue
+        val items = category.optJSONArray("group") ?: continue
+        for (j in 0 until items.length()) {
+            val item = items.optJSONObject(j) ?: continue
+            val gid = item.str("gid").ifBlank { item.str("id") }
+            val title = item.str("title")
+            if (gid.isBlank() || title.isBlank()) continue
+            if (title == "特别关注" || title == "互相关注" || title == "悄悄关注") continue
+            groups.putIfAbsent(gid, FollowGroup(gid, title))
+        }
+    }
+    return groups.values.toList()
+}
 
 /** 一个人这一轮拉到的最旧一条的 id。 */
 private fun oldestStatusId(items: List<Status>?): Long? =
@@ -272,19 +305,34 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     fun updateSession(cookie: String, uid: String) {
-        App.cache.clear()
+        resetAccountCaches(clearGroupTabs = true)
         App.settings.applyLocalMode(false)
         store.saveSession(cookie, uid)
         session = store.session()
-        cachedConfig = null
-        configCookie = null
-        cachedConfigAt = 0L
     }
 
     fun logout() {
-        App.cache.clear()
+        resetAccountCaches(clearGroupTabs = true)
         store.clearSession()
         session = null
+    }
+
+    /**
+     * 换账号 / 退出登录时把跟「这个人」绑定的缓存整批清掉。
+     *
+     * 关注分组与特别关注名单都带有效期，有效期只对生成它的那个账号成立：不清就会在十分钟内
+     * 沿用上一个账号的分组和名单。续看快照与滚动位置同样按人记——列表、游标、卡片下标都只
+     * 对写它的那个账号有意义，换个人接着用会落到完全不相干的一条微博上。
+     */
+    private fun resetAccountCaches(clearGroupTabs: Boolean) {
+        App.cache.clear()
+        App.snapshots.clear()
+        App.settings.clearFeedScrolls()
+        if (clearGroupTabs) App.settings.clearGroupFeedTabs()
+        cachedFollowGroups = emptyList()
+        cachedFollowGroupsAt = 0L
+        specialUids = emptySet()
+        specialUidsAt = 0L
         cachedConfig = null
         configCookie = null
         cachedConfigAt = 0L
@@ -320,12 +368,13 @@ class Repo(private val context: Context, private val store: Store) {
         val cfg = configFor(cookie, force = true)
         if (!cfg.loggedIn || cfg.uid.isBlank()) return null
         val user = runCatching { profileFor(cookie, cfg.uid, force = true) }.getOrNull()
-        App.cache.clear()
+        resetAccountCaches(clearGroupTabs = true)
         App.settings.applyLocalMode(false)
         store.saveSession(cookie, cfg.uid, cookies)
         session = store.session()
         cachedConfig = cfg
         configCookie = cookie
+        cachedConfigAt = System.currentTimeMillis()
         // 网页登录也把 cookie 灌回 WebView：站内打开的页面跟 App 用同一份登录态。
         injectCookies(session?.cookies.orEmpty())
         val account = Account(
@@ -372,7 +421,7 @@ class Repo(private val context: Context, private val store: Store) {
         }
         val uid = result.uid
         val user = runCatching { profileFor(result.cookie, uid, force = true) }.getOrNull()
-        App.cache.clear()
+        resetAccountCaches(clearGroupTabs = true)
         App.settings.applyLocalMode(false)
         store.saveClientSession(
             uid,
@@ -505,6 +554,84 @@ class Repo(private val context: Context, private val store: Store) {
     /** 「悄悄关注」：服务端没有这个名单，就按本机打的「悄悄」标记拼。 */
     suspend fun secret(maxId: String? = null, force: Boolean = false): FeedPage =
         byUsers(FollowTags.uids(FollowTag.Secret).toSet(), maxId, force)
+
+    @Volatile
+    private var cachedFollowGroups: List<FollowGroup> = emptyList()
+
+    @Volatile
+    private var cachedFollowGroupsAt: Long = 0L
+
+    /**
+     * 账号里的自建关注分组。
+     *
+     * 列表在网页版 `ajax/feed/allGroups` 里：「我的分组」是自建分组，「默认分组」放着特别关注、
+     * 互相关注这类固定组（这两个已经有单独入口，这里跳过）。纯本地模式拿不到分组，返回空表。
+     */
+    suspend fun followGroups(force: Boolean = false): List<FollowGroup> {
+        if (guest) return emptyList()
+        // 网页版接口不走 get()，客户端登录的 gsid 过期后这里会直接 401；先续一次（有效时是空操作）。
+        ensureClientSession()
+        val fresh = System.currentTimeMillis() - cachedFollowGroupsAt < FOLLOW_GROUPS_TTL_MS
+        if (!force && fresh) return cachedFollowGroups
+        val root = Api.getDesktop(
+            Api.url(
+                "https://weibo.com/ajax/feed/allGroups",
+                mapOf("is_new_segment" to "1", "fetch_hot" to "1"),
+            ),
+            cookie(),
+        )
+        val groups = parseFollowGroups(root)
+        cachedFollowGroups = groups
+        cachedFollowGroupsAt = System.currentTimeMillis()
+        return groups
+    }
+
+    /**
+     * 某个关注分组的时间线。
+     *
+     * 走网页版「我的分组」的那条流（`ajax/feed/groupstimeline`）：它是按分组整体排序的，
+     * 翻页游标在 `max_id`（部分响应放在 `data.since_id`）。卡片的配图、视频字段
+     * [Status.from] 都认，和别处那条流看到的是同一套结构。
+     */
+    suspend fun groupFeed(gid: String, maxId: String? = null): FeedPage {
+        if (gid.isBlank()) return FeedPage(emptyList(), null)
+        // 网页版时间线不经过 get()，客户端登录的 gsid 过期后这里会直接 401；先续一次（有效时是空操作）。
+        ensureClientSession()
+        val params = LinkedHashMap<String, String?>()
+        params["list_id"] = gid
+        params["refresh"] = "4"
+        params["fast_refresh"] = "1"
+        params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+        if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+        val root = try {
+            Api.getDesktop(
+                Api.url("https://weibo.com/ajax/feed/groupstimeline", params),
+                cookie(),
+            )
+        } catch (e: ApiHttpException) {
+            // 分组在网页版被删掉之后，这个 gid 会回 400「列表不存在」。
+            val message = runCatching { JSONObject(e.body).str("message", "") }.getOrDefault("")
+            if (message.contains("列表不存在")) throw ApiException("这个分组已经不存在了，在「更多」里换一个")
+            throw e
+        }
+        val statuses = root.optJSONArray("statuses") ?: JSONArray()
+        val items = buildList {
+            for (i in 0 until statuses.length()) {
+                Status.from(statuses.optJSONObject(i))?.let(::add)
+            }
+        }
+        if (items.isEmpty() && root.optInt("ok", 1) != 1) {
+            // 网页版两种字段名都出现过：老接口回 msg，新接口回 message。
+            val message = root.str("msg").ifBlank { root.str("message") }.ifBlank { "加载失败" }
+            if (message.contains("还没有") || message.contains("暂无")) return FeedPage(emptyList(), null)
+            throw ApiException(message)
+        }
+        // 到底时 max_id / since_id 回 0，0 不能再当游标发回去。
+        val cursor = root.str("max_id")
+            .ifBlank { root.optJSONObject("data")?.str("since_id").orEmpty() }
+            .takeIf { it.isNotBlank() && it != "0" }
+        return FeedPage(items, cursor)
+    }
 
     /**
      * 「本地关注」：把本机打了「本地」标记的人的主页时间线合并成一条能一直往下翻的流。
