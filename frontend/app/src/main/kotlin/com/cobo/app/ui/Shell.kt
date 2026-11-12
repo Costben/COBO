@@ -127,11 +127,10 @@ import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
-import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
@@ -151,9 +150,8 @@ import io.github.suqi8.coui.kmp.icon.extended.Add
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Settings
-import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
+import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
-import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
 import kotlin.math.PI
 import kotlin.math.abs
@@ -1267,8 +1265,8 @@ private fun FeedTitleRow(
  * 首页顶栏的分段选择器。
  *
  * 外观与交互全部来自 `../coui` 的 [TabRowWithContour]（胶囊玻璃材质 + 选中胶囊落影 + 跟手高光），
- * 这里只负责三件事：把页面尺寸固定成三格等宽、把中间那格接上关注分组菜单、把点击与左右拖动
- * 都换算成翻页。
+ * 这里只负责三件事：把页面尺寸固定成三格等宽、把中间那格接上内置流与关注分组的二级菜单、
+ * 把点击与左右拖动都换算成翻页。
  */
 @Composable
 private fun FeedTabs(
@@ -1373,40 +1371,65 @@ private fun FeedTabs(
                     }
                 }
                 if (menu) {
-                    OverlayListPopup(
+                    // 内置流是一级菜单；关注分组是账号里的数据、组数不可控，收进二级菜单，
+                    // 不让它把一级菜单撑成一长条。当前选中的分组挂在「关注分组」这一行的
+                    // 第二行小字上，进了二级也能看出选中在哪一组。
+                    val builtinOptions = centerOptions.filterNot { it.isGroup }
+                    val groupOptions = centerOptions.filter { it.isGroup }
+                    val currentGroupTitle = centerTab.group
+                        ?.takeIf { centerTab.isGroup }
+                        ?.title
+                        ?.takeIf { it.isNotBlank() }
+                    OverlayCascadingListPopup(
                         show = filterMenuExpanded,
-                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-                        onDismissRequest = onFilterMenuDismiss,
-                    ) {
-                        val dismiss = LocalDismissState.current
-                        ListPopupColumn {
-                            // 和设置里的「微博中间栏内容」同一份选项：好友流在分割线上面，
-                            // 其余内置流跟着，账号里的关注分组排在最后一段。
-                            centerOptions.forEachIndexed { optionIndex, option ->
-                                val groupKey = when {
-                                    option.item == FeedTabItem.Follow -> "all"
-                                    option.isGroup -> "groups"
-                                    else -> "filters"
-                                }
-                                DropdownImpl(
-                                    item = DropdownItem(
-                                        text = if (option.item == FeedTabItem.Follow) "全部" else option.label,
-                                        summary = if (option.isGroup) "关注分组" else null,
-                                    ),
-                                    optionSize = centerOptions.size,
-                                    isSelected = option.key == centerTab.key,
-                                    index = optionIndex,
-                                    // One divider after "全部"; the rest of the built-in feeds and
-                                    // the custom follow groups each stay one group.
-                                    groupKey = groupKey,
-                                    onSelectedIndexChange = {
-                                        onCenterSelected(centerOptions[it])
-                                        dismiss?.invoke()
-                                    },
+                        entries = buildList {
+                            builtinOptions.firstOrNull { it.item == FeedTabItem.Follow }?.let { follow ->
+                                add(
+                                    DropdownEntry(
+                                        items = listOf(
+                                            DropdownItem(
+                                                text = "全部",
+                                                selected = follow.key == centerTab.key,
+                                                onClick = { onCenterSelected(follow) },
+                                            )
+                                        )
+                                    )
                                 )
                             }
-                        }
-                    }
+                            val filters = builtinOptions
+                                .filterNot { it.item == FeedTabItem.Follow }
+                                .map { option ->
+                                    DropdownItem(
+                                        text = option.label,
+                                        selected = option.key == centerTab.key,
+                                        onClick = { onCenterSelected(option) },
+                                    )
+                                }
+                            if (filters.isNotEmpty()) add(DropdownEntry(items = filters))
+                            if (groupOptions.isNotEmpty()) {
+                                add(
+                                    DropdownEntry(
+                                        items = listOf(
+                                            DropdownItem(
+                                                text = FeedTabItem.Group.label,
+                                                selected = centerTab.isGroup,
+                                                summary = currentGroupTitle,
+                                                children = groupOptions.map { option ->
+                                                    DropdownItem(
+                                                        text = option.label,
+                                                        selected = option.key == centerTab.key,
+                                                        onClick = { onCenterSelected(option) },
+                                                    )
+                                                },
+                                            )
+                                        )
+                                    )
+                                )
+                            }
+                        },
+                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                        onDismissRequest = onFilterMenuDismiss,
+                    )
                 }
             }
         },
