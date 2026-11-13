@@ -29,6 +29,17 @@ fun pinnedHeight(row: Dp): Dp = pinnedHeight(listOf(row))
 @Composable
 fun pinnedHeight(row1: Dp, row2: Dp): Dp = pinnedHeight(listOf(row1, row2))
 
+/**
+ * 若干「按钉住密度量出来的行高」之和，不含状态栏：给栏下多出来的那几行算留白用，
+ * 例如搜索结果顶栏的间距 + 胶囊行 + 栏底留白。
+ */
+@Composable
+fun pinnedRowsHeight(rows: List<Dp>): Dp {
+    val local = LocalDensity.current
+    val rowsPx = with(rememberGalleryDensity()) { rows.fold(0f) { acc, row -> acc + row.toPx() } }
+    return with(local) { rowsPx.toDp() }
+}
+
 @Composable
 private fun pinnedHeight(rows: List<Dp>): Dp {
     val local = LocalDensity.current

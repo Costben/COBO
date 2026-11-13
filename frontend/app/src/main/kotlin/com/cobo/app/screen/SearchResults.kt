@@ -8,10 +8,8 @@ package com.cobo.app.screen
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,7 +22,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -54,7 +51,6 @@ import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.resolveWeiboLink
 import io.github.suqi8.coui.kmp.basic.ChipTabData
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
-import io.github.suqi8.coui.kmp.basic.ChipTabGroup
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
@@ -62,7 +58,6 @@ import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Contacts
-import io.github.suqi8.coui.kmp.icon.extended.GridView
 import io.github.suqi8.coui.kmp.icon.extended.Notes
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -319,29 +314,36 @@ fun openTopicDestination(
     onSearchKeyword(topic.title)
 }
 
+/** 搜索结果的分类胶囊：分类名 + 图标，交给顶栏的筛选行画。 */
+@Composable
+fun rememberSearchFilterTabs(): List<ChipTabData> = remember {
+    SearchTab.entries.map { tabItem ->
+        val icon = when (tabItem) {
+            SearchTab.Weibo -> COUIIcons.Notes
+            SearchTab.Users -> COUIIcons.Contacts
+            SearchTab.Topics -> CoboIcons.Topic
+        }
+        ChipTabData(label = tabItem.label, icon = icon)
+    }
+}
+
 /**
- * 搜索结果头部控制栏（ChipTabGroup 分类选项卡与前置四宫格级联菜单按钮）。
+ * 分类胶囊左侧四宫格圆钮弹出的级联菜单：分类与排序方式。
+ *
+ * 胶囊由顶栏组件画、菜单由调用方挂，所以锚点由调用方给：把这块放在那颗
+ * [ChipTabDefaults.Height] 见方的圆钮所在的位置即可。
  */
 @Composable
-fun SearchHeaderRow(
+fun SearchFilterMenu(
     state: SearchResultsState,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     horizontalPadding: Dp,
     modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
     val dropdownPositionProvider = remember(horizontalPadding) {
         ListPopupDefaults.dropdownPositionProvider(horizontalMargin = horizontalPadding)
-    }
-    val tabs = remember {
-        SearchTab.entries.map { tabItem ->
-            val icon = when (tabItem) {
-                SearchTab.Weibo -> COUIIcons.Notes
-                SearchTab.Users -> COUIIcons.Contacts
-                SearchTab.Topics -> CoboIcons.Topic
-            }
-            ChipTabData(label = tabItem.label, icon = icon)
-        }
     }
     val menuEntries = remember(state.tab, state.sort, hapticFeedback) {
         val categoryItems = SearchTab.entries.map { tabItem ->
@@ -375,38 +377,15 @@ fun SearchHeaderRow(
         )
     }
 
-    Box(modifier = modifier.fillMaxWidth()) {
-        ChipTabGroup(
-            tabs = tabs,
-            selectedIndex = state.tab.ordinal,
-            onSelectedChange = { index ->
-                SearchTab.entries.getOrNull(index)?.let(state::selectTab)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp)
-                .testTag("search_tabs"),
-            leadingIcon = COUIIcons.GridView,
-            onLeadingIconClick = { menuExpanded = true },
-            contentPadding = PaddingValues(horizontal = horizontalPadding),
+    Box(modifier) {
+        OverlayCascadingListPopup(
+            show = expanded,
+            entries = menuEntries,
+            onDismissRequest = { onExpandedChange(false) },
+            popupPositionProvider = dropdownPositionProvider,
+            alignment = PopupPositionProvider.Align.Start,
+            collapseOnSelection = true,
         )
-
-        // 锚定到左上角 32dp 前置四宫格按钮的实际区域，避免弹层按全宽水平居中。
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = horizontalPadding)
-                .size(ChipTabDefaults.Height),
-        ) {
-            OverlayCascadingListPopup(
-                show = menuExpanded,
-                entries = menuEntries,
-                onDismissRequest = { menuExpanded = false },
-                popupPositionProvider = dropdownPositionProvider,
-                alignment = PopupPositionProvider.Align.Start,
-                collapseOnSelection = true,
-            )
-        }
     }
 }
 
@@ -420,13 +399,7 @@ fun LazyListScope.searchResultsItems(
     scope: CoroutineScope,
     onSelectKeyword: (String) -> Unit,
 ) {
-    item(key = "search_results_header") {
-        SearchHeaderRow(
-            state = state,
-            horizontalPadding = horizontalPadding,
-        )
-    }
-
+    // 分类胶囊挂在顶栏的筛选行上（见 SearchFilterTopAppBar），不再跟着列表滚走。
     when (state.tab) {
         SearchTab.Weibo -> {
             if (state.weibo.items.isEmpty()) {

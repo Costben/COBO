@@ -114,10 +114,13 @@ import com.cobo.app.screen.LocalMessagesPlaceholder
 import com.cobo.app.screen.MessagesScreen
 import com.cobo.app.screen.ProfileContent
 import com.cobo.app.screen.SearchDiscoverState
+import com.cobo.app.screen.SearchFilterMenu
 import com.cobo.app.screen.SearchResultsState
+import com.cobo.app.screen.SearchTab
 import com.cobo.app.screen.TimelineScreen
 import com.cobo.app.screen.dismissHistoryEditingOnTap
 import com.cobo.app.screen.rememberSearchDiscoverState
+import com.cobo.app.screen.rememberSearchFilterTabs
 import com.cobo.app.screen.rememberSearchResultsState
 import com.cobo.app.screen.searchDiscoverItems
 import com.cobo.app.screen.searchHorizontalPadding
@@ -127,6 +130,7 @@ import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
+import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -134,11 +138,13 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
+import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
+import io.github.suqi8.coui.kmp.basic.TwoRowTopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
@@ -147,6 +153,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.ExpandableIndicator
 import io.github.suqi8.coui.kmp.icon.extended.Add
+import io.github.suqi8.coui.kmp.icon.extended.GridView
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Settings
@@ -424,6 +431,17 @@ fun MainShell(nav: NavState) {
 
     val homeResultsState = rememberSearchResultsState(scope)
 
+    // 搜索面板的两种中间态：关键词还没提交（「建议中」，底下仍是热搜/历史），以及已有结果在显示。
+    // 顶栏的筛选行与面板列表的上沿留白都读同一份判断，栏和内容才不会差一格。
+    val searchSuggesting =
+        feedSearchQuery.isNotBlank() && feedSearchQuery.trim() != homeResultsState.submitted
+    val searchShowingResults =
+        homeResultsState.submitted.isNotBlank() && !searchSuggesting && feedSearchQuery.isNotBlank()
+    var searchFilterMenuOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(searchShowingResults) {
+        if (!searchShowingResults) searchFilterMenuOpen = false
+    }
+
     val openFeedSearch: () -> Unit = {
         discoverState.clearEditing()
         homeResultsState.clearResults()
@@ -666,6 +684,7 @@ fun MainShell(nav: NavState) {
                 panelProgress = { panelProgress.value },
                 panelAlpha = { panelAlpha.value },
                 searchQuery = feedSearchQuery,
+                showingResults = searchShowingResults,
                 discoverState = discoverState,
                 resultsState = homeResultsState,
                 nav = nav,
@@ -702,8 +721,33 @@ fun MainShell(nav: NavState) {
                     onSearchOpen = openFeedSearch,
                     onSearchCancel = cancelFeedSearch,
                     onSearchSubmit = submitHomeSearch,
+                    showingResults = searchShowingResults,
+                    resultsState = homeResultsState,
+                    panelAlpha = { panelAlpha.value },
+                    onFilterMenuOpen = { searchFilterMenuOpen = true },
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                 )
+                // 筛选行左侧四宫格圆钮的菜单：菜单渲染在根 Scaffold，锚点按筛选行的行高与
+                // 间距落在那颗圆钮上，栏的几何一改这里跟着走，不用两边各写一份坐标。
+                if (searchShowingResults) {
+                    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = statusBarTop + FeedTitleRowHeight + SearchChipRowGap),
+                    ) {
+                        SearchFilterMenu(
+                            state = homeResultsState,
+                            expanded = searchFilterMenuOpen,
+                            onExpandedChange = { searchFilterMenuOpen = it },
+                            horizontalPadding = searchHorizontalPadding(),
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = searchHorizontalPadding())
+                                .size(ChipTabDefaults.Height),
+                        )
+                    }
+                }
             }
         }
     }
@@ -887,6 +931,7 @@ private fun HomeSearchOverlay(
     panelProgress: () -> Float,
     panelAlpha: () -> Float,
     searchQuery: String,
+    showingResults: Boolean,
     discoverState: SearchDiscoverState,
     resultsState: SearchResultsState,
     nav: NavState,
@@ -900,7 +945,6 @@ private fun HomeSearchOverlay(
     val horizontalPadding = searchHorizontalPadding()
     val density = LocalDensity.current
     val topBarHeightPx = with(density) { topBarHeight.toPx() }
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     LaunchedEffect(listState, resultsState.submitted, resultsState.tab, resultsState.stateFor(resultsState.tab).count) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
@@ -912,8 +956,7 @@ private fun HomeSearchOverlay(
             }
     }
 
-    val suggesting = searchQuery.isNotBlank() && searchQuery.trim() != resultsState.submitted
-    val showingResults = resultsState.submitted.isNotBlank() && !suggesting && searchQuery.isNotBlank()
+    val suggesting = searchQuery.isNotBlank() && !showingResults
 
     LaunchedEffect(showingResults, resultsState.submitted, suggesting, resultsState.tab) {
         listState.scrollToItem(0)
@@ -956,7 +999,19 @@ private fun HomeSearchOverlay(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 0.dp,
-                        top = glassBarContentTop(topBarHeight, 8.dp),
+                        // 结果态的栏多一行筛选胶囊，列表上沿让过这一行（间距 + 胶囊行 + 栏底留白），
+                        // 否则第一张卡会压在胶囊行底下。
+                        top = glassBarContentTop(topBarHeight, 8.dp) + if (showingResults) {
+                            pinnedRowsHeight(
+                                listOf(
+                                    SearchChipRowGap,
+                                    ChipTabDefaults.Height,
+                                    TwoRowTopAppBarDefaults.SecondRowBottom,
+                                ),
+                            )
+                        } else {
+                            0.dp
+                        },
                         end = 0.dp,
                         bottom = 16.dp + navBottomPadding(),
                     ),
@@ -983,24 +1038,6 @@ private fun HomeSearchOverlay(
             }
         }
 
-        // 搜索面板自己的顶栏渐变模糊材质（单行搜索栏高度，与首页常态顶栏及消息/我页一致；模糊关闭时退回实色）。
-        CompositionLocalProvider(
-            LocalBackdrop provides if (blur) searchBackdrop else null,
-            LocalEdgeToEdge provides true,
-        ) {
-            PinnedBarDensity {
-                val barHeight = statusBarTop + FeedTitleRowHeight
-                AppBarSurface(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth(),
-                    containerColor = surfaceColor,
-                    scrollFraction = panelAlpha,
-                ) {
-                    Box(Modifier.fillMaxWidth().height(barHeight))
-                }
-            }
-        }
     }
 }
 
@@ -1017,6 +1054,10 @@ private fun MainTitleRow(
     onSearchOpen: () -> Unit,
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
+    showingResults: Boolean,
+    resultsState: SearchResultsState,
+    panelAlpha: () -> Float,
+    onFilterMenuOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Crossfade(
@@ -1035,6 +1076,10 @@ private fun MainTitleRow(
                 onSearchOpen = onSearchOpen,
                 onSearchCancel = onSearchCancel,
                 onSearchSubmit = onSearchSubmit,
+                showingResults = showingResults,
+                resultsState = resultsState,
+                panelAlpha = panelAlpha,
+                onFilterMenuOpen = onFilterMenuOpen,
             )
 
             1 -> PageTitleBar(
@@ -1115,6 +1160,12 @@ private val FeedTabTags = listOf("feed_tab_circle", "feed_tab_follow", "feed_tab
 /** Height of the feed header's title row; the list folds exactly this much away when it scrolls. */
 internal val FeedTitleRowHeight = 44.dp
 
+/**
+ * 搜索结果态下搜索框与筛选胶囊行之间的间距：便签两行顶栏的实测视觉距离是 17dp，
+ * 44dp 的标题行里搜索框下方留 2dp，再空 15dp 正好对齐。
+ */
+internal val SearchChipRowGap = 15.dp
+
 @Composable
 private fun FeedTitleRow(
     collapsed: Float,
@@ -1125,14 +1176,31 @@ private fun FeedTitleRow(
     onSearchOpen: () -> Unit,
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
+    showingResults: Boolean,
+    resultsState: SearchResultsState,
+    panelAlpha: () -> Float,
+    onFilterMenuOpen: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
     val blur = blurEffectsEnabled()
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
+    // 材质、两行布局与胶囊采样的顺序由 coui 的 SearchFilterTopAppBar 统一处理：材质先录进
+    // 栏自己的层，两行画在录制之外，胶囊采的是「模糊提白之后」的画面。这里只负责搜索框本身
+    // 与那一行筛选胶囊的内容。
+    SearchFilterTopAppBar(
+        filters = if (showingResults) rememberSearchFilterTabs() else null,
+        selectedFilter = resultsState.tab.ordinal,
+        onFilterSelected = { index ->
+            SearchTab.entries.getOrNull(index)?.let(resultsState::selectTab)
+        },
+        modifier = Modifier.fillMaxWidth(),
+        firstRowHeight = FeedTitleRowHeight,
+        rowGap = SearchChipRowGap,
+        leadingIcon = if (showingResults) COUIIcons.GridView else null,
+        onLeadingIconClick = onFilterMenuOpen,
+        filterContentPadding = PaddingValues(horizontal = searchHorizontalPadding()),
+        containerColor = pageContainerColor(),
+        scrollFraction = panelAlpha,
     ) {
         Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
             Box(
