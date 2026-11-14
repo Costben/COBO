@@ -60,6 +60,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 
 /**
  * 更新日志。把 release 列表按版本从新到旧铺开，任意一版都能把更新弹窗原样放一遍 ——
@@ -108,7 +109,7 @@ fun ChangelogScreen(nav: NavState) {
                 }
 
                 else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         top = glassBarContentTop(topBarHeight, 10.dp),

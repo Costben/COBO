@@ -87,6 +87,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Filter
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -117,7 +118,7 @@ fun DraftsScreen(nav: NavState) {
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic().padding(padding),
             contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -204,7 +205,7 @@ fun HistoryScreen(nav: NavState) {
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop).background(pageColor)) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().nestedScroll(scrollBehavior.nestedScrollConnection),
                 state = listState,
                 contentPadding = PaddingValues(
                     start = 12.dp,
@@ -420,7 +421,7 @@ fun AccountsScreen(nav: NavState) {
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic().padding(padding),
             contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

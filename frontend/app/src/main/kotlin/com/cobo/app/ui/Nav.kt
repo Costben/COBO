@@ -302,6 +302,15 @@ class NavState {
             stack.remove(entry)
         }
     }
+
+    /** Removes the top entry immediately after a self-driven exit animation (e.g. drag-to-dismiss). */
+    fun popImmediate() {
+        if (stack.size <= 1) return
+        val entry = stack.last()
+        if (entry.exiting) return
+        entry.exiting = true
+        stack.remove(entry)
+    }
 }
 
 /**

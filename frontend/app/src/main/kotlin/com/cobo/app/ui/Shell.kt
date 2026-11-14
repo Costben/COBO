@@ -128,6 +128,7 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
@@ -1043,7 +1044,7 @@ private fun HomeSearchOverlay(
                 ) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                         contentPadding = PaddingValues(
                             start = 0.dp,
                             top = listTopPadding,

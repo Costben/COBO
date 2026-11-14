@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Dp
@@ -106,8 +107,13 @@ fun Modifier.imageOrigin(
         slot.model = model
     }
     DisposableEffect(origins, url, slot) { onDispose { origins.remove(url, slot) } }
-    return onPlaced {
-        slot.coordinates = it
-        origins.put(url, slot)
-    }
+    return this
+        .onPlaced {
+            slot.coordinates = it
+            origins.put(url, slot)
+        }
+        // 看图页正在展示或拖拽这张图时隐藏底层原图，避免半透明背景透出两张一样的图。
+        .graphicsLayer {
+            alpha = if (origins.viewing == url) 0f else 1f
+        }
 }

@@ -86,6 +86,7 @@ import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -177,7 +178,7 @@ fun NearbyScreen(nav: NavState) {
         ) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().testTag("nearby_list"),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("nearby_list"),
                 // 内容从顶栏玻璃下面滚过去，顶栏才有东西可采样。
                 contentPadding = PaddingValues(
                     start = 12.dp,
@@ -477,7 +478,7 @@ private fun NearbyCityPickerDialog(
                     }
                     list == null -> LoadingState()
                     filtered.isEmpty() -> EmptyState("没有找到这个城市")
-                    else -> LazyColumn {
+                    else -> LazyColumn(Modifier.scrollEndHaptic()) {
                         items(filtered, key = { it.name }) { place ->
                             CityRow(
                                 place = place,

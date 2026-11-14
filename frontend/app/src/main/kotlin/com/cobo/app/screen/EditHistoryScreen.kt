@@ -58,6 +58,7 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 @Composable
@@ -90,7 +91,7 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                 .background(pageContainerColor())
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().testTag("edit_history_list"),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("edit_history_list"),
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 8.dp),

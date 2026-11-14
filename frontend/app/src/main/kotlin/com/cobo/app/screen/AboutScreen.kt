@@ -57,6 +57,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.preference.AppInfoPreference
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 private data class UpstreamRef(
@@ -157,7 +158,7 @@ fun AboutScreen(nav: NavState) {
                 .background(pageColor),
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 10.dp),

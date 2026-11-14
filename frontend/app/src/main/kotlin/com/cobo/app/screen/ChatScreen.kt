@@ -84,6 +84,7 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Image
 import io.github.suqi8.coui.kmp.icon.extended.Send
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -305,7 +306,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                         ) { EmptyState("还没有聊过，打个招呼吧") }
                         else -> LazyColumn(
                             state = listState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                             reverseLayout = true,
                             contentPadding = PaddingValues(
                                 top = topBarHeight + 10.dp,

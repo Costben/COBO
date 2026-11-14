@@ -78,6 +78,7 @@ import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -139,6 +140,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
+                            .scrollEndHaptic()
                             .testTag("vote_screen_list"),
                         contentPadding = PaddingValues(
                             start = 12.dp,

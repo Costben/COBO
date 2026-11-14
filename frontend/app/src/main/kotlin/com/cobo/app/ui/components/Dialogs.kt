@@ -45,6 +45,7 @@ import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.layout.DialogDefaults
 import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -345,6 +346,7 @@ fun UpdateDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = 260.dp)
+                                .scrollEndHaptic()
                                 .verticalScroll(rememberScrollState())
                                 .padding(horizontal = textMargin),
                         )

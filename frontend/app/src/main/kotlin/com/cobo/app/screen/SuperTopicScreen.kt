@@ -68,6 +68,7 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 /** Keeps the existing feed's request serialization, refresh and duplicate filtering. */
@@ -137,7 +138,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
             ) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                     contentPadding = PaddingValues(
                         start = 12.dp,
                         top = glassBarContentTop(topBarHeight, 8.dp),

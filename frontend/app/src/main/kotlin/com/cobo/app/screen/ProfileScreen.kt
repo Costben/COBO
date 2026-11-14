@@ -92,6 +92,7 @@ import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -301,6 +302,7 @@ fun ProfileContent(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                .scrollEndHaptic()
                 .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) },
             // 封面从屏幕最顶上铺起，顶栏的玻璃直接压在封面上；顶栏的高度由封面自己让出来。
             contentPadding = PaddingValues(
@@ -558,7 +560,7 @@ private fun ProfileHeader(
                         },
                         modifier = Modifier
                             .fillMaxSize()
-                            .imageOrigin(covers[page], 0.dp, aspect = coverAspects[page])
+                            .imageOrigin(covers[page], 0.dp, aspect = coverAspects[page], model = covers[page])
                             .clickable {
                                 onCover(covers.map { Pic(thumb = it, large = it) }, page)
                             },

@@ -57,6 +57,7 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 /**
@@ -128,7 +129,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
             ) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize().testTag("relations_list"),
+                    modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("relations_list"),
                     contentPadding = PaddingValues(
                         top = glassBarContentTop(topBarHeight, 8.dp),
                         bottom = navBottomPadding() + 16.dp,

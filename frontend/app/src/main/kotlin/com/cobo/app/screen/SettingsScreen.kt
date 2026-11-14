@@ -71,6 +71,7 @@ import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 @Composable
@@ -137,7 +138,7 @@ fun SettingsScreen(nav: NavState) {
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
             // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
             // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
             contentPadding = PaddingValues(

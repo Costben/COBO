@@ -62,6 +62,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Add
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Image
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 private val EMOJIS = listOf(
@@ -150,6 +151,7 @@ fun PublishScreen(nav: NavState, draft: String) {
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
+                .scrollEndHaptic()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
@@ -308,6 +310,7 @@ private fun EmojiDialog(onDismiss: () -> Unit, onPick: (String) -> Unit) {
             Column(
                 modifier = Modifier
                     .height(320.dp)
+                    .scrollEndHaptic()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),

@@ -55,6 +55,7 @@ import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 @Composable
@@ -122,7 +123,7 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
             contentPadding = PaddingValues(
                 top = topInset + 14.dp,
                 bottom = 66.dp + navBottomPadding(),
