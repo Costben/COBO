@@ -38,7 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.HotBoard
 import com.cobo.app.data.HotItem
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
@@ -87,6 +88,8 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SearchHistoryDeleteIcon
 import io.github.suqi8.coui.kmp.basic.SearchHistoryExpandIcon
 import io.github.suqi8.coui.kmp.basic.SearchHistoryViewDefaults
+import io.github.suqi8.coui.kmp.basic.TabRowDefaults
+import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.Close
@@ -100,7 +103,22 @@ import kotlinx.coroutines.launch
 
 @Stable
 class SearchDiscoverState {
-    val hot = mutableStateListOf<HotItem>()
+    /** 设置里勾选的榜，按声明顺序；空表示整个热搜区块隐藏。 */
+    val boards: List<HotBoard>
+        get() = App.settings.hotBoards.let { enabled -> HotBoard.entries.filter { it in enabled } }
+
+    /** 用户点过的榜。它被设置页关掉之后要退回可见的第一个，所以单独存一个可空的「心愿」。 */
+    private var pickedBoard by mutableStateOf<HotBoard?>(null)
+
+    /** 当前显示的榜；一个都没勾时是 null，调用方据此整块不渲染。 */
+    val hotBoard: HotBoard?
+        get() = pickedBoard?.takeIf { it in boards } ?: boards.firstOrNull()
+
+    /** 每个榜各存一份，来回切不用重拉。 */
+    private val hotBoards = mutableStateMapOf<HotBoard, List<HotItem>>()
+
+    val hot: List<HotItem> get() = hotBoard?.let { hotBoards[it] }.orEmpty()
+
     var hotLoading by mutableStateOf(false)
         private set
     var hotError by mutableStateOf<String?>(null)
@@ -109,29 +127,45 @@ class SearchDiscoverState {
         internal set
     var editingHistoryItem by mutableStateOf<String?>(null)
 
+    /**
+     * 正在拉的榜，以及这一轮的凭据：切榜之后先回来的旧请求不能改新榜的状态。
+     * 按榜记而不是一个全局标志——旧榜还在路上时切到新榜，新榜照样要拉。
+     */
+    private val inflightBoards = HashSet<HotBoard>()
+    private var hotToken = 0
+
+    fun selectHotBoard(board: HotBoard) {
+        if (board == pickedBoard) return
+        pickedBoard = board
+        hotError = null
+    }
+
     fun clearEditing() {
         editingHistoryItem = null
     }
 
     suspend fun loadHot(force: Boolean = false) {
-        if (hotLoading && !force) return
+        val board = hotBoard ?: return
+        if (!force && board in inflightBoards) return
+        val token = ++hotToken
+        inflightBoards += board
         hotLoading = true
         hotError = null
         try {
-            val items = App.repo.hot(force)
-            hot.clear()
-            hot.addAll(items)
+            hotBoards[board] = App.repo.hot(board, force)
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            hotError = t.message ?: "热搜加载失败"
+            if (token == hotToken) hotError = t.message ?: "热搜加载失败"
         } finally {
-            hotLoading = false
+            inflightBoards -= board
+            if (token == hotToken) hotLoading = false
         }
     }
 
     suspend fun ensureHotLoaded() {
-        if (hot.isEmpty() && !hotLoading) {
+        val board = hotBoard ?: return
+        if (hotBoards[board] == null && board !in inflightBoards) {
             loadHot(force = false)
         }
     }
@@ -212,19 +246,9 @@ fun LazyListScope.searchDiscoverItems(
             )
         }
     }
+    if (state.boards.isEmpty()) return
     item(key = "hot_search_header") {
-        val horizontalPadding = searchHorizontalPadding()
-        Text(
-            "微博热搜",
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(
-                start = horizontalPadding,
-                end = horizontalPadding,
-                top = 8.dp,
-                bottom = 8.dp,
-            ),
-        )
+        HotSearchSectionHeader(state)
     }
     if (state.hot.isEmpty()) {
         item(key = "hot_search_state") {
@@ -233,18 +257,48 @@ fun LazyListScope.searchDiscoverItems(
                 when {
                     state.hotLoading -> LoadingState()
                     state.hotError != null -> ErrorState(state.hotError!!, onRetry = onRetryHot)
-                    else -> EmptyState("暂无热搜")
+                    else -> EmptyState("这个榜单暂时没有内容")
                 }
             }
         }
     } else {
-        items(state.hot, key = { it.rank.toString() + it.title }) { item ->
+        items(state.hot, key = { state.hotBoard?.name + it.rank.toString() + it.title }) { item ->
             HotSearchRow(item) {
                 state.clearEditing()
                 onSelectKeyword(item.title)
             }
         }
     }
+}
+
+/**
+ * 热搜的迷你标签栏（COUI `SegmentButton.Tiny` 那一档），标题不再单独占一行。
+ *
+ * 标签里切的是 [HotBoard]：只换热搜容器的 `filter_type`，列表整块重来，不续看。
+ */
+@Composable
+private fun HotSearchSectionHeader(state: SearchDiscoverState) {
+    val boards = state.boards
+    val current = state.hotBoard
+    // 标签栏自己在这里补一次取数：切榜时这个 item 一定在组合里（标签就在它身上），
+    // 点开搜索面板的那次加载由外面负责，两处都走 ensureHotLoaded，重复调用是空操作。
+    LaunchedEffect(current) { state.ensureHotLoaded() }
+    // 只勾了一个榜时没有可切的东西，连标签栏一起收掉，列表直接接在搜索历史下面。
+    if (boards.size <= 1 || current == null) return
+    val horizontalPadding = searchHorizontalPadding()
+    TabRowWithContour(
+        tabs = boards.map { it.label },
+        selectedTabIndex = boards.indexOf(current).coerceAtLeast(0),
+        onTabSelected = { index -> state.selectHotBoard(boards[index]) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = horizontalPadding, vertical = 8.dp),
+        height = TabRowDefaults.TabRowWithContourTinyHeight,
+        cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
+        contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
+        // 五个格子挤在整行里，默认 12dp 的内边距会让「全部热搜」放不下。
+        segmentPadding = 4.dp,
+    )
 }
 
 @Composable

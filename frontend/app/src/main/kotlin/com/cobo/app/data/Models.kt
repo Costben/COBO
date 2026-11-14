@@ -521,6 +521,21 @@ data class CommentPage(
 
 data class HotItem(val title: String, val scheme: String, val label: String = "", val rank: Int = 0)
 
+/**
+ * 热搜的榜单。[filterType] 就是 `106003type=25` 容器认的 `filter_type`。
+ *
+ * 官方 H5 只提供这几个榜，`entertainment` / `news` / `topic` 这类看着合理的值一律回
+ * 「这里还没有内容」；`region`（同城）要配合城市参数，`personal` / `hotregion` / `friends`
+ * 是会回空的子列表，都不适合当固定分类，所以没放进标签栏。
+ */
+enum class HotBoard(val label: String, val filterType: String) {
+    Realtime("全部热搜", "realtimehot"),
+    Fun("文娱", "fun"),
+    Social("社会", "social"),
+    Life("生活", "lifenav"),
+    Mine("个性化", "mineband"),
+}
+
 /** 搜索「话题」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论两项计数。 */
 data class TopicItem(
     val title: String,

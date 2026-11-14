@@ -107,7 +107,7 @@ class LinkE2eTest : UiE2eTest() {
         runCatching {
             tapTag("top_search")
             waitText("取消")
-            val header = waitText("微博热搜")
+            val header = waitText("全部热搜")
             val bounds = header.visibleBounds
             device.click(bounds.left + 300, bounds.bottom + 90)
             device.waitForIdle(1_500)

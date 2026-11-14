@@ -212,6 +212,14 @@ class Settings(context: Context) {
     )
         private set
 
+    /**
+     * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
+     *
+     * 没存过键时是全部五个榜；存成空串表示一个都不选，此时整个热搜区块都不显示。
+     */
+    var hotBoards by mutableStateOf(parseHotBoards(sp.getString("hot_boards", null)))
+        private set
+
     /** 上次检查更新的时间戳。 */
     var updateCheckedAt by mutableLongStateOf(sp.getLong("update_checked_at", 0L))
         private set
@@ -387,6 +395,13 @@ class Settings(context: Context) {
         sp.edit().putString("search_panel_animation", value.key).apply()
     }
 
+    /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */
+    fun applyHotBoards(value: Set<HotBoard>) {
+        val ordered = HotBoard.entries.filter { it in value }.toSet()
+        hotBoards = ordered
+        sp.edit().putString("hot_boards", ordered.joinToString(",") { it.filterType }).apply()
+    }
+
     fun applyLocalFollowUid(uid: String) {
         localFollowUid = uid
         sp.edit().putString("local_follow_uid", uid).apply()
@@ -430,6 +445,14 @@ class Settings(context: Context) {
         applyDarkMode(next)
         return next
     }
+}
+
+/** `null` 表示从没设置过（默认全部显示）；空串表示用户明确全不勾，热搜区块隐藏。 */
+internal fun parseHotBoards(raw: String?): Set<HotBoard> {
+    if (raw == null) return HotBoard.entries.toSet()
+    if (raw.isBlank()) return emptySet()
+    val keys = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    return HotBoard.entries.filter { it.filterType in keys }.toSet()
 }
 
 internal fun parseSearchHistoryJson(raw: String?): List<String> {

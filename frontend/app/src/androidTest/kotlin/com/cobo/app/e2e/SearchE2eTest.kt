@@ -46,7 +46,7 @@ class SearchE2eTest : UiE2eTest() {
         waitTag("search_card_0")
 
         back()
-        waitText("微博热搜")
+        waitText("全部热搜")
         back()
         waitTag("top_search")
     }
@@ -57,7 +57,7 @@ class SearchE2eTest : UiE2eTest() {
         waitGone(By.res("bottom_tab_messages"))
         device.click(device.displayWidth / 3, device.displayHeight - 140)
         device.waitForIdle(400)
-        waitText("微博热搜")
+        waitText("全部热搜")
 
         submitQuery("微博")
         waitTag("search_tabs")
@@ -92,7 +92,7 @@ class SearchE2eTest : UiE2eTest() {
         assertNull("结果顶部不应显示“返回热搜”", device.findObject(By.text("返回热搜")))
 
         back()
-        waitText("微博热搜")
+        waitText("全部热搜")
     }
 
     @Test
@@ -127,7 +127,7 @@ class SearchE2eTest : UiE2eTest() {
         waitTag("search_history_delete")
         waitDesc("删除 微博")
 
-        tapText("微博热搜")
+        tapText("搜索历史")
         waitGone(By.res("search_history_delete"))
         waitText("微博")
 
@@ -242,7 +242,7 @@ class SearchE2eTest : UiE2eTest() {
     private fun openFeedSearchPanel() {
         tapTag("top_search")
         waitText("取消")
-        waitText("微博热搜")
+        waitText("全部热搜")
     }
 
     /**

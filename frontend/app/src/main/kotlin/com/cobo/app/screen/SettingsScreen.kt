@@ -2,14 +2,17 @@ package com.cobo.app.screen
 
 import android.webkit.CookieManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -23,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,6 +35,7 @@ import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
+import com.cobo.app.data.HotBoard
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
@@ -47,6 +52,7 @@ import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListPosition
+import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
@@ -92,6 +98,7 @@ fun SettingsScreen(nav: NavState) {
     var pickFeedCenter by remember { mutableStateOf(false) }
     var pickFeedRight by remember { mutableStateOf(false) }
     var pickSearchPanelAnimation by remember { mutableStateOf(false) }
+    var pickHotBoards by remember { mutableStateOf(false) }
 
     // 关注分组是账号里的数据：只在真的要选栏位内容时才去网页版拉一次，拉不到就只列内置流。
     LaunchedEffect(pickFeedLeft, pickFeedCenter, pickFeedRight) {
@@ -110,6 +117,14 @@ fun SettingsScreen(nav: NavState) {
         "跟随当前账号"
     } else {
         "用 ${localFollowAccount.name.ifBlank { "UID ${localFollowAccount.uid}" }} 的身份取数"
+    }
+
+    val hotBoardsSummary = App.settings.hotBoards.let { picked ->
+        when {
+            picked.isEmpty() -> "已隐藏"
+            picked.size == HotBoard.entries.size -> "全部"
+            else -> HotBoard.entries.filter { it in picked }.joinToString("、") { it.label }
+        }
     }
 
     val pageColor = pageContainerColor()
@@ -232,8 +247,16 @@ fun SettingsScreen(nav: NavState) {
                         title = "微博右侧栏",
                         modifier = Modifier.testTag("settings_feed_right_tab"),
                         summary = feedRightTab.label,
-                        cardListPosition = CardListPosition.Tail,
+                        cardListPosition = CardListPosition.Middle,
                         onClick = { pickFeedRight = true },
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "搜索页热搜榜单",
+                        modifier = Modifier.testTag("settings_hot_boards"),
+                        summary = hotBoardsSummary,
+                        cardListPosition = CardListPosition.Tail,
+                        onClick = { pickHotBoards = true },
                     )
                 }
             }
@@ -549,6 +572,81 @@ fun SettingsScreen(nav: NavState) {
                 pickSearchPanelAnimation = false
             },
         )
+    }
+
+    if (pickHotBoards) {
+        HotBoardPicker(
+            selected = App.settings.hotBoards,
+            onDismiss = { pickHotBoards = false },
+            onConfirm = { picked ->
+                App.settings.applyHotBoards(picked)
+                pickHotBoards = false
+            },
+        )
+    }
+}
+
+/**
+ * 搜索页热搜的榜单多选。五个榜可任意勾选，一个都不勾就把整个热搜区块从搜索面板里去掉。
+ *
+ * 和单选那套弹窗一样，选中结果先留在本地，等窗口收完再交回去，避免和关闭动画抢时序；
+ * 取消或点外部关闭都只丢弃当前改动，不落盘。
+ */
+@Composable
+private fun HotBoardPicker(
+    selected: Set<HotBoard>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<HotBoard>) -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    var picked by remember { mutableStateOf(selected) }
+    var apply by remember { mutableStateOf(false) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+    OverlayDialog(
+        show = show,
+        title = "热搜榜单",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                if (apply) onConfirm(picked) else onDismiss()
+            }
+        },
+    ) {
+        Column {
+            HotBoard.entries.forEach { board ->
+                val checked = board in picked
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            picked = if (checked) picked - board else picked + board
+                        }
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .testTag("hot_board_${board.name.lowercase()}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        state = if (checked) ToggleableState.On else ToggleableState.Off,
+                        onClick = null,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Text(board.label)
+                }
+            }
+            DialogButtonBar(
+                negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
+                positive = DialogButtonBarAction(
+                    text = "确定",
+                    onClick = {
+                        apply = true
+                        show = false
+                    },
+                ),
+            )
+        }
     }
 }
 

@@ -884,9 +884,10 @@ class Repo(private val context: Context, private val store: Store) {
         return FeedPage(items, next.ifBlank { null })
     }
 
-    suspend fun hot(force: Boolean = false): List<HotItem> {
+    /** 热搜榜。[board] 换的是容器上的 `filter_type`，几个榜的条目结构完全一样。 */
+    suspend fun hot(board: HotBoard = HotBoard.Realtime, force: Boolean = false): List<HotItem> {
         val cookie = cookie()
-        val cid = "106003type=25&t=3&disable_hot=1&filter_type=realtimehot"
+        val cid = "106003type=25&t=3&disable_hot=1&filter_type=${board.filterType}"
         val root = get(
             Api.url(
                 "https://m.weibo.cn/api/container/getIndex",
