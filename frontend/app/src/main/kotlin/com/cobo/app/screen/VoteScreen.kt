@@ -141,19 +141,19 @@ fun VoteScreen(nav: NavState, voteId: String) {
                             .fillMaxSize()
                             .testTag("vote_screen_list"),
                         contentPadding = PaddingValues(
-                            start = 16.dp,
+                            start = 12.dp,
                             top = glassBarContentTop(topBarHeight, 12.dp),
-                            end = 16.dp,
+                            end = 12.dp,
                             bottom = navBottomPadding() + if (currentVote.parted && currentVote.isExpired) 24.dp else 96.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         // 1. 发起人与截止时间卡片
                         item(key = "author_header") {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 cornerRadius = CardDefaults.GroupCornerRadius,
-                                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                                 weight = CardDefaults.GroupWeight,
                             ) {
                                 Row(
@@ -262,7 +262,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     cornerRadius = CardDefaults.GroupCornerRadius,
-                                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                                     weight = CardDefaults.GroupWeight,
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)

@@ -128,7 +128,7 @@ fun DraftsScreen(nav: NavState) {
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("draft_row_$index"),
                     cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     weight = CardDefaults.GroupWeight,
                     onClick = {
                         App.store.removeDraft(draft.time)

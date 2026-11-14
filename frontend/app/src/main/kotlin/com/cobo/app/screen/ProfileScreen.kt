@@ -307,7 +307,7 @@ fun ProfileContent(
                 top = 0.dp,
                 bottom = 16.dp + navBottomPadding() + extraBottom,
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 val tag = FollowTags[user?.id ?: uid]
@@ -378,7 +378,7 @@ fun ProfileContent(
                 }
                 StatusCard(
                     status = status,
-                    modifier = Modifier.padding(horizontal = 16.dp).expandOrigin(origin),
+                    modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
                     onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
                     onUser = { nav.push(Route.Profile(it.id)) },
                     onImage = { pics, i -> nav.push(Route.Images(pics, i)) },

@@ -450,12 +450,12 @@ private fun TimelinePage(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp,
+                start = 12.dp,
                 top = topInset + 16.dp,
-                end = 16.dp,
+                end = 12.dp,
                 bottom = 66.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (store.items.isEmpty()) {
                 item {

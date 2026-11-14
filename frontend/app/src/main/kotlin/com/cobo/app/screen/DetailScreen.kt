@@ -287,12 +287,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
+                    start = 12.dp,
                     top = topBarHeight + 8.dp,
-                    end = 16.dp,
+                    end = 12.dp,
                     bottom = bottomBarHeight + 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 when {
                     status != null -> item(key = "status") {
@@ -341,7 +341,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("detail_edit_history"),
-                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                             onClick = { nav.push(Route.EditHistory(effectiveMid())) },
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -673,7 +673,7 @@ private fun CommentCard(
         cornerRadius = CardDefaults.GroupCornerRadius,
         weight = CardDefaults.GroupWeight,
     ) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Avatar(comment.user?.avatar, 34.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {

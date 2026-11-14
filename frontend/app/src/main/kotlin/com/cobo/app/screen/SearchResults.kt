@@ -442,9 +442,7 @@ fun LazyListScope.searchResultsItems(
             } else {
                 itemsIndexed(state.weibo.items, key = { _, s -> "weibo_${s.id}" }) { index, status ->
                     val origin = rememberExpandOrigin()
-                    // 外层列表的 item 间距 8dp（搜索面板共用），卡片自己再补 4dp 上下，
-                    // 与信息流一致落成 16dp 的卡间距。
-                    Box(Modifier.padding(horizontal = horizontalPadding, vertical = 4.dp)) {
+                    Box(Modifier.padding(horizontal = 12.dp)) {
                         StatusCard(
                             status = status,
                             modifier = Modifier

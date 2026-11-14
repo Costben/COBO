@@ -107,7 +107,7 @@ fun StatusCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         cornerRadius = CardDefaults.GroupCornerRadius,
-        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         weight = CardDefaults.GroupWeight,
         onClick = onOpen,
     ) {
@@ -138,51 +138,47 @@ fun StatusCard(
                 onVideo = onVideo,
             )
         }
-        Spacer(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val meta = buildString {
-                append(formatWeiboTime(status.createdAt))
-                if (status.source.isNotBlank()) {
-                    if (isNotEmpty()) append("  ")
-                    append(status.source)
+        val region = status.region.trim()
+        if (showActions || region.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (region.isNotEmpty()) {
+                    Text(
+                        text = region,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
                 }
-                if (status.region.isNotBlank()) {
-                    if (isNotEmpty()) append("  ")
-                    append(status.region)
+                if (showActions) {
+                    Spacer(Modifier.width(8.dp))
+                    ActionIcon(
+                        icon = CoboIcons.Repost,
+                        text = fmtCount(status.reposts),
+                        onClick = onRepost,
+                        enabled = actionsEnabled,
+                    )
+                    ActionIcon(
+                        icon = CoboIcons.Comment,
+                        text = fmtCount(status.comments),
+                        onClick = onComment,
+                        enabled = actionsEnabled,
+                    )
+                    ActionIcon(
+                        icon = if (status.liked) CoboIcons.HeartFill else CoboIcons.Heart,
+                        text = fmtCount(status.attitudes),
+                        onClick = onLike,
+                        tint = if (status.liked) scheme.primary else scheme.onSurfaceSecondary,
+                        enabled = actionsEnabled,
+                    )
                 }
-            }
-            Text(
-                text = meta,
-                fontSize = 11.sp,
-                color = scheme.onSurfaceSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (showActions) {
-                Spacer(Modifier.width(8.dp))
-                ActionIcon(
-                    icon = CoboIcons.Repost,
-                    text = fmtCount(status.reposts),
-                    onClick = onRepost,
-                    enabled = actionsEnabled,
-                )
-                ActionIcon(
-                    icon = CoboIcons.Comment,
-                    text = fmtCount(status.comments),
-                    onClick = onComment,
-                    enabled = actionsEnabled,
-                )
-                ActionIcon(
-                    icon = if (status.liked) CoboIcons.HeartFill else CoboIcons.Heart,
-                    text = fmtCount(status.attitudes),
-                    onClick = onLike,
-                    tint = if (status.liked) scheme.primary else scheme.onSurfaceSecondary,
-                    enabled = actionsEnabled,
-                )
             }
         }
     }

@@ -160,7 +160,7 @@ private fun VersionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = CardDefaults.GroupCornerRadius,
-        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         weight = CardDefaults.GroupWeight,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

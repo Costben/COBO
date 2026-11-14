@@ -73,8 +73,8 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 8.dp + navBottomPadding()),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 8.dp + navBottomPadding()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (store.items.isEmpty()) {
                     item {
