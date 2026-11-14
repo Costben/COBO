@@ -92,12 +92,12 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().testTag("edit_history_list"),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
+                    start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 8.dp),
-                    end = 16.dp,
+                    end = 12.dp,
                     bottom = navBottomPadding() + 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val list = versions
                 if (list == null) {

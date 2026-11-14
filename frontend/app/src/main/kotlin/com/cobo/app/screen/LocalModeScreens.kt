@@ -31,6 +31,7 @@ import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
+import com.cobo.app.ui.components.SectionTitle
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
@@ -85,7 +86,7 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
             end = 16.dp,
             bottom = 16.dp + navBottomPadding() + extraBottom,
         ),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
             Card(
@@ -111,12 +112,7 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
         }
 
         item {
-            Text(
-                "本地关注 · ${uids.size} 人",
-                fontSize = 13.sp,
-                color = scheme.onSurfaceSecondary,
-                modifier = Modifier.padding(start = 6.dp, top = 6.dp),
-            )
+            SectionTitle("本地关注 · ${uids.size} 人", horizontalPadding = 6.dp)
         }
         if (uids.isEmpty()) {
             item { EmptyState("还没有本地关注的人\n去搜索里找到他，在主页点「本地关注」") }

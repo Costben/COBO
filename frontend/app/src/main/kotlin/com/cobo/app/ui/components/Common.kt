@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -44,6 +45,7 @@ import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
 import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
+import io.github.suqi8.coui.kmp.basic.SmallTitle
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.icon.COUIIcons
@@ -173,14 +175,30 @@ fun ErrorState(
     }
 }
 
+/**
+ * 分组小标题，直接用 COUI [SmallTitle]。
+ *
+ * 它贴着下面那张卡片走，不站在两张卡片中间：在 8dp 项间距的列表里默认上留白 16dp、下留白 0dp，
+ * 与上一组卡片的视觉距离是 24dp，与自己这一组只有 8dp。页面最顶上第一个分组传 `topPadding = 4.dp`，
+ * 紧跟在页头卡片后面的传 `8.dp`。
+ */
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
+fun SectionTitle(
+    text: String,
+    modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 16.dp,
+    topPadding: Dp = 16.dp,
+    bottomPadding: Dp = 0.dp,
+) {
+    SmallTitle(
         text = text,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Medium,
-        color = COUITheme.colorScheme.onSurfaceSecondary,
+        modifier = modifier,
+        insideMargin = PaddingValues(
+            start = horizontalPadding,
+            top = topPadding,
+            end = horizontalPadding,
+            bottom = bottomPadding,
+        ),
     )
 }
 

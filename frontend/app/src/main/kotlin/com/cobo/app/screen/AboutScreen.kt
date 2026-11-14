@@ -159,12 +159,12 @@ fun AboutScreen(nav: NavState) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
+                    start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 10.dp),
-                    end = 16.dp,
+                    end = 12.dp,
                     bottom = 24.dp + navBottomPadding(),
                 ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item(key = "app-header") {
                     AppInfoPreference(
@@ -180,7 +180,7 @@ fun AboutScreen(nav: NavState) {
                     )
                 }
 
-                item(key = "project-title") { SectionTitle("项目") }
+                item(key = "project-title") { SectionTitle("项目", topPadding = 8.dp) }
 
                 item(key = "project") {
                     Card(

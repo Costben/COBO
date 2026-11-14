@@ -106,12 +106,12 @@ fun ChangelogScreen(nav: NavState) {
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        start = 16.dp,
+                        start = 12.dp,
                         top = glassBarContentTop(topBarHeight, 10.dp),
-                        end = 16.dp,
+                        end = 12.dp,
                         bottom = 12.dp + navBottomPadding(),
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(list, key = { it.version }) { release ->
                         ReleaseCard(release, isCurrent = release.version == current)

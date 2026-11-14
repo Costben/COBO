@@ -49,6 +49,7 @@ import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.PreferenceDivider
+import com.cobo.app.ui.components.SectionTitle
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
@@ -140,14 +141,14 @@ fun SettingsScreen(nav: NavState) {
             // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
             // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
             contentPadding = PaddingValues(
-                start = 16.dp,
+                start = 12.dp,
                 top = glassBarContentTop(topBarHeight, 10.dp),
-                end = 16.dp,
+                end = 12.dp,
                 bottom = 24.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { SectionTitle("显示与交互") }
+            item { SectionTitle("显示与交互", topPadding = 4.dp) }
 
             item {
                 Card(
@@ -825,13 +826,3 @@ private fun OptionPicker(
     }
 }
 
-/** 卡片组上面的小标题。左边对齐到卡片里的文字，而不是卡片边缘。 */
-@Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        fontSize = 13.sp,
-        color = COUITheme.colorScheme.onSurfaceSecondary,
-        modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp),
-    )
-}

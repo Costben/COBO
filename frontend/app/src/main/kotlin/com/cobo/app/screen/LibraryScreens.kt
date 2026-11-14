@@ -118,8 +118,8 @@ fun DraftsScreen(nav: NavState) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp + navBottomPadding()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (drafts.isEmpty()) {
                 item { EmptyState("没有草稿") }
@@ -207,12 +207,12 @@ fun HistoryScreen(nav: NavState) {
                 modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
                 state = listState,
                 contentPadding = PaddingValues(
-                    start = 16.dp,
+                    start = 12.dp,
                     top = topBarHeight + filterInset + 8.dp,
-                    end = 16.dp,
+                    end = 12.dp,
                     bottom = 12.dp + navBottomPadding(),
                 ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 when {
                     history.isEmpty() -> item { EmptyState("还没有浏览记录") }
@@ -421,8 +421,8 @@ fun AccountsScreen(nav: NavState) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 12.dp + navBottomPadding()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (accounts.isEmpty()) {
                 item { EmptyState("还没有保存的账号") }
