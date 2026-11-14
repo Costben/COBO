@@ -70,13 +70,17 @@ fun ChangelogScreen(nav: NavState) {
     val context = LocalContext.current
     val current = remember { Updater.currentVersion(context) }
     var releases by remember { mutableStateOf<List<UpdateInfo>?>(null) }
+    var stale by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(reload) {
         error = null
-        runCatching { Updater.releases(App.settings.acceptPrerelease) }
-            .onSuccess { releases = it }
+        runCatching { Updater.releasesResult(App.settings.acceptPrerelease) }
+            .onSuccess {
+                releases = it.items
+                stale = it.stale
+            }
             .onFailure {
                 releases = null
                 error = it.message ?: "获取更新日志失败"
@@ -113,6 +117,16 @@ fun ChangelogScreen(nav: NavState) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    if (stale) {
+                        item(key = "stale_hint") {
+                            Text(
+                                "接口暂时不可用，下面是上次获取的结果",
+                                fontSize = 12.sp,
+                                color = COUITheme.colorScheme.onSurfaceSecondary,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
+                    }
                     items(list, key = { it.version }) { release ->
                         ReleaseCard(release, isCurrent = release.version == current)
                     }

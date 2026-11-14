@@ -2,6 +2,7 @@ package com.cobo.app.data
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.cobo.app.App
@@ -19,6 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -65,12 +67,23 @@ data class UpdateInfo(
     val publishedAt: String = "",
 )
 
+/** 一次 release 列表请求的结果；[stale] 为 true 表示这份列表来自本地缓存。 */
+data class ReleasesResult(
+    val items: List<UpdateInfo>,
+    val stale: Boolean,
+)
+
 /**
  * 更新检查。发版走 GitHub Releases，这里只认 release 列表：`/releases/latest` 会跳过
  * pre-release，而本项目的日常版本全是 `-pre`，所以自己拉列表按版本号挑最大的一个。
  */
 object Updater {
     private const val ReleasesUrl = "https://api.github.com/repos/Costben/COBO/releases?per_page=20"
+
+    /** 上一次成功拿到的列表和它的 ETag，见 [fetchReleases]。 */
+    private const val CachePrefs = "updater"
+    private const val CacheBodyKey = "releases_body"
+    private const val CacheEtagKey = "releases_etag"
 
     // 更新检查和微博是两套身份：绝不能把微博 Cookie / UA 带给 GitHub。
     private val client = OkHttpClient.Builder()
@@ -86,25 +99,81 @@ object Updater {
     /** 拉 release 列表，返回比 [current] 新的最高版本；已经是最新时返回 null。 */
     suspend fun latest(current: String, includePrerelease: Boolean = true): UpdateInfo? =
         withContext(Dispatchers.IO) {
-            parseLatest(fetchReleases(), current, includePrerelease)
+            parseLatest(fetchReleases().body, current, includePrerelease)
         }
 
     /** 拉全部 release（新→旧），不和本地版本比，给更新日志页用。 */
     suspend fun releases(includePrerelease: Boolean = true): List<UpdateInfo> =
+        releasesResult(includePrerelease).items
+
+    /** [releases] 的完整结果：[stale] 为 true 时说明这次没拿到新数据，列表来自上一次的缓存。 */
+    suspend fun releasesResult(includePrerelease: Boolean = true): ReleasesResult =
         withContext(Dispatchers.IO) {
-            parseReleases(fetchReleases(), includePrerelease)
+            val fetched = fetchReleases()
+            ReleasesResult(parseReleases(fetched.body, includePrerelease), fetched.stale)
         }
 
-    private fun fetchReleases(): String {
+    private class Fetched(val body: String, val stale: Boolean)
+
+    /**
+     * 缓存用的 SharedPreferences。单元测试里 `App.context` 还没装配，拿不到就退化成不缓存，
+     * 不为了这条捷径把测试拖下水。
+     */
+    private fun cachePrefs(): SharedPreferences? =
+        runCatching { App.context.getSharedPreferences(CachePrefs, Context.MODE_PRIVATE) }.getOrNull()
+
+    /**
+     * 拉 release 列表。GitHub 的匿名接口每小时只有 60 次，超了直接回 403，撞上就只能看报错。
+     * 这里做两件事：带 `If-None-Match` 走条件请求（304 不计入配额），以及把上一次的列表留在
+     * 本地——限流或断网时退回缓存，页面照常显示，只是知道数据是旧的。
+     */
+    private fun fetchReleases(): Fetched {
+        val sp = cachePrefs()
+        val cached = sp?.getString(CacheBodyKey, null)
+        val etag = sp?.getString(CacheEtagKey, null)
         val request = Request.Builder()
             .url(ReleasesUrl)
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "Cobo-Android")
+            .apply { if (!etag.isNullOrBlank()) header("If-None-Match", etag) }
             .build()
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw ApiException("检查更新失败：HTTP ${response.code}")
-            response.body?.string().orEmpty()
+        return try {
+            client.newCall(request).execute().use { response ->
+                when {
+                    response.code == 304 && cached != null -> Fetched(cached, stale = false)
+                    response.code == 304 -> throw ApiException("检查更新失败：缓存已失效，请重试")
+                    response.isSuccessful -> {
+                        val body = response.body?.string().orEmpty()
+                        if (body.trim().startsWith("[")) {
+                            sp?.edit()
+                                ?.putString(CacheBodyKey, body)
+                                ?.putString(CacheEtagKey, response.header("ETag"))
+                                ?.apply()
+                        }
+                        Fetched(body, stale = false)
+                    }
+                    else -> throw ApiException(failureMessage(response))
+                }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            cached?.let { return Fetched(it, stale = true) }
+            throw e
         }
+    }
+
+    /** 限流时把恢复时间算给用户看，比一句「HTTP 403」有用。 */
+    internal fun failureMessage(response: Response): String {
+        if (response.code == 403 || response.code == 429) {
+            val resetAt = response.header("X-RateLimit-Reset")?.toLongOrNull()
+            val now = System.currentTimeMillis() / 1000
+            if (resetAt != null && resetAt > now) {
+                val minutes = ((resetAt - now) / 60).coerceAtLeast(1)
+                return "GitHub 接口已限流，约 $minutes 分钟后恢复"
+            }
+            return "GitHub 接口已限流，请稍后再试"
+        }
+        return "检查更新失败：HTTP ${response.code}"
     }
 
     /**
