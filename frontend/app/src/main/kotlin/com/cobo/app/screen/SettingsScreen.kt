@@ -140,12 +140,12 @@ fun SettingsScreen(nav: NavState) {
             // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
             // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
             contentPadding = PaddingValues(
-                start = 12.dp,
+                start = 16.dp,
                 top = glassBarContentTop(topBarHeight, 10.dp),
-                end = 12.dp,
+                end = 16.dp,
                 bottom = 24.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item { SectionTitle("显示与交互") }
 

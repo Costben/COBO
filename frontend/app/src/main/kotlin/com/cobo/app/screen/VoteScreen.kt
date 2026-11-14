@@ -141,18 +141,20 @@ fun VoteScreen(nav: NavState, voteId: String) {
                             .fillMaxSize()
                             .testTag("vote_screen_list"),
                         contentPadding = PaddingValues(
-                            start = 12.dp,
+                            start = 16.dp,
                             top = glassBarContentTop(topBarHeight, 12.dp),
-                            end = 12.dp,
+                            end = 16.dp,
                             bottom = navBottomPadding() + if (currentVote.parted && currentVote.isExpired) 24.dp else 96.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         // 1. 发起人与截止时间卡片
                         item(key = "author_header") {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                                cornerRadius = CardDefaults.GroupCornerRadius,
+                                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                weight = CardDefaults.GroupWeight,
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -259,7 +261,9 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                 val isSelected = selectedIds.contains(option.id)
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                                    cornerRadius = CardDefaults.GroupCornerRadius,
+                                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                    weight = CardDefaults.GroupWeight,
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         if (currentVote.isMultiSelect) {
@@ -321,12 +325,14 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                 )
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
+                                    cornerRadius = CardDefaults.GroupCornerRadius,
                                     insideMargin = PaddingValues(0.dp),
+                                    weight = CardDefaults.GroupWeight,
                                 ) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(SquircleShape(CardDefaults.CornerRadius)),
+                                            .clip(SquircleShape(CardDefaults.GroupCornerRadius)),
                                     ) {
                                         // 进度底色填充
                                         Box(

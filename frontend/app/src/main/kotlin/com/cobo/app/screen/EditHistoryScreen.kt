@@ -49,6 +49,7 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -91,12 +92,12 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().testTag("edit_history_list"),
                 contentPadding = PaddingValues(
-                    start = 12.dp,
+                    start = 16.dp,
                     top = glassBarContentTop(topBarHeight, 8.dp),
-                    end = 12.dp,
+                    end = 16.dp,
                     bottom = navBottomPadding() + 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 val list = versions
                 if (list == null) {
@@ -156,7 +157,12 @@ private fun VersionCard(
     onImage: (List<Pic>, Int) -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
-    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        weight = CardDefaults.GroupWeight,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (current) {
                 Text(

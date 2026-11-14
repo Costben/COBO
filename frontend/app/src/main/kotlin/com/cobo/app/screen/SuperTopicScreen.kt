@@ -139,12 +139,12 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        start = 12.dp,
+                        start = 16.dp,
                         top = glassBarContentTop(topBarHeight, 8.dp),
-                        end = 12.dp,
+                        end = 16.dp,
                         bottom = 8.dp + navBottomPadding(),
                     ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     item(key = "header") {
                         Column(Modifier.padding(8.dp)) {

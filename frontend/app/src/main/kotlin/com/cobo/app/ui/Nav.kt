@@ -66,7 +66,7 @@ val LocalRouteTransition = staticCompositionLocalOf<RouteTransition?> { null }
 @Stable
 class ExpandOrigin(
     val layer: GraphicsLayer,
-    val cornerRadius: Dp = 17.dp,
+    val cornerRadius: Dp = 24.dp,
 ) {
     var bounds by mutableStateOf<Rect?>(null)
 
@@ -97,7 +97,7 @@ class ExpandOrigin(
 }
 
 @Composable
-fun rememberExpandOrigin(cornerRadius: Dp = 17.dp): ExpandOrigin {
+fun rememberExpandOrigin(cornerRadius: Dp = 24.dp): ExpandOrigin {
     val layer = rememberGraphicsLayer()
     val clearance = with(LocalDensity.current) { AppBarBlurOverlayDefaults.ExtraHeight.toPx() }
     return remember(layer, cornerRadius, clearance) {

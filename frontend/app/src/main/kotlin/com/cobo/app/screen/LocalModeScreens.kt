@@ -80,12 +80,12 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
-            start = 12.dp,
+            start = 16.dp,
             top = topInset + 14.dp,
-            end = 12.dp,
+            end = 16.dp,
             bottom = 16.dp + navBottomPadding() + extraBottom,
         ),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
             Card(

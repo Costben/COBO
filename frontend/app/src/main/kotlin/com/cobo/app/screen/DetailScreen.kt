@@ -99,6 +99,7 @@ import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -286,12 +287,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 12.dp,
+                    start = 16.dp,
                     top = topBarHeight + 8.dp,
-                    end = 12.dp,
+                    end = 16.dp,
                     bottom = bottomBarHeight + 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 when {
                     status != null -> item(key = "status") {
@@ -340,7 +341,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("detail_edit_history"),
-                            insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             onClick = { nav.push(Route.EditHistory(effectiveMid())) },
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -667,8 +668,12 @@ private fun CommentCard(
         }
     }
 
-    Card(modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        weight = CardDefaults.GroupWeight,
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Avatar(comment.user?.avatar, 34.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {

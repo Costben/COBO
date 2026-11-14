@@ -71,6 +71,7 @@ import com.cobo.app.ui.rememberExpandOrigin
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.ButtonSize
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.RadioButton
@@ -105,7 +106,9 @@ fun StatusCard(
     val scheme = COUITheme.colorScheme
     Card(
         modifier = modifier.fillMaxWidth(),
-        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        weight = CardDefaults.GroupWeight,
         onClick = onOpen,
     ) {
         StatusHeader(status, onUser, compact)
