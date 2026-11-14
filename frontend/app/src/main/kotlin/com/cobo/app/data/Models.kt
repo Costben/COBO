@@ -534,6 +534,11 @@ enum class HotBoard(val label: String, val filterType: String) {
     Social("社会", "social"),
     Life("生活", "lifenav"),
     Mine("个性化", "mineband"),
+    ;
+
+    /** 只勾选这一个榜时在标签栏位置显示的小标题。 */
+    val singleTitle: String
+        get() = if (label.endsWith("热搜")) label else "${label}热搜"
 }
 
 /** 搜索「话题」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论两项计数。 */

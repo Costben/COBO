@@ -272,20 +272,34 @@ fun LazyListScope.searchDiscoverItems(
 }
 
 /**
- * 热搜的迷你标签栏（COUI `SegmentButton.Tiny` 那一档），标题不再单独占一行。
+ * 热搜区块头部：勾了多个榜时显示迷你标签栏（COUI `SegmentButton.Tiny` 那一档）；
+ * 只勾一个榜时没有可切的东西，在标签栏位置显示「`<榜单名>`热搜」小标题，样式同「搜索历史」。
  *
  * 标签里切的是 [HotBoard]：只换热搜容器的 `filter_type`，列表整块重来，不续看。
  */
 @Composable
 private fun HotSearchSectionHeader(state: SearchDiscoverState) {
     val boards = state.boards
-    val current = state.hotBoard
+    val current = state.hotBoard ?: return
     // 标签栏自己在这里补一次取数：切榜时这个 item 一定在组合里（标签就在它身上），
     // 点开搜索面板的那次加载由外面负责，两处都走 ensureHotLoaded，重复调用是空操作。
     LaunchedEffect(current) { state.ensureHotLoaded() }
-    // 只勾了一个榜时没有可切的东西，连标签栏一起收掉，列表直接接在搜索历史下面。
-    if (boards.size <= 1 || current == null) return
     val horizontalPadding = searchHorizontalPadding()
+    // 只勾了一个榜时没有可切的东西，在原本标签栏位置改用和「搜索历史」同款的小标题。
+    if (boards.size == 1) {
+        Text(
+            text = current.singleTitle,
+            color = SearchHistoryViewDefaults.colors().titleColor,
+            style = SearchHistoryViewDefaults.titleTextStyle(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = horizontalPadding,
+                    vertical = SearchHistoryViewDefaults.TitleMarginVertical,
+                ),
+        )
+        return
+    }
     TabRowWithContour(
         tabs = boards.map { it.label },
         selectedTabIndex = boards.indexOf(current).coerceAtLeast(0),
