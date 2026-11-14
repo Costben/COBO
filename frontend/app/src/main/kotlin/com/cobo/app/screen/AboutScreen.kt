@@ -76,7 +76,7 @@ private val UI_UPSTREAMS = listOf(
     UpstreamRef(
         title = "COUI Kit",
         summary = "io.github.itoseo:coui · Jetpack Compose 组件与视觉效果库",
-        status = "ItosEO",
+        status = "MPL-2.0",
         url = "https://github.com/ItosEO/COUI-Kit",
     ),
     UpstreamRef(
