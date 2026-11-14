@@ -382,8 +382,13 @@ access_token / gsid / s / i / aid  ...
 ## 7. 接入注意事项
 
 1. **两条通道并存**：`m.weibo.cn` Web API（Cookie 会话）和 `api.weibo.cn/2` 容器端（`gsid` + `s`/`i`/`cum`）各自独立。登录页是网页的，就只写 Cookie；短信登录走容器端，拿到的是 `gsid`。两边不能混用凭证。
-2. **容器端目前被挡在客户端身份层**：`account/login` + 真 `gsid` 能拿回用户信息和 `oauth2.0.access_token`，但不再返回 `cookie`；数据接口一律 `{"errno":-105,"errmsg":"客户端身份校验失败"}`。补齐 `X-Log-Uid` / `X-Sessionid` / `X-Validator` 后结果不变，原因是 Share 3.9.6 使用的渠道号 `10B6395010` 已被退役——用它的完整参数发验证码，服务端直接回「客户端版本过低，请升级至最新版本」。
-3. **`cum` 由 `libwbutil.so` 计算**：输入是「`/2/` + path + `?` + 全部其它参数的编码串」，顺序不能变。`s` 按 uid 算，`i` 是固定设备号，三者都随 native 库打进包里。
+2. **容器端的数据接口已经不对第三方宿主开放**（2026-11 实测，微博 16.11.1）。
+   - 渠道号是 `10GB195010`（Android）/ `10GB195060`（鸿蒙），在 `classes8.dex` 的 `com.sina.weibo.utils.bn` 里以 `O` / `P` / `Q` 三个常量成对出现。换成它之后，匿名请求的 `-105 客户端身份校验失败` 会退化成 `-100 您的身份已失效`，说明渠道号这一层已经放行。
+   - 用 `10GB195010` 发码 + 真实验证码登录，`account/login` 会正常返回 `gsid` **和一份新的 `SUB` cookie**。但拿着这对新凭证打 `remind/unread_count` 和 `search/container_discover`，仍然是 `-105`。
+   - 逐项消元：删掉 `s` → `-200 校验参数不存在`；`s` 填 `00000000` → `-105`；删掉 `cum` → 仍然 `-105`；把 `cookie` 换成登录响应里新发的那份 → 仍然 `-105`。所以 `-105` 的含义是 **`s` 被判定为错**，与渠道号、cookie、`cum`、`X-Validator` 都无关。
+   - 现役 `s` 由 `com.sina.weibo.security.SLib.nativeNewCalculateS(Context, String, int)`（第三个参数传 `3`）生成，与 `libwbutil.so` 那一代是两套实现。`libslib.so` 是 `libsoshell` 加固壳（SONAME 就是 `libsoshell.so`，靠 `libziparchive` 自解包）；把它拷进别的 App 后 `isUnpackSuccess()` 返回 `false`、`getUnPackResult()` 返回 `Not found library`——壳只在它自己的宿主里解包。
+   - **结论：第三方宿主拿不到容器端数据，`m.weibo.cn` 的 Web API 是唯一可行通道。** 两侧凭证仍然不能混用：网页登录只写 Cookie，短信登录只拿 `gsid`，且 `gsid` 与签发它的渠道号绑定（换渠道号使用会回 `-100 由于你近期修改过密码…请重新登录`）。
+3. **`cum` 由 `libwbutil.so` 计算**：输入是「`/2/` + path + `?` + 全部其它参数的编码串」，顺序不能变。`s` 按 uid 算，`i` 是固定设备号。这一代实现里只有 `cum` 仍被服务端接受，`s` 已经换代，见上一条。
 4. **Cookie 要按域名存**：`.weibo.cn`、`.weibo.com`、`passport.weibo.cn` 各一份，同名 cookie 在域名之间不共用。网页端每次响应都可能用 `Set-Cookie` 滚动 `SUB` / `ALF` / `_T_WM`，收到就要落盘，否则手里那份只会慢慢过期。
 5. **分片上传可简化**：小文件直接用 `statuses/upload.json` 即可，不必实现 MSS。
 6. **卡片协议是最大的工作量**：真正决定信息流观感的是 `card_type` 的渲染覆盖度，而不是列表控件本身。
