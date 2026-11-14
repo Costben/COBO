@@ -61,6 +61,7 @@ import com.cobo.app.App
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Updater
 import com.cobo.app.data.superTopicId
+import com.cobo.app.screen.AboutScreen
 import com.cobo.app.screen.AccountsScreen
 import com.cobo.app.screen.ChangelogScreen
 import com.cobo.app.screen.ChatScreen
@@ -639,6 +640,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.History -> HistoryScreen(nav)
         Route.Accounts -> AccountsScreen(nav)
         Route.Settings -> SettingsScreen(nav)
+        Route.About -> AboutScreen(nav)
         Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)
         is Route.Topic -> TopicScreen(nav, route.name)

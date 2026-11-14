@@ -114,13 +114,14 @@ class SettingsE2eTest : UiE2eTest() {
     }
 
     @Test
-    fun aboutDialog_opensAndCloses() {
+    fun aboutScreen_opensAndBacks() {
         openSettings()
         scrollToTag("settings_about")
         tapTag("settings_about")
-        waitText("关于 Cobo")
-        waitText("知道了")
-        tapText("知道了")
+        waitTag("about_header")
+        waitText("Cobo")
+        waitText("前端界面库")
+        back()
         waitText("设置")
     }
 

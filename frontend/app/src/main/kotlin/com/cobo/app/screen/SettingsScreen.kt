@@ -80,7 +80,6 @@ fun SettingsScreen(nav: NavState) {
     var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
     var message by remember { mutableStateOf("") }
-    var about by remember { mutableStateOf(false) }
     var logout by remember { mutableStateOf(false) }
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
     val guest = App.repo.guest
@@ -387,9 +386,9 @@ fun SettingsScreen(nav: NavState) {
                     ArrowPreference(
                         title = "关于",
                         modifier = Modifier.testTag("settings_about"),
-                        summary = "Cobo · COUI 前端",
+                        summary = "v$version · 上游库与开源致谢",
                         cardListPosition = CardListPosition.Tail,
-                        onClick = { about = true },
+                        onClick = { nav.push(Route.About) },
                     )
                 }
             }
@@ -462,16 +461,6 @@ fun SettingsScreen(nav: NavState) {
                 )
             }
         }
-    }
-
-    if (about) {
-        ConfirmDialog(
-            title = "关于 Cobo",
-            message = "Cobo · COUI 前端 v$version\n\n使用 COUI（ColorOS 17 设计语言）重建的第三方微博客户端。\n仅用于个人学习与研究。",
-            confirmText = "知道了",
-            onDismiss = { about = false },
-            onConfirm = { about = false },
-        )
     }
 
     if (logout) {
