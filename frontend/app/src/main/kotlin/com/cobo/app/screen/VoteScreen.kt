@@ -67,6 +67,7 @@ import com.cobo.app.ui.pinnedHeight
 import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
@@ -140,18 +141,18 @@ fun VoteScreen(nav: NavState, voteId: String) {
                             .fillMaxSize()
                             .testTag("vote_screen_list"),
                         contentPadding = PaddingValues(
-                            start = 16.dp,
+                            start = 12.dp,
                             top = glassBarContentTop(topBarHeight, 12.dp),
-                            end = 16.dp,
+                            end = 12.dp,
                             bottom = navBottomPadding() + if (currentVote.parted && currentVote.isExpired) 24.dp else 96.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         // 1. 发起人与截止时间卡片
                         item(key = "author_header") {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -258,7 +259,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                 val isSelected = selectedIds.contains(option.id)
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         if (currentVote.isMultiSelect) {
@@ -325,7 +326,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(SquircleShape(16.dp)),
+                                            .clip(SquircleShape(CardDefaults.CornerRadius)),
                                     ) {
                                         // 进度底色填充
                                         Box(
@@ -347,7 +348,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             if (option.pic.isNotBlank()) {

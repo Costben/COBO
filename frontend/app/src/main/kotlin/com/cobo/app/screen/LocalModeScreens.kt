@@ -32,6 +32,7 @@ import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.cardListPositionOf
@@ -84,12 +85,12 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
             end = 12.dp,
             bottom = 16.dp + navBottomPadding() + extraBottom,
         ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             ) {
                 Text("纯本地模式", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
@@ -121,7 +122,12 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
             item { EmptyState("还没有本地关注的人\n去搜索里找到他，在主页点「本地关注」") }
         } else {
             item {
-                Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
+                    insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
+                ) {
                     uids.forEachIndexed { index, uid ->
                         if (index > 0) PreferenceDivider()
                         LocalFollowRow(
@@ -136,7 +142,12 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
         }
 
         item {
-            Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                cornerRadius = CardDefaults.GroupCornerRadius,
+                insideMargin = PaddingValues(0.dp),
+                weight = CardDefaults.GroupWeight,
+            ) {
                 ArrowPreference(
                     title = "浏览历史",
                     modifier = Modifier.testTag("local_history"),

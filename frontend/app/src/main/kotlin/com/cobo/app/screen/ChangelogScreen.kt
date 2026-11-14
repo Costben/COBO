@@ -110,7 +110,7 @@ fun ChangelogScreen(nav: NavState) {
                         end = 12.dp,
                         bottom = 12.dp + navBottomPadding(),
                     ),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(list, key = { it.version }) { release ->
                         ReleaseCard(release, isCurrent = release.version == current)
@@ -149,13 +149,11 @@ fun ChangelogScreen(nav: NavState) {
 /** 一版一张卡：版本号、日期、正文，末尾放一个把更新弹窗再播一遍的按钮。 */
 @Composable
 private fun ReleaseCard(release: UpdateInfo, isCurrent: Boolean) {
-    Card(modifier = Modifier.fillMaxWidth().testTag("changelog_${release.version}")) {
-        // COUI 的 Card 默认 insideMargin 是 0，内容会顶着卡片边，这里自己留一圈。
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
-        ) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("changelog_${release.version}"),
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("v${release.version}", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 if (isCurrent) Tag("当前版本")

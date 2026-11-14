@@ -51,6 +51,7 @@ import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
@@ -144,14 +145,16 @@ fun SettingsScreen(nav: NavState) {
                 end = 12.dp,
                 bottom = 24.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item { SectionTitle("显示与交互") }
 
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     ArrowPreference(
                         title = "深色模式",
@@ -225,7 +228,9 @@ fun SettingsScreen(nav: NavState) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     ArrowPreference(
                         title = "微博左侧栏",
@@ -266,7 +271,9 @@ fun SettingsScreen(nav: NavState) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     ArrowPreference(
                         title = "账号管理",
@@ -331,7 +338,9 @@ fun SettingsScreen(nav: NavState) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     ArrowPreference(
                         title = "检查更新",
@@ -388,7 +397,9 @@ fun SettingsScreen(nav: NavState) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     ArrowPreference(
                         title = "清理缓存",
@@ -420,7 +431,9 @@ fun SettingsScreen(nav: NavState) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
                     insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
                 ) {
                     if (guest) {
                         ArrowPreference(

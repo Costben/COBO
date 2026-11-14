@@ -127,6 +127,7 @@ fun DraftsScreen(nav: NavState) {
             itemsIndexed(drafts, key = { _, draft -> draft.time }) { index, draft ->
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("draft_row_$index"),
+                    insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     onClick = {
                         App.store.removeDraft(draft.time)
                         drafts = App.store.drafts()

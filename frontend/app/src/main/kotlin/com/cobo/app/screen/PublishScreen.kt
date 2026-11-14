@@ -49,6 +49,7 @@ import com.cobo.app.ui.components.ActionIcon
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.LoadingState
 import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -296,7 +297,7 @@ private fun EmojiDialog(onDismiss: () -> Unit, onPick: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 20.dp,
+            cornerRadius = CardDefaults.CornerRadius,
         ) {
             Text(
                 "表情",
