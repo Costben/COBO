@@ -69,7 +69,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -125,6 +124,7 @@ import com.cobo.app.screen.rememberSearchResultsState
 import com.cobo.app.screen.searchDiscoverItems
 import com.cobo.app.screen.searchHorizontalPadding
 import com.cobo.app.screen.searchResultsItems
+import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
@@ -139,6 +139,8 @@ import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
+import io.github.suqi8.coui.kmp.basic.SearchResultContainer
+import io.github.suqi8.coui.kmp.basic.SearchResultsTransitionState
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
@@ -146,6 +148,7 @@ import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.TopAppBarSearchBar
 import io.github.suqi8.coui.kmp.basic.TwoRowTopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.basic.rememberSearchResultsTransitionState
 import io.github.suqi8.coui.kmp.blur.LayerBackdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.isBlurEnabled
@@ -410,6 +413,7 @@ fun MainShell(nav: NavState) {
         }
     }
     val discoverState = rememberSearchDiscoverState()
+    LaunchedEffect(Unit) { discoverState.ensureHotLoaded() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
@@ -432,7 +436,7 @@ fun MainShell(nav: NavState) {
     val homeResultsState = rememberSearchResultsState(scope)
 
     // 搜索面板的两种中间态：关键词还没提交（「建议中」，底下仍是热搜/历史），以及已有结果在显示。
-    // 顶栏的筛选行与面板列表的上沿留白都读同一份判断，栏和内容才不会差一格。
+    // 顶栏的筛选行与列表区都读同一份判断，避免两处各写一份后漂移。
     val searchSuggesting =
         feedSearchQuery.isNotBlank() && feedSearchQuery.trim() != homeResultsState.submitted
     val searchShowingResults =
@@ -441,6 +445,16 @@ fun MainShell(nav: NavState) {
     LaunchedEffect(searchShowingResults) {
         if (!searchShowingResults) searchFilterMenuOpen = false
     }
+
+    // 搜索页两种内容的进出场交给 coui 的 SearchResultContainer 统一编排：
+    // 提交后搜索结果从底部上浮，加载指示器跟着一起消散；
+    // 返回搜索页时结果淡出、再淡入热搜与历史，顶栏搜索框本身保持稳住不闪烁。
+    // queryKey 只认提交的关键词：换分类、换排序走的是较轻的「刷新上浮」，换关键词才整段重新上浮。
+    val searchTransition = rememberSearchResultsTransitionState(
+        showingResults = searchShowingResults,
+        loading = homeResultsState.loading,
+        queryKey = homeResultsState.submitted,
+    )
 
     val openFeedSearch: () -> Unit = {
         discoverState.clearEditing()
@@ -687,6 +701,7 @@ fun MainShell(nav: NavState) {
                 showingResults = searchShowingResults,
                 discoverState = discoverState,
                 resultsState = homeResultsState,
+                transitionState = searchTransition,
                 nav = nav,
                 scope = scope,
                 onSelectKeyword = submitHomeSearch,
@@ -712,16 +727,19 @@ fun MainShell(nav: NavState) {
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
                     searchQuery = feedSearchQuery,
-                    onSearchQueryChange = {
-                        if (it != feedSearchQuery) discoverState.clearEditing()
-                        feedSearchQuery = it
-                        if (it.isBlank()) homeResultsState.clearResults()
+                    onSearchQueryChange = { next ->
+                        if (next != feedSearchQuery) discoverState.clearEditing()
+                        feedSearchQuery = next
+                        if (next.isBlank()) {
+                            homeResultsState.clearResults()
+                            scope.launch { discoverState.ensureHotLoaded() }
+                        }
                     },
                     searchExpanded = feedSearchExpanded,
                     onSearchOpen = openFeedSearch,
                     onSearchCancel = cancelFeedSearch,
                     onSearchSubmit = submitHomeSearch,
-                    showingResults = searchShowingResults,
+                    filtersVisible = searchTransition.filtersVisible,
                     resultsState = homeResultsState,
                     panelAlpha = { panelAlpha.value },
                     onFilterMenuOpen = { searchFilterMenuOpen = true },
@@ -856,9 +874,9 @@ private fun MainBarUnderlay(
             )
         }
         AnimatedVisibility(
-            visible = tab == 0 && feedHasTabs,
-            enter = fadeIn(tween(MainTabFadeMillis)),
-            exit = fadeOut(tween(MainTabFadeMillis)),
+            visible = tab == 0 && feedHasTabs && !searchExpanded,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(150)),
         ) {
             Column(
                 Modifier
@@ -934,6 +952,7 @@ private fun HomeSearchOverlay(
     showingResults: Boolean,
     discoverState: SearchDiscoverState,
     resultsState: SearchResultsState,
+    transitionState: SearchResultsTransitionState,
     nav: NavState,
     scope: CoroutineScope,
     onSelectKeyword: (String) -> Unit,
@@ -945,6 +964,8 @@ private fun HomeSearchOverlay(
     val horizontalPadding = searchHorizontalPadding()
     val density = LocalDensity.current
     val topBarHeightPx = with(density) { topBarHeight.toPx() }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(listState, resultsState.submitted, resultsState.tab, resultsState.stateFor(resultsState.tab).count) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
@@ -958,7 +979,16 @@ private fun HomeSearchOverlay(
 
     val suggesting = searchQuery.isNotBlank() && !showingResults
 
-    LaunchedEffect(showingResults, resultsState.submitted, suggesting, resultsState.tab) {
+    LaunchedEffect(showingResults) {
+        if (showingResults) {
+            keyboard?.hide()
+            focusManager.clearFocus(force = true)
+        }
+    }
+
+    LaunchedEffect(transitionState.shownResults, resultsState.submitted, suggesting, resultsState.tab, discoverState.hotBoard) {
+        // 淡出过程中旧内容还在画，先把滚动位置钉住；换完内容再回到顶部。
+        if (transitionState.shownResults != showingResults) return@LaunchedEffect
         listState.scrollToItem(0)
     }
 
@@ -994,45 +1024,51 @@ private fun HomeSearchOverlay(
                 ),
         ) {
             CompositionLocalProvider(LocalBackdrop provides if (blur) searchBackdrop else null) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = 0.dp,
-                        // 结果态的栏多一行筛选胶囊，列表上沿让过这一行（间距 + 胶囊行 + 栏底留白），
-                        // 否则第一张卡会压在胶囊行底下。
-                        top = glassBarContentTop(topBarHeight, 8.dp) + if (showingResults) {
-                            pinnedRowsHeight(
-                                listOf(
-                                    SearchChipRowGap,
-                                    ChipTabDefaults.Height,
-                                    TwoRowTopAppBarDefaults.SecondRowBottom,
-                                ),
-                            )
-                        } else {
-                            0.dp
-                        },
-                        end = 0.dp,
-                        bottom = 16.dp + navBottomPadding(),
+                // 结果态列表顶沿与加载球顶沿要给第二行筛选胶囊让出位置；
+                // 列表内容读的是 shownResults，避免提交瞬间发现页在淡出前往下跳一截。
+                val baseTopPadding = glassBarContentTop(topBarHeight, 8.dp)
+                val resultsBarTopPadding = baseTopPadding + pinnedRowsHeight(
+                    listOf(
+                        SearchChipRowGap,
+                        ChipTabDefaults.Height,
+                        TwoRowTopAppBarDefaults.SecondRowBottom,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                )
+                val listTopPadding = if (transitionState.shownResults) resultsBarTopPadding else baseTopPadding
+                SearchResultContainer(
+                    state = transitionState,
+                    modifier = Modifier.fillMaxSize(),
+                    loadingTopPadding = resultsBarTopPadding,
+                    loadingContent = { LoadingState() },
                 ) {
-                    if (!showingResults) {
-                        searchDiscoverItems(
-                            state = discoverState,
-                            suggesting = suggesting,
-                            history = history.toList(),
-                            onSelectKeyword = activeSelectKeyword,
-                            onRetryHot = onRetryHot,
-                        )
-                    } else {
-                        searchResultsItems(
-                            state = resultsState,
-                            nav = nav,
-                            horizontalPadding = horizontalPadding,
-                            scope = scope,
-                            onSelectKeyword = activeSelectKeyword,
-                        )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 0.dp,
+                            top = listTopPadding,
+                            end = 0.dp,
+                            bottom = 16.dp + navBottomPadding(),
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (!shownResults) {
+                            searchDiscoverItems(
+                                state = discoverState,
+                                suggesting = suggesting,
+                                history = history.toList(),
+                                onSelectKeyword = activeSelectKeyword,
+                                onRetryHot = onRetryHot,
+                            )
+                        } else if (resultsVisible) {
+                            searchResultsItems(
+                                state = resultsState,
+                                nav = nav,
+                                horizontalPadding = horizontalPadding,
+                                scope = scope,
+                                onSelectKeyword = activeSelectKeyword,
+                            )
+                        }
                     }
                 }
             }
@@ -1054,7 +1090,7 @@ private fun MainTitleRow(
     onSearchOpen: () -> Unit,
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
-    showingResults: Boolean,
+    filtersVisible: Boolean,
     resultsState: SearchResultsState,
     panelAlpha: () -> Float,
     onFilterMenuOpen: () -> Unit,
@@ -1076,7 +1112,7 @@ private fun MainTitleRow(
                 onSearchOpen = onSearchOpen,
                 onSearchCancel = onSearchCancel,
                 onSearchSubmit = onSearchSubmit,
-                showingResults = showingResults,
+                filtersVisible = filtersVisible,
                 resultsState = resultsState,
                 panelAlpha = panelAlpha,
                 onFilterMenuOpen = onFilterMenuOpen,
@@ -1176,7 +1212,7 @@ private fun FeedTitleRow(
     onSearchOpen: () -> Unit,
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
-    showingResults: Boolean,
+    filtersVisible: Boolean,
     resultsState: SearchResultsState,
     panelAlpha: () -> Float,
     onFilterMenuOpen: () -> Unit,
@@ -1188,7 +1224,7 @@ private fun FeedTitleRow(
     // 栏自己的层，两行画在录制之外，胶囊采的是「模糊提白之后」的画面。这里只负责搜索框本身
     // 与那一行筛选胶囊的内容。
     SearchFilterTopAppBar(
-        filters = if (showingResults) rememberSearchFilterTabs() else null,
+        filters = if (filtersVisible) rememberSearchFilterTabs() else null,
         selectedFilter = resultsState.tab.ordinal,
         onFilterSelected = { index ->
             SearchTab.entries.getOrNull(index)?.let(resultsState::selectTab)
@@ -1196,7 +1232,7 @@ private fun FeedTitleRow(
         modifier = Modifier.fillMaxWidth(),
         firstRowHeight = FeedTitleRowHeight,
         rowGap = SearchChipRowGap,
-        leadingIcon = if (showingResults) COUIIcons.GridView else null,
+        leadingIcon = if (filtersVisible) COUIIcons.GridView else null,
         onLeadingIconClick = onFilterMenuOpen,
         filterContentPadding = PaddingValues(horizontal = searchHorizontalPadding()),
         containerColor = pageContainerColor(),

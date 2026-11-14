@@ -129,6 +129,8 @@ class SearchResultsState(
     var loadingMore by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
 
+    private var requestToken = 0
+
     fun stateFor(t: SearchTab): SearchTabState = when (t) {
         SearchTab.Weibo -> weibo
         SearchTab.Users -> users
@@ -139,9 +141,11 @@ class SearchResultsState(
         val keyword = submitted
         if (keyword.isBlank()) return
         if (!reset && (loading || loadingMore)) return
+        val token = if (reset) ++requestToken else requestToken
         if (reset) {
             loading = true
             error = null
+            loadingMore = false
         } else {
             loadingMore = true
         }
@@ -155,6 +159,7 @@ class SearchResultsState(
                         force = if (reset) force else false,
                         sort = sort,
                     ).items
+                    if (token != requestToken) return
                     if (reset) weibo.items.clear()
                     val known = weibo.items.mapTo(HashSet()) { it.id }
                     pageItems.forEach { if (known.add(it.id)) weibo.items.add(it) }
@@ -165,6 +170,7 @@ class SearchResultsState(
                 SearchTab.Users -> {
                     val nextPage = if (reset) 1 else users.page
                     val pageItems = App.repo.searchUsers(keyword, nextPage, force = if (reset) force else false)
+                    if (token != requestToken) return
                     if (reset) users.items.clear()
                     val known = users.items.mapTo(HashSet()) { it.id }
                     pageItems.forEach { if (known.add(it.id)) users.items.add(it) }
@@ -175,6 +181,7 @@ class SearchResultsState(
                 SearchTab.Topics -> {
                     val nextPage = if (reset) 1 else topics.page
                     val pageItems = App.repo.searchTopics(keyword, nextPage, force = if (reset) force else false)
+                    if (token != requestToken) return
                     if (reset) topics.items.clear()
                     val known = topics.items.mapTo(HashSet()) { it.title }
                     pageItems.forEach { if (known.add(it.title)) topics.items.add(it) }
@@ -186,10 +193,17 @@ class SearchResultsState(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            error = t.message ?: "搜索失败"
+            if (token == requestToken && (!reset || which == tab)) {
+                error = t.message ?: "搜索失败"
+            }
         } finally {
-            loading = false
-            loadingMore = false
+            if (token == requestToken) {
+                if (reset) {
+                    if (which == tab) loading = false
+                } else {
+                    loadingMore = false
+                }
+            }
         }
     }
 
@@ -202,6 +216,9 @@ class SearchResultsState(
         users.reset()
         topics.reset()
         submitted = q
+        // 「加载中」要在这一次组合里就摆上：结果容器下一帧才读得到 loading，
+        // 否则会先按「已有数据」把结果推上来，再被转圈打断。
+        loading = true
         scope.launch {
             load(tab, reset = true, force = true)
         }
@@ -213,7 +230,11 @@ class SearchResultsState(
         error = null
         loadingMore = false
         if (submitted.isNotBlank() && !stateFor(next).started) {
+            loading = true
             scope.launch { load(next, reset = true) }
+        } else {
+            ++requestToken
+            loading = false
         }
     }
 
@@ -224,10 +245,12 @@ class SearchResultsState(
         if (submitted.isBlank()) return
         tab = SearchTab.Weibo
         weibo.reset()
+        loading = true
         scope.launch { load(SearchTab.Weibo, reset = true, force = true) }
     }
 
     fun clearResults() {
+        ++requestToken
         submitted = ""
         error = null
         loading = false
@@ -399,17 +422,21 @@ fun LazyListScope.searchResultsItems(
     scope: CoroutineScope,
     onSelectKeyword: (String) -> Unit,
 ) {
+    if (state.loading) return
+
     // 分类胶囊挂在顶栏的筛选行上（见 SearchFilterTopAppBar），不再跟着列表滚走。
     when (state.tab) {
         SearchTab.Weibo -> {
             if (state.weibo.items.isEmpty()) {
-                item(key = "search_weibo_empty") {
-                    Box(Modifier.padding(horizontal = horizontalPadding)) {
-                        ResultState(
-                            loading = state.loading || !state.weibo.started,
-                            error = state.error,
-                            emptyText = "没有找到相关微博",
-                        ) { scope.launch { state.load(SearchTab.Weibo, reset = true, force = true) } }
+                if (state.error != null || state.weibo.started) {
+                    item(key = "search_weibo_empty") {
+                        Box(Modifier.padding(horizontal = horizontalPadding)) {
+                            ResultState(
+                                loading = false,
+                                error = state.error,
+                                emptyText = "没有找到相关微博",
+                            ) { scope.launch { state.load(SearchTab.Weibo, reset = true, force = true) } }
+                        }
                     }
                 }
             } else {
@@ -449,13 +476,15 @@ fun LazyListScope.searchResultsItems(
         }
         SearchTab.Users -> {
             if (state.users.items.isEmpty()) {
-                item(key = "search_users_empty") {
-                    Box(Modifier.padding(horizontal = horizontalPadding)) {
-                        ResultState(
-                            loading = state.loading || !state.users.started,
-                            error = state.error,
-                            emptyText = "没有找到相关用户",
-                        ) { scope.launch { state.load(SearchTab.Users, reset = true, force = true) } }
+                if (state.error != null || state.users.started) {
+                    item(key = "search_users_empty") {
+                        Box(Modifier.padding(horizontal = horizontalPadding)) {
+                            ResultState(
+                                loading = false,
+                                error = state.error,
+                                emptyText = "没有找到相关用户",
+                            ) { scope.launch { state.load(SearchTab.Users, reset = true, force = true) } }
+                        }
                     }
                 }
             } else {
@@ -472,13 +501,15 @@ fun LazyListScope.searchResultsItems(
         }
         SearchTab.Topics -> {
             if (state.topics.items.isEmpty()) {
-                item(key = "search_topics_empty") {
-                    Box(Modifier.padding(horizontal = horizontalPadding)) {
-                        ResultState(
-                            loading = state.loading || !state.topics.started,
-                            error = state.error,
-                            emptyText = "没有找到相关话题",
-                        ) { scope.launch { state.load(SearchTab.Topics, reset = true, force = true) } }
+                if (state.error != null || state.topics.started) {
+                    item(key = "search_topics_empty") {
+                        Box(Modifier.padding(horizontal = horizontalPadding)) {
+                            ResultState(
+                                loading = false,
+                                error = state.error,
+                                emptyText = "没有找到相关话题",
+                            ) { scope.launch { state.load(SearchTab.Topics, reset = true, force = true) } }
+                        }
                     }
                 }
             } else {
