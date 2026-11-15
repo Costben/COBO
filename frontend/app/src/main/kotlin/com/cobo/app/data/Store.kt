@@ -75,6 +75,7 @@ class Store(private val context: Context) {
         accessToken: String,
         expires: Long,
         cookies: Map<String, String> = CookieVault.seed(cookie),
+        gsidAt: Long = System.currentTimeMillis(),
     ) {
         val now = System.currentTimeMillis()
         val o = JSONObject()
@@ -82,7 +83,7 @@ class Store(private val context: Context) {
             .put("cookie", cookie)
             .put("uid", uid)
             .put("gsid", gsid)
-            .put("gsidAt", now)
+            .put("gsidAt", gsidAt)
             .put("accessToken", accessToken)
             .put("expires", expires)
             .put("savedAt", now)

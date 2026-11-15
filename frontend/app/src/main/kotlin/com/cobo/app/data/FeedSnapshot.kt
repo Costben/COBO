@@ -35,22 +35,51 @@ class FeedSnapshotStore(private val root: File) {
             }
         }
         if (items.isEmpty()) return null
+        val itemIds = items.mapTo(HashSet()) { it.id }
+        val gapsArr = json.optJSONArray("gaps")
+        val seenGapTargets = HashSet<String>()
+        val gaps = if (gapsArr != null) {
+            buildList {
+                for (i in 0 until gapsArr.length()) {
+                    gapFromSnapshot(gapsArr.optJSONObject(i))
+                        ?.takeIf { it.beforeStatusId in itemIds && seenGapTargets.add(it.beforeStatusId) }
+                        ?.let(::add)
+                }
+            }
+        } else {
+            emptyList()
+        }
         return FeedSnapshot(
             items = items,
             sinceId = json.opt("sinceId")?.takeIf { it != JSONObject.NULL }?.toString()?.ifBlank { null },
             end = json.optBoolean("end", false),
             savedAt = savedAt,
+            gaps = gaps,
         )
     }
 
-    fun save(owner: String, key: String, items: List<Status>, sinceId: String?, end: Boolean) {
-        if (items.isEmpty() || items.size > MaxItems) return
+    fun save(
+        owner: String,
+        key: String,
+        items: List<Status>,
+        sinceId: String?,
+        end: Boolean,
+        gaps: List<FeedGap> = emptyList(),
+    ) {
+        if (items.isEmpty()) return
+        val trimmed = items.size > MaxItems
+        val keptItems = if (trimmed) items.take(MaxItems) else items
+        val keptIds = keptItems.mapTo(HashSet()) { it.id }
+        val keptGaps = gaps.filter { it.beforeStatusId in keptIds }
         val json = JSONObject()
             .put("v", FormatVersion)
             .put("savedAt", System.currentTimeMillis())
-            .put("sinceId", sinceId ?: JSONObject.NULL)
-            .put("end", end)
-            .put("items", JSONArray().apply { items.forEach { put(statusToSnapshot(it)) } })
+            .put("sinceId", if (trimmed) JSONObject.NULL else (sinceId ?: JSONObject.NULL))
+            .put("end", if (trimmed) false else end)
+            .put("items", JSONArray().apply { keptItems.forEach { put(statusToSnapshot(it)) } })
+        if (keptGaps.isNotEmpty()) {
+            json.put("gaps", JSONArray().apply { keptGaps.forEach { put(gapToSnapshot(it)) } })
+        }
         runCatching {
             val file = file(owner, key)
             val tmp = File(file.parentFile, "${file.name}.tmp")
@@ -79,7 +108,7 @@ class FeedSnapshotStore(private val root: File) {
         const val FormatVersion = 1
 
         /** 再往下翻也不存了：文件太大、写盘也慢，续看的位置到这儿已经够用。 */
-        const val MaxItems = 300
+        const val MaxItems = 500
 
         const val MaxAgeMillis = 7L * 24 * 60 * 60 * 1000
 
@@ -87,12 +116,43 @@ class FeedSnapshotStore(private val root: File) {
     }
 }
 
+data class FeedGap(
+    val id: String,
+    val cursor: String,
+    val beforeStatusId: String,
+    val loadedCount: Int = 0,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 data class FeedSnapshot(
     val items: List<Status>,
     val sinceId: String?,
     val end: Boolean,
     val savedAt: Long,
+    val gaps: List<FeedGap> = emptyList(),
 )
+
+private fun gapToSnapshot(g: FeedGap): JSONObject = JSONObject().apply {
+    put("id", g.id)
+    put("cursor", g.cursor)
+    put("beforeStatusId", g.beforeStatusId)
+    if (g.loadedCount > 0) put("loadedCount", g.loadedCount)
+}
+
+private fun gapFromSnapshot(o: JSONObject?): FeedGap? {
+    if (o == null) return null
+    val id = o.str("id")
+    val cursor = o.str("cursor")
+    val beforeStatusId = o.str("beforeStatusId")
+    if (id.isBlank() || cursor.isBlank() || beforeStatusId.isBlank()) return null
+    return FeedGap(
+        id = id,
+        cursor = cursor,
+        beforeStatusId = beforeStatusId,
+        loadedCount = o.int("loadedCount").coerceAtLeast(0),
+    )
+}
 
 private fun userToSnapshot(u: User): JSONObject = JSONObject().apply {
     put("id", u.id)
@@ -152,6 +212,11 @@ private fun videoToSnapshot(v: VideoInfo): JSONObject = JSONObject().apply {
     put("url", v.url)
 }
 
+private fun bigPicToSnapshot(p: BigPicInfo): JSONObject = JSONObject().apply {
+    put("url", p.url)
+    put("scheme", p.scheme)
+}
+
 internal fun statusToSnapshot(s: Status): JSONObject = JSONObject().apply {
     put("id", s.id)
     put("mid", s.mid)
@@ -163,6 +228,7 @@ internal fun statusToSnapshot(s: Status): JSONObject = JSONObject().apply {
         put("pics", JSONArray().apply { s.pics.forEach { put(picToSnapshot(it)) } })
     }
     s.video?.let { put("video", videoToSnapshot(it)) }
+    s.bigPic?.let { put("bigPic", bigPicToSnapshot(it)) }
     s.retweeted?.let { put("retweeted", statusToSnapshot(it)) }
     put("reposts", s.reposts)
     put("comments", s.comments)
@@ -195,6 +261,10 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
         pics = pics,
         video = o.optJSONObject("video")?.let {
             VideoInfo(title = it.str("title"), cover = it.str("cover"), url = it.str("url"))
+        },
+        bigPic = o.optJSONObject("bigPic")?.let {
+            val url = it.str("url")
+            if (url.isNotBlank()) BigPicInfo(url = url, scheme = it.str("scheme")) else null
         },
         retweeted = statusFromSnapshot(o.optJSONObject("retweeted")),
         reposts = o.int("reposts"),

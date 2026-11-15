@@ -311,6 +311,25 @@ class Repo(private val context: Context, private val store: Store) {
         session = store.session()
     }
 
+    /** 切换到已保存账号：客户端登录保留 gsid 以支持无感续期，网页登录保留 cookie 会话。 */
+    fun switchAccount(account: Account) {
+        resetAccountCaches(clearGroupTabs = true)
+        App.settings.applyLocalMode(false)
+        if (account.gsid.isNotBlank()) {
+            store.saveClientSession(
+                uid = account.uid,
+                gsid = account.gsid,
+                cookie = account.cookie,
+                accessToken = "",
+                expires = 0L,
+                gsidAt = account.gsidAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+            )
+        } else {
+            store.saveSession(account.cookie, account.uid)
+        }
+        session = store.session()
+    }
+
     fun logout() {
         resetAccountCaches(clearGroupTabs = true)
         store.clearSession()

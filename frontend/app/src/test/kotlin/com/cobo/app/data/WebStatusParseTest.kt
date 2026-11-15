@@ -77,4 +77,30 @@ class WebStatusParseTest {
         assertEquals(900, pics[0].height)
         assertEquals("https://wx1.sinaimg.cn/large/b.jpg", pics[1].large)
     }
+
+    @Test
+    fun parsesBigPicPageInfo() {
+        val status = JSONObject(
+            """
+            {
+              "id": "5365441585220046",
+              "mid": "5365441585220046",
+              "text": " ",
+              "source": "knight卓定超话",
+              "page_info": {
+                "type": "bigPic",
+                "page_pic": {
+                  "url": "https://mu1.sinaimg.cn/original/test.png",
+                  "scheme": "https://m.weibo.cn/c/wbox?id=c0p9sg9tw9"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val bigPic = Status.from(status)!!.bigPic
+        assertNotNull(bigPic)
+        assertEquals("https://mu1.sinaimg.cn/original/test.png", bigPic!!.url)
+        assertEquals("https://m.weibo.cn/c/wbox?id=c0p9sg9tw9", bigPic.scheme)
+    }
 }

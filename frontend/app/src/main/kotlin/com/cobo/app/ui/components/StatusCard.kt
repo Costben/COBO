@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
+import com.cobo.app.data.BigPicInfo
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
@@ -66,8 +68,10 @@ import com.cobo.app.ui.LiveBadgeSize
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.imageOrigin
+import com.cobo.app.ui.isWeiboWboxLink
 import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.rememberExpandOrigin
+import com.cobo.app.ui.resolveWeiboLink
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.ButtonSize
 import io.github.suqi8.coui.kmp.basic.Card
@@ -256,6 +260,54 @@ fun StatusMedia(
     if (status.pics.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
         ImageGrid(status.pics, compact, onImage)
+    }
+    val bigPic = status.bigPic
+    if (bigPic != null && bigPic.url.isNotBlank()) {
+        Spacer(Modifier.height(8.dp))
+        BigPicCard(bigPic, onImage)
+    }
+}
+
+@Composable
+private fun BigPicCard(
+    bigPic: BigPicInfo,
+    onImage: (List<Pic>, Int) -> Unit,
+) {
+    val linkHandler = LocalLinkHandler.current
+    val saver = LocalImageSaver.current
+    val precise = rememberPreciseClickState()
+    var ratio by remember(bigPic.url) { mutableFloatStateOf(16f / 9f) }
+    val targetUrl = remember(bigPic.scheme) {
+        if (isWeiboWboxLink(bigPic.scheme)) null else resolveWeiboLink(bigPic.scheme)
+    }
+    val singlePic = remember(bigPic.url) { listOf(Pic(thumb = bigPic.url, large = bigPic.url)) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(ratio)
+            .imageOrigin(bigPic.url, 10.dp, aspect = ratio, model = bigPic.url)
+            .clip(RoundedCornerShape(10.dp))
+            .background(COUITheme.colorScheme.surfaceContainerHigh)
+            .preciseClickAnchor(precise)
+            .combinedClickable(
+                onClick = {
+                    if (targetUrl != null) linkHandler(bigPic.scheme) else onImage(singlePic, 0)
+                },
+                onLongClick = { saver?.show(listOf(bigPic.url), 0, precise) },
+            ),
+    ) {
+        AsyncImage(
+            model = bigPic.url,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            onSuccess = { state ->
+                val size = state.painter.intrinsicSize
+                if (size.width > 0f && size.height > 0f) {
+                    ratio = (size.width / size.height).coerceIn(0.62f, 2.2f)
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

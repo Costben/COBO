@@ -134,9 +134,11 @@ object App {
     }
 
     val feedRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val feedTopEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val feedTopEvents = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     val messagesTopEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val followEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    fun isReverseBrowseEnabled(): Boolean = this::settings.isInitialized && settings.reverseBrowse
 
     fun notifyFollowChanged() {
         followEvents.tryEmit(Unit)
@@ -150,8 +152,8 @@ object App {
         feedRefreshEvents.tryEmit(Unit)
     }
 
-    fun requestFeedTop() {
-        feedTopEvents.tryEmit(Unit)
+    fun requestFeedTop(scrollToTop: Boolean = true) {
+        feedTopEvents.tryEmit(scrollToTop)
     }
 
     fun requestMessagesTop() {
@@ -159,7 +161,7 @@ object App {
     }
 
     fun toast(message: String) {
-        if (message.isBlank()) return
+        if (!this::context.isInitialized || message.isBlank()) return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
         }

@@ -185,3 +185,20 @@ fun isWeiboShortLink(raw: String): Boolean {
     val trimmed = raw.trim().lowercase()
     return trimmed.startsWith("http://t.cn/") || trimmed.startsWith("https://t.cn/")
 }
+
+/**
+ * 微博小程序（wbox / 微博微服务）链接在网页端只会展示「打开微博客户端体验」引导页。
+ */
+fun isWeiboWboxLink(raw: String): Boolean {
+    val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return false
+    val scheme = uri.scheme?.lowercase() ?: return false
+    val host = uri.host?.lowercase() ?: return false
+    val path = uri.rawPath.orEmpty().lowercase()
+    return when (scheme) {
+        "https", "http" ->
+            (host == "m.weibo.cn" && (path == "/c/wbox" || path.startsWith("/c/wbox/"))) ||
+                host == "wbox.h5.weibo.cn"
+        "sinaweibo" -> host == "wbox" || host == "mpdialog"
+        else -> false
+    }
+}

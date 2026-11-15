@@ -206,6 +206,18 @@ class Settings(context: Context) {
     var confirmLike by mutableStateOf(sp.getBoolean("confirm_like", false))
         private set
 
+    /** 长按悬浮底栏的「我」是否显示快捷切换账号菜单。默认开。 */
+    var quickSwitchAccount by mutableStateOf(sp.getBoolean("quick_switch_account", true))
+        private set
+
+    /** 悬浮底栏的「我」是否显示当前账号头像（代替默认图标）。默认开。 */
+    var profileTabAvatar by mutableStateOf(sp.getBoolean("profile_tab_avatar", true))
+        private set
+
+    /** 倒序浏览：刷新时停在原阅读位置，将新微博插入上方并支持断点补拉。默认关。 */
+    var reverseBrowse by mutableStateOf(sp.getBoolean("reverse_browse", false))
+        private set
+
     /** 首页搜索面板的展开方式：上下扩展、淡入淡出、从搜索按钮展开。默认淡入淡出。 */
     var searchPanelAnimation by mutableStateOf(
         SearchPanelAnimation.fromKey(sp.getString("search_panel_animation", null))
@@ -388,6 +400,21 @@ class Settings(context: Context) {
     fun applyConfirmLike(value: Boolean) {
         confirmLike = value
         sp.edit().putBoolean("confirm_like", value).apply()
+    }
+
+    fun applyQuickSwitchAccount(value: Boolean) {
+        quickSwitchAccount = value
+        sp.edit().putBoolean("quick_switch_account", value).apply()
+    }
+
+    fun applyProfileTabAvatar(value: Boolean) {
+        profileTabAvatar = value
+        sp.edit().putBoolean("profile_tab_avatar", value).apply()
+    }
+
+    fun applyReverseBrowse(value: Boolean) {
+        reverseBrowse = value
+        sp.edit().putBoolean("reverse_browse", value).apply()
     }
 
     fun applySearchPanelAnimation(value: SearchPanelAnimation) {

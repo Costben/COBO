@@ -226,6 +226,11 @@ data class VideoInfo(
     val url: String,
 )
 
+data class BigPicInfo(
+    val url: String,
+    val scheme: String = "",
+)
+
 data class VoteOption(
     val id: String,
     val title: String,
@@ -344,6 +349,7 @@ data class Status(
     val user: User?,
     val pics: List<Pic> = emptyList(),
     val video: VideoInfo? = null,
+    val bigPic: BigPicInfo? = null,
     val retweeted: Status? = null,
     val reposts: Int = 0,
     val comments: Int = 0,
@@ -385,6 +391,16 @@ data class Status(
                 )
             }
 
+            var bigPic: BigPicInfo? = null
+            if (page != null && (page.str("type") == "bigPic" || page.str("object_type") == "bigPic")) {
+                val pagePic = page.optJSONObject("page_pic")
+                val picUrl = pagePic?.str("url").orEmpty().ifBlank { page.str("page_pic") }
+                if (picUrl.isNotBlank()) {
+                    val schemeUrl = pagePic?.str("scheme").orEmpty().ifBlank { page.str("page_url") }
+                    bigPic = BigPicInfo(url = picUrl, scheme = schemeUrl)
+                }
+            }
+
             val retweeted = if (depth < 2) parse(o.optJSONObject("retweeted_status"), depth + 1) else null
 
             var voteId: String? = null
@@ -415,6 +431,7 @@ data class Status(
                 user = User.from(o.optJSONObject("user")),
                 pics = pics,
                 video = video,
+                bigPic = bigPic,
                 retweeted = retweeted,
                 reposts = o.int("reposts_count"),
                 comments = o.int("comments_count"),

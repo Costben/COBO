@@ -88,6 +88,9 @@ fun SettingsScreen(nav: NavState) {
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
     var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
+    var quickSwitchAccount by remember { mutableStateOf(App.settings.quickSwitchAccount) }
+    var profileTabAvatar by remember { mutableStateOf(App.settings.profileTabAvatar) }
+    var reverseBrowse by remember { mutableStateOf(App.settings.reverseBrowse) }
     var message by remember { mutableStateOf("") }
     var logout by remember { mutableStateOf(false) }
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
@@ -262,8 +265,20 @@ fun SettingsScreen(nav: NavState) {
                         title = "搜索页热搜榜单",
                         modifier = Modifier.testTag("settings_hot_boards"),
                         summary = hotBoardsSummary,
-                        cardListPosition = CardListPosition.Tail,
+                        cardListPosition = CardListPosition.Middle,
                         onClick = { pickHotBoards = true },
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = reverseBrowse,
+                        onCheckedChange = {
+                            reverseBrowse = it
+                            App.settings.applyReverseBrowse(it)
+                        },
+                        title = "倒序浏览",
+                        summary = "刷新不回顶，从当前位置往上补看新微博",
+                        modifier = Modifier.testTag("settings_reverse_browse"),
+                        cardListPosition = CardListPosition.Tail,
                     )
                 }
             }
@@ -282,6 +297,30 @@ fun SettingsScreen(nav: NavState) {
                         modifier = Modifier.testTag("settings_accounts"),
                         cardListPosition = CardListPosition.Head,
                         onClick = { nav.push(Route.Accounts) },
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = quickSwitchAccount,
+                        onCheckedChange = {
+                            quickSwitchAccount = it
+                            App.settings.applyQuickSwitchAccount(it)
+                        },
+                        title = "长按「我」切换账号",
+                        summary = "长按悬浮底栏的「我」快速切换已保存账号",
+                        modifier = Modifier.testTag("settings_quick_switch_account"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = profileTabAvatar,
+                        onCheckedChange = {
+                            profileTabAvatar = it
+                            App.settings.applyProfileTabAvatar(it)
+                        },
+                        title = "底栏「我」显示头像",
+                        summary = "在悬浮底栏的「我」位置显示当前账号头像",
+                        modifier = Modifier.testTag("settings_profile_tab_avatar"),
+                        cardListPosition = CardListPosition.Middle,
                     )
                     // 纯本地模式一律用访客身份取数，没有账号可选。
                     if (!guest) {

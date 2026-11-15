@@ -78,6 +78,27 @@ class FeedSnapshotStoreTest {
     }
 
     @Test
+    fun saveThenLoadPreservesGapsAndIgnoresOrphanedOnes() {
+        val items = listOf(status("10"), status("5"))
+        val gaps = listOf(
+            FeedGap(id = "g1", cursor = "c_10", beforeStatusId = "5", loadedCount = 12, loading = true, error = "net"),
+            FeedGap(id = "g_orphan", cursor = "c_x", beforeStatusId = "999"),
+        )
+        store.save(Owner, "friends", items, sinceId = "1", end = false, gaps = gaps)
+
+        val snapshot = store.load(Owner, "friends")
+
+        assertEquals(1, snapshot?.gaps?.size)
+        val restored = snapshot?.gaps?.first()
+        assertEquals("g1", restored?.id)
+        assertEquals("c_10", restored?.cursor)
+        assertEquals("5", restored?.beforeStatusId)
+        assertEquals(12, restored?.loadedCount)
+        assertEquals(false, restored?.loading)
+        assertNull(restored?.error)
+    }
+
+    @Test
     fun saveKeepsAtMostOneFilePerStreamAndAccount() {
         store.save(Owner, "friends", listOf(status("1")), sinceId = null, end = false)
         store.save(Owner, "friends", listOf(status("1"), status("2")), sinceId = null, end = true)

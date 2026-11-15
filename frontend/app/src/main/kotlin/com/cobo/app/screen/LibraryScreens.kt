@@ -473,7 +473,7 @@ fun AccountsScreen(nav: NavState) {
                                 if (swipe.isRevealed) {
                                     scope.launch { swipe.close() }
                                 } else {
-                                    App.repo.updateSession(account.cookie, account.uid)
+                                    App.repo.switchAccount(account)
                                     currentCookie = account.cookie
                                     nav.reset(Route.Main)
                                 }

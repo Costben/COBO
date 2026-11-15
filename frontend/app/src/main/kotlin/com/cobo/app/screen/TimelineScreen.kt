@@ -3,14 +3,20 @@ package com.cobo.app.screen
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -23,13 +29,16 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.Status
 import com.cobo.app.ui.NavState
@@ -47,6 +56,9 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.pageContainerColor
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
@@ -76,6 +88,36 @@ enum class FeedFilter(val label: String, val emptyText: String) {
     Local("本地关注", "还没有本地关注"),
 }
 
+internal sealed interface FeedEntry {
+    val key: String
+
+    data class Post(val status: Status, val statusIndex: Int) : FeedEntry {
+        override val key: String get() = status.id
+    }
+
+    data class Gap(val gap: FeedGap) : FeedEntry {
+        override val key: String get() = gapEntryKey(gap.id)
+    }
+}
+
+private fun gapEntryKey(gapId: String): String = "gap:$gapId"
+
+internal data class PrependAnchor(val key: String, val scrollOffset: Int)
+
+internal sealed interface GapAnchor {
+    data class TopItem(val key: String, val scrollOffset: Int) : GapAnchor
+    data class ViewportItem(val key: String, val itemOffset: Int) : GapAnchor
+}
+
+internal data class PendingGapRestore(val targetIndex: Int, val itemOffset: Int)
+
+internal interface ScrollAnchorController {
+    fun captureForPrepend(): PrependAnchor?
+    fun restoreAfterPrepend(anchor: PrependAnchor?)
+    fun captureForGap(gap: FeedGap): GapAnchor?
+    fun restoreAfterGap(anchor: GapAnchor?, beforeStatusId: String, gapId: String)
+}
+
 class FeedStore(
     /** 这条流的标识：默认取数容器用它，快照与滚动位置也按它分文件。 */
     val key: String,
@@ -86,11 +128,15 @@ class FeedStore(
      * 只给首页那几栏开：别的地方进来应该是一条新流，不该沿用上次的列表。
      */
     val resumable: Boolean = false,
+    /** 时间排序流才支持「倒序浏览」（刷新时在原位置上方插新微博与断点）。 */
+    val supportsReverseBrowse: Boolean = false,
+    private val reverseBrowseEnabled: () -> Boolean = { App.isReverseBrowseEnabled() },
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
         App.repo.container(key, sinceId = cursor, force = force)
     },
 ) {
     val items = mutableStateListOf<Status>()
+    val gaps = mutableStateListOf<FeedGap>()
     var sinceId by mutableStateOf<String?>(null)
         private set
     var loading by mutableStateOf(false)
@@ -113,6 +159,13 @@ class FeedStore(
     var generation by mutableIntStateOf(0)
         private set
 
+    internal var scrollAnchorController: ScrollAnchorController? = null
+    internal var pendingGapRestore: PendingGapRestore? = null
+    internal var gapRestoreGeneration by mutableIntStateOf(0)
+        private set
+
+    private var nextGapSeq = 0L
+
     /** 这一份列表是从上次的快照填回来的，不是这次新拉的。 */
     var resumed by mutableStateOf(false)
         private set
@@ -121,6 +174,34 @@ class FeedStore(
     private var pendingScroll: Pair<Int, Int>? = null
 
     fun takePendingScroll(): Pair<Int, Int>? = pendingScroll.also { pendingScroll = null }
+
+    internal fun takePendingGapRestore(): PendingGapRestore? =
+        pendingGapRestore.also { pendingGapRestore = null }
+
+    internal fun requestGapRestore(targetIndex: Int, itemOffset: Int) {
+        pendingGapRestore = PendingGapRestore(targetIndex, itemOffset)
+        gapRestoreGeneration++
+    }
+
+    internal fun entries(): List<FeedEntry> = buildList(items.size + gaps.size) {
+        val gapByBefore = gaps.associateBy { it.beforeStatusId }
+        items.forEachIndexed { index, status ->
+            gapByBefore[status.id]?.let { add(FeedEntry.Gap(it)) }
+            add(FeedEntry.Post(status, index))
+        }
+    }
+
+    internal fun entryKeys(): List<String> = buildList(items.size + gaps.size) {
+        val gapByBefore = gaps.associateBy { it.beforeStatusId }
+        for (status in items) {
+            gapByBefore[status.id]?.let { add(gapEntryKey(it.id)) }
+            add(status.id)
+        }
+    }
+
+    private fun isReverseBrowse(): Boolean = supportsReverseBrowse && reverseBrowseEnabled()
+
+    private fun nextGapId(): String = "${System.currentTimeMillis()}_${++nextGapSeq}"
 
     // 静默加载与主动刷新分开：只有后者驱动下拉动画，切 tab 触发的首次加载不播。
     private var fetching = false
@@ -154,6 +235,8 @@ class FeedStore(
         if (snapshot.items.isEmpty()) return
         items.clear()
         items.addAll(snapshot.items)
+        gaps.clear()
+        gaps.addAll(snapshot.gaps)
         sinceId = snapshot.sinceId
         end = snapshot.end
         loaded = true
@@ -162,13 +245,21 @@ class FeedStore(
     }
 
     private suspend fun persist() {
-        if (!resumable || items.isEmpty() || items.size > SnapshotMaxItems) return
+        if (!resumable || items.isEmpty()) return
         val snapshotItems = items.toList()
+        val snapshotGaps = gaps.toList()
         val cursor = sinceId
         val atEnd = end
         withContext(Dispatchers.IO) {
             runCatching {
-                App.snapshots.save(App.repo.session?.uid.orEmpty(), key, snapshotItems, cursor, atEnd)
+                App.snapshots.save(
+                    App.repo.session?.uid.orEmpty(),
+                    key,
+                    snapshotItems,
+                    cursor,
+                    atEnd,
+                    snapshotGaps,
+                )
             }
         }
     }
@@ -194,9 +285,14 @@ class FeedStore(
         fetching = true
         error = null
         try {
+            if (isReverseBrowse() && items.isNotEmpty()) {
+                fetchReverse(force)
+                return
+            }
             val page = loader(null, force)
             val known = HashSet<String>()
             val unique = page.items.filter { known.add(it.id) }
+            gaps.clear()
             items.clear()
             items.addAll(unique)
             sinceId = page.sinceId
@@ -213,6 +309,144 @@ class FeedStore(
             if (items.isNotEmpty()) App.toast(error!!)
         } finally {
             fetching = false
+        }
+    }
+
+    /**
+     * 倒序浏览模式下的增量刷新：把最新拉到的微博插在当前列表上方并锚定原来的可视卡片。
+     * 若新微博跨越多页导致与旧头部暂时脱节，自动补拉最多 [AutoBridgeMaxExtraPages] 页；
+     * 仍未接上时在交界处插入 [FeedGap]，供用户在需要时继续补拉中间未读微博。
+     */
+    private suspend fun fetchReverse(force: Boolean) {
+        val firstPage = loader(null, force)
+        val firstUnique = firstPage.items.distinctBy { it.id }
+        if (firstUnique.isEmpty()) {
+            loaded = true
+            resumed = false
+            persist()
+            return
+        }
+
+        val existingIds = items.mapTo(HashSet()) { it.id }
+        val firstGapIndex = gaps.firstOrNull()
+            ?.let { gap -> items.indexOfFirst { it.id == gap.beforeStatusId } }
+            ?.takeIf { it >= 0 }
+            ?: items.size
+        val topBlockHeadIds = items.subList(0, firstGapIndex)
+            .take(HeadOverlapWindow)
+            .mapTo(HashSet()) { it.id }
+
+        fun overlapsHead(pageItems: List<Status>): Boolean {
+            if (pageItems.isEmpty()) return false
+            if (pageItems.size == 1) return pageItems[0].id in topBlockHeadIds
+            // 首条可能是服务端置顶/推广插队，跳过首条再判衔接更稳妥。
+            return pageItems.drop(1).any { it.id in topBlockHeadIds }
+        }
+
+        val collected = ArrayList<Status>()
+        val seenNew = HashSet<String>(existingIds)
+        for (s in firstUnique) {
+            if (seenNew.add(s.id)) collected.add(s)
+        }
+        if (collected.isEmpty()) {
+            loaded = true
+            resumed = false
+            persist()
+            return
+        }
+
+        var bridged = overlapsHead(firstUnique)
+        var gapCursor = firstPage.sinceId?.takeIf { it.isNotBlank() }
+        var extraPages = 0
+        while (!bridged && gapCursor != null && extraPages < AutoBridgeMaxExtraPages) {
+            extraPages++
+            val nextPage = runCatching { loader(gapCursor, false) }.getOrNull() ?: break
+            val nextUnique = nextPage.items.distinctBy { it.id }
+            if (nextUnique.isEmpty()) {
+                gapCursor = null
+                break
+            }
+            for (s in nextUnique) {
+                if (seenNew.add(s.id)) collected.add(s)
+            }
+            if (overlapsHead(nextUnique)) {
+                bridged = true
+            }
+            val nextCursor = nextPage.sinceId?.takeIf { it.isNotBlank() }
+            if (nextCursor == gapCursor) {
+                gapCursor = null
+                break
+            }
+            gapCursor = nextCursor
+        }
+
+        val anchor = scrollAnchorController?.captureForPrepend()
+        val oldHeadId = items.first().id
+        items.addAll(0, collected)
+        if (!bridged && gapCursor != null) {
+            gaps.add(0, FeedGap(id = nextGapId(), cursor = gapCursor, beforeStatusId = oldHeadId))
+        }
+        loaded = true
+        resumed = false
+        scrollAnchorController?.restoreAfterPrepend(anchor)
+        persist()
+    }
+
+    /** 点击中间断点卡片继续补拉未读区间，与下面已有微博接上后自动消除断点。 */
+    suspend fun loadGap(gapId: String) {
+        val currentIdx = gaps.indexOfFirst { it.id == gapId }
+        if (currentIdx < 0) return
+        val currentGap = gaps[currentIdx]
+        if (currentGap.loading) return
+        gaps[currentIdx] = currentGap.copy(loading = true, error = null)
+        try {
+            lock.withLock {
+                val lockedIdx = gaps.indexOfFirst { it.id == gapId }
+                val gap = gaps.getOrNull(lockedIdx) ?: return@withLock
+                val page = loader(gap.cursor, false)
+                val anchorIndex = items.indexOfFirst { it.id == gap.beforeStatusId }
+                if (anchorIndex < 0) {
+                    gaps.removeAt(lockedIdx)
+                    persist()
+                    return@withLock
+                }
+
+                val belowIds = items.subList(anchorIndex, items.size)
+                    .take(HeadOverlapWindow)
+                    .mapTo(HashSet()) { it.id }
+                val hitIdx = page.items.indexOfFirst { it.id in belowIds }
+                val slice = if (hitIdx >= 0) page.items.take(hitIdx) else page.items
+                val existingIds = items.mapTo(HashSet()) { it.id }
+                val newItems = slice.distinctBy { it.id }.filter { it.id !in existingIds }
+                val nextCursor = page.sinceId?.takeIf { it.isNotBlank() }
+                val exhausted = hitIdx >= 0 || nextCursor == null || nextCursor == gap.cursor
+
+                val anchor = scrollAnchorController?.captureForGap(gap)
+                if (newItems.isNotEmpty()) {
+                    items.addAll(anchorIndex, newItems)
+                }
+                if (exhausted) {
+                    gaps.removeAt(lockedIdx)
+                } else {
+                    gaps[lockedIdx] = gap.copy(
+                        cursor = nextCursor,
+                        loading = false,
+                        error = null,
+                        loadedCount = gap.loadedCount + newItems.size,
+                    )
+                }
+                scrollAnchorController?.restoreAfterGap(anchor, gap.beforeStatusId, gapId)
+                persist()
+            }
+        } catch (c: CancellationException) {
+            val idx = gaps.indexOfFirst { it.id == gapId }
+            if (idx >= 0) gaps[idx] = gaps[idx].copy(loading = false)
+            throw c
+        } catch (t: Throwable) {
+            val idx = gaps.indexOfFirst { it.id == gapId }
+            if (idx >= 0) {
+                gaps[idx] = gaps[idx].copy(loading = false, error = t.message ?: "加载失败")
+            }
         }
     }
 
@@ -245,10 +479,14 @@ class FeedStore(
         if (!App.confirmLike(status.liked)) return
         runCatching { App.repo.like(status.id, status.liked) }
             .onSuccess {
-                items[index] = status.copy(
-                    liked = !status.liked,
-                    attitudes = (status.attitudes + if (status.liked) -1 else 1).coerceAtLeast(0),
-                )
+                val currentIdx = items.indexOfFirst { it.id == status.id }
+                if (currentIdx >= 0) {
+                    val latest = items[currentIdx]
+                    items[currentIdx] = latest.copy(
+                        liked = !latest.liked,
+                        attitudes = (latest.attitudes + if (latest.liked) -1 else 1).coerceAtLeast(0),
+                    )
+                }
             }
             .onFailure { App.toast(it.message ?: "操作失败") }
     }
@@ -315,16 +553,116 @@ fun TimelineScreen(
     }
     val currentFollowStore by rememberUpdatedState(followStore)
     val currentStores by rememberUpdatedState(stores)
+    DisposableEffect(stores, listStates, pagerState.currentPage) {
+        val bindings = ArrayList<Pair<FeedStore, ScrollAnchorController>>()
+        fun attach(index: Int) {
+            val store = stores.getOrNull(index) ?: return
+            val listState = listStates.getOrNull(index) ?: return
+            val controller = object : ScrollAnchorController {
+                override fun captureForPrepend(): PrependAnchor? {
+                    if (store.items.isEmpty()) return null
+                    val keys = store.entryKeys()
+                    val idx = listState.firstVisibleItemIndex.coerceIn(0, (keys.size - 1).coerceAtLeast(0))
+                    val key = keys.getOrNull(idx) ?: return null
+                    return PrependAnchor(key, listState.firstVisibleItemScrollOffset)
+                }
+
+                override fun restoreAfterPrepend(anchor: PrependAnchor?) {
+                    if (anchor == null) return
+                    val newIndex = store.entryKeys().indexOf(anchor.key)
+                    if (newIndex >= 0) {
+                        listState.requestScrollToItem(newIndex, anchor.scrollOffset)
+                    }
+                }
+
+                override fun captureForGap(gap: FeedGap): GapAnchor? {
+                    val layout = listState.layoutInfo
+                    val visible = layout.visibleItemsInfo
+                    val gapKey = gapEntryKey(gap.id)
+                    val gapInfo = visible.firstOrNull { it.key == gapKey }
+                    val viewportH = layout.viewportSize.height
+                    if (gapInfo != null && viewportH > 0 && gapInfo.offset > viewportH * 0.55f) {
+                        val keys = store.entryKeys()
+                        val firstKey = keys.getOrNull(listState.firstVisibleItemIndex) ?: return null
+                        return GapAnchor.TopItem(firstKey, listState.firstVisibleItemScrollOffset)
+                    }
+                    val beforeInfo = visible.firstOrNull { it.key == gap.beforeStatusId }
+                    if (beforeInfo != null) {
+                        return GapAnchor.ViewportItem(gap.beforeStatusId, beforeInfo.offset)
+                    }
+                    if (gapInfo != null) {
+                        return GapAnchor.ViewportItem(gapKey, gapInfo.offset)
+                    }
+                    val keys = store.entryKeys()
+                    val firstKey = keys.getOrNull(listState.firstVisibleItemIndex) ?: return null
+                    return GapAnchor.TopItem(firstKey, listState.firstVisibleItemScrollOffset)
+                }
+
+                override fun restoreAfterGap(
+                    anchor: GapAnchor?,
+                    beforeStatusId: String,
+                    gapId: String,
+                ) {
+                    if (anchor == null) return
+                    val newKeys = store.entryKeys()
+                    when (anchor) {
+                        is GapAnchor.TopItem -> {
+                            val newIndex = newKeys.indexOf(anchor.key)
+                            if (newIndex >= 0) {
+                                listState.requestScrollToItem(newIndex, anchor.scrollOffset)
+                            }
+                        }
+                        is GapAnchor.ViewportItem -> {
+                            val targetKey = anchor.key.takeIf { it in newKeys } ?: beforeStatusId
+                            val targetIndex = newKeys.indexOf(targetKey)
+                            if (targetIndex >= 0) {
+                                if (anchor.itemOffset <= 0) {
+                                    listState.requestScrollToItem(targetIndex, -anchor.itemOffset)
+                                } else {
+                                    store.requestGapRestore(targetIndex, anchor.itemOffset)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            store.scrollAnchorController = controller
+            bindings.add(store to controller)
+        }
+        val activePage = pagerState.currentPage
+        stores.indices.forEach { idx -> if (idx != activePage) attach(idx) }
+        attach(activePage)
+        onDispose {
+            for ((store, controller) in bindings) {
+                if (store.scrollAnchorController === controller) {
+                    store.scrollAnchorController = null
+                }
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         App.feedRefreshEvents.collect { currentFollowStore.refresh() }
     }
     LaunchedEffect(Unit) {
-        App.feedTopEvents.collect {
+        App.feedTopEvents.collect { scrollToTop ->
             val page = pagerState.currentPage
             val store = currentStores.getOrNull(page) ?: return@collect
-            // Smooth ride back to the first card, then the same pull the finger would do, so the
-            // page slides down and the list stays put while it reloads.
-            listStates.getOrNull(page)?.glideToTop()
+            val listState = listStates.getOrNull(page)
+            val reverse = App.isReverseBrowseEnabled() && store.supportsReverseBrowse
+            if (scrollToTop && reverse) {
+                // 倒序浏览下双击「微博」仅作回到顶部之用；已在顶部时才触发一次刷新。
+                val atTop = listState == null ||
+                    (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0)
+                if (!atTop) {
+                    listState.glideToTop()
+                    return@collect
+                }
+            }
+            if (scrollToTop || !reverse) {
+                // Smooth ride back to the first card, then the same pull the finger would do, so the
+                // page slides down and the list stays put while it reloads.
+                listState?.glideToTop()
+            }
             val pull = pullStates.getOrNull(page)
             if (pull != null) {
                 pull.startRefresh { refreshScope.launch { store.refresh() } }
@@ -400,10 +738,19 @@ private fun TimelinePage(
             memory.seen = true
         }
     }
+    LaunchedEffect(store.gapRestoreGeneration) {
+        val restore = store.takePendingGapRestore() ?: return@LaunchedEffect
+        val total = store.items.size + store.gaps.size
+        if (restore.targetIndex in 0 until total) {
+            listState.scrollToItem(restore.targetIndex, 0)
+            listState.scrollBy(-restore.itemOffset.toFloat())
+        }
+    }
     LaunchedEffect(listState, store) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
-                if (last >= store.items.size - 2 && store.items.isNotEmpty()) store.loadMore()
+                val total = store.items.size + store.gaps.size
+                if (last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
             }
     }
     // 快照恢复之后落回上次停下的那张卡片。只落一次：之后的位置归 LazyListState 自己管。
@@ -415,7 +762,7 @@ private fun TimelinePage(
         if (store.resumed) memory.seen = true
         val target = store.takePendingScroll()
         if (target != null) {
-            val last = store.items.lastIndex
+            val last = store.items.size + store.gaps.size - 1
             if (last >= 0) listState.scrollToItem(target.first.coerceIn(0, last), target.second)
         }
         scrollReady = true
@@ -470,32 +817,49 @@ private fun TimelinePage(
                     }
                 }
             }
-            itemsIndexed(store.items, key = { _, status -> status.id }) { index, status ->
-                val origin = rememberExpandOrigin()
-                val topBar = LocalTopBarBounds.current
-                // Hand the card's list and bar to the origin so a return can lift the row out from
-                // under the bar instead of drawing the card over it.
-                SideEffect {
-                    origin.listState = listState
-                    origin.rowKey = status.id
-                    origin.topBar = topBar
+            val entries = store.entries()
+            items(
+                items = entries,
+                key = { it.key },
+                contentType = { if (it is FeedEntry.Gap) "gap" else "post" },
+            ) { entry ->
+                when (entry) {
+                    is FeedEntry.Gap -> {
+                        FeedGapCard(
+                            gap = entry.gap,
+                            onClick = { scope.launch { store.loadGap(entry.gap.id) } },
+                        )
+                    }
+                    is FeedEntry.Post -> {
+                        val status = entry.status
+                        val index = entry.statusIndex
+                        val origin = rememberExpandOrigin()
+                        val topBar = LocalTopBarBounds.current
+                        // Hand the card's list and bar to the origin so a return can lift the row out from
+                        // under the bar instead of drawing the card over it.
+                        SideEffect {
+                            origin.listState = listState
+                            origin.rowKey = status.id
+                            origin.topBar = topBar
+                        }
+                        StatusCard(
+                            status = status,
+                            modifier = Modifier.expandOrigin(origin).testTag("feed_card_$index"),
+                            onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                            onUser = { nav.push(Route.Profile(it.id)) },
+                            onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
+                            onVideo = { nav.push(Route.Video(it.url, it.title)) },
+                            onLike = { scope.launch { store.like(index) } },
+                            onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                            onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                            actionsEnabled = !store.readOnly,
+                            onOpenQuoted = { quoted, quotedOrigin ->
+                                quotedOrigin.attachToRow(listState, status.id, topBar)
+                                nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
+                            },
+                        )
+                    }
                 }
-                StatusCard(
-                    status = status,
-                    modifier = Modifier.expandOrigin(origin).testTag("feed_card_$index"),
-                    onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    onUser = { nav.push(Route.Profile(it.id)) },
-                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                    onVideo = { nav.push(Route.Video(it.url, it.title)) },
-                    onLike = { scope.launch { store.like(index) } },
-                    onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    actionsEnabled = !store.readOnly,
-                    onOpenQuoted = { quoted, quotedOrigin ->
-                        quotedOrigin.attachToRow(listState, status.id, topBar)
-                        nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
-                    },
-                )
             }
             if (store.items.isNotEmpty()) {
                 item {
@@ -555,14 +919,67 @@ private suspend fun LazyListState.glideToTop() {
     }
 }
 
+@Composable
+private fun FeedGapCard(
+    gap: FeedGap,
+    onClick: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("feed_gap_${gap.id}"),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        weight = CardDefaults.GroupWeight,
+        onClick = if (gap.loading) null else onClick,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (gap.loading) {
+                CircularProgressIndicator(size = 16.dp, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "正在加载中间未读微博…",
+                    color = scheme.onSurfaceSecondary,
+                    fontSize = 13.sp,
+                )
+            } else if (gap.error != null) {
+                Text(
+                    text = "加载失败（${gap.error}），点击重试",
+                    color = scheme.error,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            } else {
+                val label = if (gap.loadedCount > 0) {
+                    "已补拉 ${gap.loadedCount} 条 · 点击继续加载未读微博"
+                } else {
+                    "点击加载中间未读微博"
+                }
+                Text(
+                    text = label,
+                    color = scheme.primary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+    }
+}
+
 /** 刷新头最短可见时间：空列表/命中缓存时也要让界面看到一次 `refreshing = true`。 */
 private const val MinRefreshVisibleMillis = 320L
 
 /** 列表停稳多久才记位置：一路划过去只留最后一处。 */
 private const val ScrollSaveDelayMillis = 260L
 
-/** 续看快照最多存多少条：再多写盘就慢了，这个深度足够接上位置。 */
-private const val SnapshotMaxItems = 300
+/** 倒序浏览刷新遇断层时自动顺着游标补拉的最多额外页数，避免一直转圈。 */
+private const val AutoBridgeMaxExtraPages = 2
+
+/** 判断新页是否与旧块接上的头部样本窗口大小（容忍前几条偶发被删）。 */
+private const val HeadOverlapWindow = 15
 
 private const val GlideSeconds = 0.3f
 // Short trips still get a visible ride: the floor is low enough that a one-card hop takes about

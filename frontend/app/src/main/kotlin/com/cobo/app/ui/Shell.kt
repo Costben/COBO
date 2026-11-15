@@ -13,8 +13,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -41,6 +45,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -64,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
@@ -86,18 +92,24 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.R
+import com.cobo.app.data.Account
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.FeedTabSelection
@@ -124,20 +136,26 @@ import com.cobo.app.screen.rememberSearchResultsState
 import com.cobo.app.screen.searchDiscoverItems
 import com.cobo.app.screen.searchHorizontalPadding
 import com.cobo.app.screen.searchResultsItems
+import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
+import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.basic.NavigationPopupMenuDefaults
+import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.SearchResultContainer
@@ -163,7 +181,9 @@ import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
+import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
@@ -239,6 +259,7 @@ fun MainShell(nav: NavState) {
     // 纯本地模式：没有账号可读关注流，首页只剩「本地关注」和「推荐」两段，筛选菜单也收起来。
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
     val guest = remember { App.repo.guest }
+    LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
     val leftTab = App.settings.feedLeftTab
     val centerTab = App.settings.feedCenterTab
     val rightTab = App.settings.feedRightTab
@@ -247,29 +268,31 @@ fun MainShell(nav: NavState) {
     // 一份好友流，显示时统一叫「全部」；纯本地模式没有好友流，仍按「本地关注」走。
     val filter = if (guest) FeedFilter.Local else FeedFilter.All
     val friendsStore = remember {
-        FeedStore("friends", resumable = true) { cursor, force -> App.repo.friends(cursor, force) }
+        FeedStore("friends", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            App.repo.friends(cursor, force)
+        }
     }
     val filterStores = remember {
         mapOf(
             FeedFilter.All to friendsStore,
             FeedFilter.Following to friendsStore,
-            FeedFilter.Original to FeedStore("original", resumable = true) { cursor, force ->
+            FeedFilter.Original to FeedStore("original", resumable = true, supportsReverseBrowse = true) { cursor, force ->
                 originalFeed(cursor, force)
             },
             FeedFilter.Unread to FeedStore("unread") { _, _ -> FeedPage(emptyList(), null) },
             FeedFilter.Favorites to FeedStore("favorites", resumable = true) { _, force ->
                 App.repo.favorites(force)
             },
-            FeedFilter.Special to FeedStore("special", resumable = true) { cursor, force ->
+            FeedFilter.Special to FeedStore("special", resumable = true, supportsReverseBrowse = true) { cursor, force ->
                 App.repo.special(cursor, force)
             },
-            FeedFilter.Circle to FeedStore("circle", resumable = true) { cursor, force ->
+            FeedFilter.Circle to FeedStore("circle", resumable = true, supportsReverseBrowse = true) { cursor, force ->
                 App.repo.circle(cursor, force)
             },
-            FeedFilter.Secret to FeedStore("secret", resumable = true) { cursor, force ->
+            FeedFilter.Secret to FeedStore("secret", resumable = true, supportsReverseBrowse = true) { cursor, force ->
                 App.repo.secret(cursor, force)
             },
-            FeedFilter.Local to FeedStore("local", readOnly = true, resumable = true) { cursor, force ->
+            FeedFilter.Local to FeedStore("local", readOnly = true, resumable = true, supportsReverseBrowse = true) { cursor, force ->
                 App.repo.localFollows(cursor, force)
             },
         )
@@ -313,7 +336,7 @@ fun MainShell(nav: NavState) {
         FeedTabItem.Nearby -> nearbyStore
         FeedTabItem.Group -> selection.group?.let { group ->
             groupStores.getOrPut(group.gid) {
-                FeedStore("group_${group.gid}", resumable = true) { cursor, _ ->
+                FeedStore("group_${group.gid}", resumable = true, supportsReverseBrowse = true) { cursor, _ ->
                     App.repo.groupFeed(group.gid, cursor)
                 }
             }
@@ -664,22 +687,63 @@ fun MainShell(nav: NavState) {
         }
 
         // Layer 3: 悬浮底部导航栏（在面板之下，展开时被面板盖住）。
+        val quickSwitchAccount = App.settings.quickSwitchAccount
+        val profileTabAvatar = App.settings.profileTabAvatar
+        val activeUid = App.repo.session?.uid.orEmpty()
+        var profileAvatarUrl by remember(activeUid, guest) {
+            mutableStateOf(
+                if (guest || activeUid.isBlank()) null
+                else App.store.accounts().firstOrNull { it.uid == activeUid }?.avatar?.takeIf { it.isNotBlank() },
+            )
+        }
+        LaunchedEffect(activeUid, guest, profileTabAvatar) {
+            if (guest || !profileTabAvatar || activeUid.isBlank() || !profileAvatarUrl.isNullOrBlank()) {
+                return@LaunchedEffect
+            }
+            val fetched = runCatching { App.repo.profile(activeUid) }.getOrNull() ?: return@LaunchedEffect
+            val avatar = fetched.avatar.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+            profileAvatarUrl = avatar
+            App.store.accounts().firstOrNull { it.uid == activeUid }?.let { existing ->
+                App.store.saveAccount(
+                    existing.copy(
+                        name = fetched.name.ifBlank { existing.name },
+                        avatar = avatar,
+                    ),
+                )
+            }
+        }
         CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
             PinnedBarDensity {
                 FloatingBottomBar(
                     tab = tab,
                     onTab = { target -> if (!feedPanelCovering) nav.setTab(target) },
-                    // 刷新键跟随当前页：消息页刷消息，其余仍走微博回顶刷新。
+                    // 刷新键跟随当前页：消息页刷消息，其余仍走微博刷新（倒序浏览下不强制回顶）。
                     onRefresh = {
                         if (!feedPanelCovering) {
-                            if (tab == 1) App.requestMessagesTop() else App.requestFeedTop()
+                            if (tab == 1) App.requestMessagesTop() else App.requestFeedTop(scrollToTop = false)
                         }
                     },
-                    onFeedTop = { if (!feedPanelCovering) App.requestFeedTop() },
+                    onFeedTop = { if (!feedPanelCovering) App.requestFeedTop(scrollToTop = true) },
                     onPublish = {
                         if (!feedPanelCovering) {
                             if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
                         }
+                    },
+                    profileAvatarUrl = if (profileTabAvatar && !guest) profileAvatarUrl else null,
+                    profileOverflowMenu = if (quickSwitchAccount && !feedPanelCovering) {
+                        {
+                            ProfileQuickSwitchMenu(
+                                guest = guest,
+                                onSwitchAccount = { account ->
+                                    App.repo.switchAccount(account)
+                                    nav.reset(Route.Main)
+                                },
+                                onAddAccount = { nav.push(Route.Login(addAccount = true, fresh = true)) },
+                                onManageAccounts = { nav.push(Route.Accounts) },
+                            )
+                        }
+                    } else {
+                        null
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1548,6 +1612,8 @@ private fun FloatingBottomBar(
     onRefresh: () -> Unit,
     onFeedTop: () -> Unit,
     onPublish: () -> Unit,
+    profileAvatarUrl: String? = null,
+    profileOverflowMenu: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // 双击「微博」= 回到顶部。用时间戳判定而不是 detectTapGestures：底栏 item 内部的
@@ -1633,15 +1699,226 @@ private fun FloatingBottomBar(
                     label = "微博",
                     modifier = Modifier.testTag("bottom_tab_feed"),
                 )
-                BottomFloatingNavigationBarItem(
+                ProfileFloatingNavItem(
                     selected = tab == 2,
                     onClick = { onTab(2) },
-                    icon = CoboIcons.ProfileOutline,
-                    selectedIcon = CoboIcons.ProfileFilled,
-                    label = "我",
+                    avatarUrl = profileAvatarUrl,
+                    overflowMenu = profileOverflowMenu,
                     modifier = Modifier.testTag("bottom_tab_profile"),
                 )
             }
         }
+    }
+}
+
+/**
+ * 悬浮底栏的「我」Tab：支持把图标切换为当前账号头像，并用更靠右的锚点对齐方式弹出切换账号菜单，
+ * 避免 COUI 默认按导航项右缘减边距后整张弹窗偏到屏幕左侧。
+ */
+@Composable
+private fun RowScope.ProfileFloatingNavItem(
+    selected: Boolean,
+    onClick: () -> Unit,
+    avatarUrl: String?,
+    overflowMenu: (@Composable () -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val colorScheme = COUITheme.colorScheme
+    val tint = if (selected) colorScheme.onSurface else colorScheme.labelPrimaryVariant
+    var menuExpanded by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val extraRightShiftPx = with(density) { 68.dp.roundToPx() }
+    val popupPositionProvider = remember(extraRightShiftPx) {
+        profilePopupPositionProvider(extraRightShiftPx)
+    }
+
+    Box(
+        modifier = modifier
+            .height(BottomFloatingNavigationBarDefaults.ItemHeight)
+            .widthIn(max = BottomFloatingNavigationBarDefaults.ItemMaxWidth)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Tab,
+                onLongClick = if (overflowMenu == null) null else {
+                    { menuExpanded = true }
+                },
+                onClick = onClick,
+            )
+            .semantics { this.selected = selected },
+    ) {
+        Column(
+            modifier = Modifier.align(Alignment.TopCenter),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(BottomFloatingNavigationBarDefaults.IconTopMargin))
+            if (!avatarUrl.isNullOrBlank()) {
+                val ringModifier = if (selected) {
+                    Modifier.border(1.5.dp, colorScheme.onSurface, CircleShape)
+                } else {
+                    Modifier
+                }
+                Avatar(
+                    url = avatarUrl,
+                    size = BottomFloatingNavigationBarDefaults.IconSize,
+                    modifier = ringModifier,
+                )
+            } else {
+                Image(
+                    modifier = Modifier.size(BottomFloatingNavigationBarDefaults.IconSize),
+                    imageVector = if (selected) CoboIcons.ProfileFilled else CoboIcons.ProfileOutline,
+                    contentDescription = "我",
+                    colorFilter = ColorFilter.tint(tint),
+                )
+            }
+            Spacer(Modifier.height(BottomFloatingNavigationBarDefaults.IconTitleGapVertical))
+            Text(
+                text = "我",
+                color = tint,
+                fontSize = with(density) { BottomFloatingNavigationBarDefaults.LabelFontSize.value.dp.toSp() },
+                lineHeight = with(density) { 13.6.dp.toSp() },
+                style = COUITheme.textStyles.main.copy(
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Proportional,
+                        trim = LineHeightStyle.Trim.None,
+                    ),
+                ),
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        if (overflowMenu != null) {
+            WindowListPopup(
+                show = menuExpanded,
+                popupPositionProvider = popupPositionProvider,
+                alignment = PopupPositionProvider.Align.BottomEnd,
+                maxHeight = NavigationPopupMenuDefaults.MaxHeight,
+                minWidth = NavigationPopupMenuDefaults.MinWidth,
+                onDismissRequest = { menuExpanded = false },
+            ) {
+                ListPopupColumn {
+                    overflowMenu()
+                }
+            }
+        }
+    }
+}
+
+private fun profilePopupPositionProvider(extraRightShiftPx: Int): PopupPositionProvider =
+    object : PopupPositionProvider {
+        private val margins = PaddingValues(
+            horizontal = NavigationPopupMenuDefaults.HorizontalMargin,
+            vertical = NavigationPopupMenuDefaults.VerticalMargin,
+        )
+
+        override fun calculatePosition(
+            anchorBounds: IntRect,
+            windowBounds: IntRect,
+            layoutDirection: LayoutDirection,
+            popupContentSize: IntSize,
+            popupMargin: IntRect,
+            alignment: PopupPositionProvider.Align,
+        ): IntOffset {
+            val minX = windowBounds.left + popupMargin.left
+            val maxX = (windowBounds.right - popupContentSize.width - popupMargin.right)
+                .coerceAtLeast(minX)
+            val desiredX = anchorBounds.right + extraRightShiftPx - popupContentSize.width
+            val minY = windowBounds.top + popupMargin.top
+            val maxY = (windowBounds.bottom - popupContentSize.height - popupMargin.bottom)
+                .coerceAtLeast(minY)
+            val offsetY = (anchorBounds.top - popupContentSize.height - popupMargin.bottom)
+                .coerceIn(minY, maxY)
+            return IntOffset(
+                x = desiredX.coerceIn(minX, maxX),
+                y = offsetY,
+            )
+        }
+
+        override fun getMargins(): PaddingValues = margins
+    }
+
+/** 长按悬浮底栏「我」弹出的快捷切换账号菜单。 */
+@Composable
+private fun ProfileQuickSwitchMenu(
+    guest: Boolean,
+    onSwitchAccount: (Account) -> Unit,
+    onAddAccount: () -> Unit,
+    onManageAccounts: () -> Unit,
+) {
+    val accounts = remember { App.store.accounts() }
+    val currentUid = remember { App.repo.session?.uid }
+    val currentCookie = remember { App.repo.cookie() }
+    val dismiss = LocalDismissState.current
+    val showManage = accounts.isNotEmpty()
+    val totalCount = accounts.size + 1 + if (showManage) 1 else 0
+    val actionIconTint = COUITheme.colorScheme.onSurfaceContainer
+
+    accounts.forEachIndexed { index, account ->
+        val isCurrent = !guest && (account.uid == currentUid || account.cookie == currentCookie)
+        DropdownImpl(
+            item = DropdownItem(
+                text = account.name.ifBlank { "微博账号" },
+                summary = "UID ${account.uid}",
+                icon = { iconModifier ->
+                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                        Avatar(account.avatar, 28.dp)
+                    }
+                },
+            ),
+            optionSize = totalCount,
+            isSelected = isCurrent,
+            index = index,
+            groupKey = "accounts",
+            modifier = Modifier.testTag("quick_switch_account_$index"),
+            onSelectedIndexChange = {
+                dismiss?.invoke()
+                if (!isCurrent) onSwitchAccount(account)
+            },
+        )
+    }
+
+    val addIndex = accounts.size
+    DropdownImpl(
+        item = DropdownItem(
+            text = if (guest) "登录 / 添加账号" else "添加账号",
+            icon = { iconModifier ->
+                Box(iconModifier, contentAlignment = Alignment.Center) {
+                    Icon(COUIIcons.Add, null, Modifier.size(20.dp), tint = actionIconTint)
+                }
+            },
+        ),
+        optionSize = totalCount,
+        isSelected = false,
+        index = addIndex,
+        groupKey = "actions",
+        modifier = Modifier.testTag("quick_switch_add_account"),
+        onSelectedIndexChange = {
+            dismiss?.invoke()
+            onAddAccount()
+        },
+    )
+
+    if (showManage) {
+        DropdownImpl(
+            item = DropdownItem(
+                text = "账号管理",
+                icon = { iconModifier ->
+                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                        Icon(COUIIcons.Settings, null, Modifier.size(20.dp), tint = actionIconTint)
+                    }
+                },
+            ),
+            optionSize = totalCount,
+            isSelected = false,
+            index = addIndex + 1,
+            groupKey = "actions",
+            modifier = Modifier.testTag("quick_switch_manage_accounts"),
+            onSelectedIndexChange = {
+                dismiss?.invoke()
+                onManageAccounts()
+            },
+        )
     }
 }

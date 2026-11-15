@@ -54,6 +54,10 @@ class FeedSnapshotJsonTest {
                 cover = "https://wx1.sinaimg.cn/large/cover.jpg",
                 url = "https://f.video.weibocdn.com/1.mp4",
             ),
+            bigPic = BigPicInfo(
+                url = "https://mu1.sinaimg.cn/original/bigpic.png",
+                scheme = "https://m.weibo.cn/c/wbox?id=test",
+            ),
             retweeted = Status(
                 id = "5000000000000001",
                 mid = "5000000000000001",
@@ -81,6 +85,7 @@ class FeedSnapshotJsonTest {
         assertEquals(Membership.Svip, restored?.user?.membership)
         assertTrue(restored?.pics?.get(1)?.isLive == true)
         assertTrue(restored?.video?.url == original.video?.url)
+        assertEquals(original.bigPic, restored?.bigPic)
         assertTrue(restored?.retweeted?.user?.name == "小红")
     }
 
