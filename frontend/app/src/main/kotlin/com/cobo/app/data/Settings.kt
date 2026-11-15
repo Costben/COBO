@@ -101,8 +101,11 @@ class Settings(context: Context) {
     private companion object {
         const val SearchHistoryLimit = 10
 
-        /** 续看位置在 SharedPreferences 里的前缀，后面接流的 key。 */
+        /** 续看位置在 SharedPreferences 里的前缀，后面接流的 key（旧版不分账号）。 */
         const val ScrollKeyPrefix = "scroll_"
+
+        /** 按账号区分的续看位置前缀，格式 `scroll_v2_<uid>_<key>`。 */
+        const val ScopedScrollKeyPrefix = "scroll_v2_"
 
         /** 首页停在某个关注分组时 [feedTabKey] 里的标记，见 [FeedTabSelection.key]。 */
         const val GroupKeyMarker = "group_"
@@ -288,11 +291,13 @@ class Settings(context: Context) {
     }
 
     /**
-     * 某个首页栏上次停在哪儿：卡片下标与偏了几像素。按流分开记，
-     * 「关注」和「推荐」各记各的，切栏不会互相带跑。
+     * 某个账号的首页栏上次停在哪儿：卡片下标与偏了几像素。按账号和流分开记，
+     * 切换账号后各保持各自的阅读位置，不会互相带跑。
      */
-    fun feedScroll(key: String): Pair<Int, Int>? {
-        val raw = sp.getString(ScrollKeyPrefix + key, null) ?: return null
+    fun feedScroll(owner: String, key: String): Pair<Int, Int>? {
+        val raw = sp.getString(scopedFeedScrollPrefKey(owner, key), null)
+            ?: sp.getString(ScrollKeyPrefix + key, null)
+            ?: return null
         val parts = raw.split(',')
         if (parts.size != 2) return null
         val index = parts[0].toIntOrNull() ?: return null
@@ -300,16 +305,27 @@ class Settings(context: Context) {
         return index.coerceAtLeast(0) to offset.coerceAtLeast(0)
     }
 
-    fun applyFeedScroll(key: String, index: Int, offset: Int) {
-        sp.edit()
-            .putString(ScrollKeyPrefix + key, "${index.coerceAtLeast(0)},${offset.coerceAtLeast(0)}")
-            .apply()
+    fun applyFeedScroll(owner: String, key: String, index: Int, offset: Int) {
+        val editor = sp.edit()
+            .putString(
+                scopedFeedScrollPrefKey(owner, key),
+                "${index.coerceAtLeast(0)},${offset.coerceAtLeast(0)}",
+            )
+        val legacy = ScrollKeyPrefix + key
+        if (sp.contains(legacy)) editor.remove(legacy)
+        editor.apply()
     }
 
-    /**
-     * 清掉所有栏的续看位置。滚动位置是按流记的、不分账号，换账号后必须一起清：
-     * 否则新账号进来会按上一个人的卡片下标落位，第 3 栏可能直接跳到第 80 条。
-     */
+    /** 切号时只清旧版未按账号区分的滚动位置，避免串到新账号，保留各账号自己的位置。 */
+    fun clearLegacyFeedScrolls() {
+        val editor = sp.edit()
+        sp.all.keys
+            .filter { it.startsWith(ScrollKeyPrefix) && !it.startsWith(ScopedScrollKeyPrefix) }
+            .forEach(editor::remove)
+        editor.apply()
+    }
+
+    /** 退出登录时清掉所有账号的续看位置。 */
     fun clearFeedScrolls() {
         val editor = sp.edit()
         sp.all.keys.filter { it.startsWith(ScrollKeyPrefix) }.forEach(editor::remove)
@@ -520,3 +536,6 @@ internal fun removeSearchHistoryItem(
     history: MutableList<String>,
     keyword: String,
 ): Boolean = history.remove(keyword)
+
+internal fun scopedFeedScrollPrefKey(owner: String, key: String): String =
+    "scroll_v2_${snapshotOwnerKey(owner)}_$key"

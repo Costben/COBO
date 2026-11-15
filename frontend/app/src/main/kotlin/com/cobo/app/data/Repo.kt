@@ -331,22 +331,29 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     fun logout() {
-        resetAccountCaches(clearGroupTabs = true)
+        resetAccountCaches(clearGroupTabs = true, clearSnapshotsAndScrolls = true)
         store.clearSession()
         session = null
     }
 
     /**
-     * 换账号 / 退出登录时把跟「这个人」绑定的缓存整批清掉。
+     * 换账号 / 退出登录时把跟「这个人」绑定的短期接口缓存整批清掉。
      *
      * 关注分组与特别关注名单都带有效期，有效期只对生成它的那个账号成立：不清就会在十分钟内
-     * 沿用上一个账号的分组和名单。续看快照与滚动位置同样按人记——列表、游标、卡片下标都只
-     * 对写它的那个账号有意义，换个人接着用会落到完全不相干的一条微博上。
+     * 沿用上一个账号的分组和名单。续看快照与滚动位置已经按账号 UID 分开存放，切号时保留
+     * 各自上次的列表与位置，只有主动退出登录才全部清掉。
      */
-    private fun resetAccountCaches(clearGroupTabs: Boolean) {
+    private fun resetAccountCaches(
+        clearGroupTabs: Boolean,
+        clearSnapshotsAndScrolls: Boolean = false,
+    ) {
         App.cache.clear()
-        App.snapshots.clear()
-        App.settings.clearFeedScrolls()
+        if (clearSnapshotsAndScrolls) {
+            App.snapshots.clear()
+            App.settings.clearFeedScrolls()
+        } else {
+            App.settings.clearLegacyFeedScrolls()
+        }
         if (clearGroupTabs) App.settings.clearGroupFeedTabs()
         cachedFollowGroups = emptyList()
         cachedFollowGroupsAt = 0L

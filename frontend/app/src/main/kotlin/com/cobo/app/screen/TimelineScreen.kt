@@ -131,6 +131,7 @@ class FeedStore(
     /** 时间排序流才支持「倒序浏览」（刷新时在原位置上方插新微博与断点）。 */
     val supportsReverseBrowse: Boolean = false,
     private val reverseBrowseEnabled: () -> Boolean = { App.isReverseBrowseEnabled() },
+    private val snapshotOwner: () -> String = { App.repo.session?.uid.orEmpty() },
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
         App.repo.container(key, sinceId = cursor, force = force)
     },
@@ -199,6 +200,8 @@ class FeedStore(
         }
     }
 
+    internal fun owner(): String = snapshotOwner()
+
     private fun isReverseBrowse(): Boolean = supportsReverseBrowse && reverseBrowseEnabled()
 
     private fun nextGapId(): String = "${System.currentTimeMillis()}_${++nextGapSeq}"
@@ -229,8 +232,9 @@ class FeedStore(
      * 不再重发请求；位置由 [App.settings] 里记的那一条补上。
      */
     private suspend fun resume() {
+        val ownerId = snapshotOwner()
         val snapshot = withContext(Dispatchers.IO) {
-            runCatching { App.snapshots.load(App.repo.session?.uid.orEmpty(), key) }.getOrNull()
+            runCatching { App.snapshots.load(ownerId, key) }.getOrNull()
         } ?: return
         if (snapshot.items.isEmpty()) return
         items.clear()
@@ -241,11 +245,12 @@ class FeedStore(
         end = snapshot.end
         loaded = true
         resumed = true
-        pendingScroll = App.settings.feedScroll(key)
+        pendingScroll = App.settings.feedScroll(ownerId, key)
     }
 
     private suspend fun persist() {
         if (!resumable || items.isEmpty()) return
+        val ownerId = snapshotOwner()
         val snapshotItems = items.toList()
         val snapshotGaps = gaps.toList()
         val cursor = sinceId
@@ -253,7 +258,7 @@ class FeedStore(
         withContext(Dispatchers.IO) {
             runCatching {
                 App.snapshots.save(
-                    App.repo.session?.uid.orEmpty(),
+                    ownerId,
                     key,
                     snapshotItems,
                     cursor,
@@ -674,8 +679,12 @@ fun TimelineScreen(
     LaunchedEffect(Unit) {
         App.followEvents.collect { currentFollowStore.refresh() }
     }
+    var lastFeedVersion by remember { mutableIntStateOf(App.feedVersion) }
     LaunchedEffect(App.feedVersion) {
-        if (App.feedVersion > 0) recommendStore.refresh()
+        if (App.feedVersion > lastFeedVersion) {
+            lastFeedVersion = App.feedVersion
+            recommendStore.refresh()
+        }
     }
 
     HorizontalPager(
@@ -767,9 +776,10 @@ private fun TimelinePage(
         }
         scrollReady = true
     }
-    // 停在哪要记住：进程被杀之后再进来，快照填好就直接落到这里。滚动中不写，停稳一会儿再写，
-    // 一路划过去只留最后一处位置。
-    LaunchedEffect(listState, store, scrollReady) {
+    // 停在哪要记住：进程被杀或切换账号后再回来，快照填好就直接落到这里。滚动中不写，停稳一会儿再写，
+    // 离开页面或切换账号时立刻补写一次，避免刚停下来就切号丢失位置。
+    val scrollOwner = remember(store) { store.owner() }
+    LaunchedEffect(listState, store, scrollReady, scrollOwner) {
         if (!store.resumable || !scrollReady) return@LaunchedEffect
         snapshotFlow {
             Triple(
@@ -780,7 +790,19 @@ private fun TimelinePage(
         }.collectLatest { (index, offset, scrolling) ->
             if (scrolling) return@collectLatest
             delay(ScrollSaveDelayMillis)
-            App.settings.applyFeedScroll(store.key, index, offset)
+            App.settings.applyFeedScroll(scrollOwner, store.key, index, offset)
+        }
+    }
+    DisposableEffect(listState, store, scrollReady, scrollOwner) {
+        onDispose {
+            if (store.resumable && scrollReady) {
+                App.settings.applyFeedScroll(
+                    scrollOwner,
+                    store.key,
+                    listState.firstVisibleItemIndex,
+                    listState.firstVisibleItemScrollOffset,
+                )
+            }
         }
     }
 

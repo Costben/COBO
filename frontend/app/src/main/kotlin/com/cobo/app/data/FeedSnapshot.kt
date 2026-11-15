@@ -98,7 +98,7 @@ class FeedSnapshotStore(private val root: File) {
     }
 
     private fun file(owner: String, key: String): File {
-        val dir = File(root, owner.filter { it.isLetterOrDigit() }.ifBlank { GuestOwner })
+        val dir = File(root, snapshotOwnerKey(owner))
             .apply { mkdirs() }
         val name = key.filter { it.isLetterOrDigit() || it == '_' || it == '-' }.ifBlank { "feed" }
         return File(dir, "$name.json")
@@ -111,10 +111,11 @@ class FeedSnapshotStore(private val root: File) {
         const val MaxItems = 500
 
         const val MaxAgeMillis = 7L * 24 * 60 * 60 * 1000
-
-        const val GuestOwner = "guest"
     }
 }
+
+internal fun snapshotOwnerKey(owner: String): String =
+    owner.filter { it.isLetterOrDigit() }.ifBlank { "guest" }
 
 data class FeedGap(
     val id: String,

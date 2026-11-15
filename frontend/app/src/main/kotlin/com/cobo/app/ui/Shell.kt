@@ -259,6 +259,7 @@ fun MainShell(nav: NavState) {
     // 纯本地模式：没有账号可读关注流，首页只剩「本地关注」和「推荐」两段，筛选菜单也收起来。
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
     val guest = remember { App.repo.guest }
+    val accountOwner = remember { App.repo.session?.uid.orEmpty() }
     LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
     val leftTab = App.settings.feedLeftTab
     val centerTab = App.settings.feedCenterTab
@@ -268,7 +269,7 @@ fun MainShell(nav: NavState) {
     // 一份好友流，显示时统一叫「全部」；纯本地模式没有好友流，仍按「本地关注」走。
     val filter = if (guest) FeedFilter.Local else FeedFilter.All
     val friendsStore = remember {
-        FeedStore("friends", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+        FeedStore("friends", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
             App.repo.friends(cursor, force)
         }
     }
@@ -276,28 +277,28 @@ fun MainShell(nav: NavState) {
         mapOf(
             FeedFilter.All to friendsStore,
             FeedFilter.Following to friendsStore,
-            FeedFilter.Original to FeedStore("original", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            FeedFilter.Original to FeedStore("original", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 originalFeed(cursor, force)
             },
-            FeedFilter.Unread to FeedStore("unread") { _, _ -> FeedPage(emptyList(), null) },
-            FeedFilter.Favorites to FeedStore("favorites", resumable = true) { _, force ->
+            FeedFilter.Unread to FeedStore("unread", snapshotOwner = { accountOwner }) { _, _ -> FeedPage(emptyList(), null) },
+            FeedFilter.Favorites to FeedStore("favorites", resumable = true, snapshotOwner = { accountOwner }) { _, force ->
                 App.repo.favorites(force)
             },
-            FeedFilter.Special to FeedStore("special", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            FeedFilter.Special to FeedStore("special", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 App.repo.special(cursor, force)
             },
-            FeedFilter.Circle to FeedStore("circle", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            FeedFilter.Circle to FeedStore("circle", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 App.repo.circle(cursor, force)
             },
-            FeedFilter.Secret to FeedStore("secret", resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            FeedFilter.Secret to FeedStore("secret", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 App.repo.secret(cursor, force)
             },
-            FeedFilter.Local to FeedStore("local", readOnly = true, resumable = true, supportsReverseBrowse = true) { cursor, force ->
+            FeedFilter.Local to FeedStore("local", readOnly = true, resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 App.repo.localFollows(cursor, force)
             },
         )
     }
-    val recommendStore = remember { FeedStore("102803", readOnly = guest, resumable = true) }
+    val recommendStore = remember { FeedStore("102803", readOnly = guest, resumable = true, snapshotOwner = { accountOwner }) }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
 
@@ -306,7 +307,7 @@ fun MainShell(nav: NavState) {
 
     // 附近：坐标来自设备定位或用户选的城市，换位置之后这条流要整条重来。
     val nearbyStore = remember {
-        FeedStore("nearby", resumable = true) { cursor, force ->
+        FeedStore("nearby", resumable = true, snapshotOwner = { accountOwner }) { cursor, force ->
             val coords = nearbyCoords(App.context)
             if (coords == null) {
                 FeedPage(emptyList(), null)
@@ -336,7 +337,7 @@ fun MainShell(nav: NavState) {
         FeedTabItem.Nearby -> nearbyStore
         FeedTabItem.Group -> selection.group?.let { group ->
             groupStores.getOrPut(group.gid) {
-                FeedStore("group_${group.gid}", resumable = true, supportsReverseBrowse = true) { cursor, _ ->
+                FeedStore("group_${group.gid}", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, _ ->
                     App.repo.groupFeed(group.gid, cursor)
                 }
             }

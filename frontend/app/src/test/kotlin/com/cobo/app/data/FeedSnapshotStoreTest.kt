@@ -109,6 +109,13 @@ class FeedSnapshotStoreTest {
         assertEquals(true, store.load(Owner, "friends")?.end)
     }
 
+    @Test
+    fun scopedFeedScrollKeysIsolateAccounts() {
+        assertEquals("scroll_v2_1000000001_friends", scopedFeedScrollPrefKey("1000000001", "friends"))
+        assertEquals("scroll_v2_1000000002_friends", scopedFeedScrollPrefKey("1000000002", "friends"))
+        assertEquals("scroll_v2_guest_friends", scopedFeedScrollPrefKey("", "friends"))
+    }
+
     private fun status(id: String) = Status(
         id = id,
         mid = id,
