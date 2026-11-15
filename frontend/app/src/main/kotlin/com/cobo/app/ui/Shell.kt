@@ -154,6 +154,7 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.basic.LocalPlatformBottomBarMaterialEnabled
 import io.github.suqi8.coui.kmp.basic.NavigationPopupMenuDefaults
 import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
@@ -713,7 +714,12 @@ fun MainShell(nav: NavState) {
                 )
             }
         }
-        CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blur) backdrop else null,
+            // 窗口级材质在弹层开合引起外层 backdrop 录制切换时会丢帧导致底栏闪烁，
+            // 改用 COUI 的 Compose 玻璃引擎，直接采样同一块页面 backdrop。
+            LocalPlatformBottomBarMaterialEnabled provides false,
+        ) {
             PinnedBarDensity {
                 FloatingBottomBar(
                     tab = tab,
