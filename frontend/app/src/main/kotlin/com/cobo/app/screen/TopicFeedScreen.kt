@@ -132,7 +132,8 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                 .layerBackdropIf(blur, backdrop)
                 .background(pageContainerColor()),
         ) {
-            HorizontalPager(
+            CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
+                HorizontalPager(
                 state = pagerState,
                 beyondViewportPageCount = 1,
                 modifier = Modifier.fillMaxSize(),
@@ -220,6 +221,7 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                         }
                     }
                 }
+            }
             }
         }
 

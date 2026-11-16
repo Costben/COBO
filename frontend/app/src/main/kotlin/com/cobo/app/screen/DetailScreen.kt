@@ -284,7 +284,8 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
-            LazyColumn(
+            CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
+                LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                 contentPadding = PaddingValues(
@@ -456,6 +457,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         )
                     }
                 }
+            }
             }
         }
 

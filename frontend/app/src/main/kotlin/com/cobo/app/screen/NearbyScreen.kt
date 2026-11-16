@@ -176,7 +176,8 @@ fun NearbyScreen(nav: NavState) {
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
-            LazyColumn(
+            CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
+                LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("nearby_list"),
                 // 内容从顶栏玻璃下面滚过去，顶栏才有东西可采样。
@@ -230,6 +231,7 @@ fun NearbyScreen(nav: NavState) {
                         item { if (feed.loading) LoadingState() }
                     }
                 }
+            }
             }
         }
 

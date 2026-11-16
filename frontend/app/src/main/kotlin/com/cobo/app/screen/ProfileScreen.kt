@@ -130,7 +130,9 @@ fun ProfileScreen(nav: NavState, uid: String?) {
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样；和「我」页同一套材质。
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
-            ProfileContent(nav, uid, Modifier.fillMaxSize(), topInset = topBarHeight)
+            CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
+                ProfileContent(nav, uid, Modifier.fillMaxSize(), topInset = topBarHeight)
+            }
         }
         CompositionLocalProvider(
             LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null,

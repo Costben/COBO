@@ -185,6 +185,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Search
 import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
@@ -622,42 +623,44 @@ fun MainShell(nav: NavState) {
                     .background(pageContainerColor())
                     .then(if (feedPanelCovering) Modifier.clearAndSetSemantics {} else Modifier),
             ) {
-                // The bottom bar only switches on tap, so the page carries the transition itself:
-                // both tabs stay composed through the same state holder and cross-fade.
-                Crossfade(
-                    targetState = tab,
-                    animationSpec = tween(MainTabFadeMillis),
-                    modifier = Modifier.fillMaxSize(),
-                    label = "mainTabPage",
-                ) { page ->
-                    holder.SaveableStateProvider(page) {
-                        when (page) {
-                            0 -> TimelineScreen(
-                                nav = nav,
-                                pagerState = feedPager,
-                                stores = feedStores,
-                                emptyTexts = feedEmptyTexts,
-                                followStore = followStore,
-                                recommendStore = recommendStore,
-                                topInset = feedTopBarHeight,
-                                onScrollOffset = { feedCollapse = it },
-                            )
-                            1 -> if (guest) {
-                                LocalMessagesPlaceholder(nav, topBarHeight)
-                            } else {
-                                MessagesScreen(nav, topBarHeight)
+                CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
+                    // The bottom bar only switches on tap, so the page carries the transition itself:
+                    // both tabs stay composed through the same state holder and cross-fade.
+                    Crossfade(
+                        targetState = tab,
+                        animationSpec = tween(MainTabFadeMillis),
+                        modifier = Modifier.fillMaxSize(),
+                        label = "mainTabPage",
+                    ) { page ->
+                        holder.SaveableStateProvider(page) {
+                            when (page) {
+                                0 -> TimelineScreen(
+                                    nav = nav,
+                                    pagerState = feedPager,
+                                    stores = feedStores,
+                                    emptyTexts = feedEmptyTexts,
+                                    followStore = followStore,
+                                    recommendStore = recommendStore,
+                                    topInset = feedTopBarHeight,
+                                    onScrollOffset = { feedCollapse = it },
+                                )
+                                1 -> if (guest) {
+                                    LocalMessagesPlaceholder(nav, topBarHeight)
+                                } else {
+                                    MessagesScreen(nav, topBarHeight)
+                                }
+                                else -> if (guest) LocalHome(
+                                    nav = nav,
+                                    topInset = topBarHeight,
+                                    extraBottom = FloatingBarContentGap,
+                                ) else ProfileContent(
+                                    nav = nav,
+                                    uid = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    topInset = topBarHeight,
+                                    extraBottom = FloatingBarContentGap,
+                                )
                             }
-                            else -> if (guest) LocalHome(
-                                nav = nav,
-                                topInset = topBarHeight,
-                                extraBottom = FloatingBarContentGap,
-                            ) else ProfileContent(
-                                nav = nav,
-                                uid = null,
-                                modifier = Modifier.fillMaxSize(),
-                                topInset = topBarHeight,
-                                extraBottom = FloatingBarContentGap,
-                            )
                         }
                     }
                 }
@@ -1707,7 +1710,7 @@ private fun FloatingBottomBar(
                             tint = COUITheme.colorScheme.onSurface,
                         )
                         if (menuEnabled) {
-                            WindowListPopup(
+                            OverlayListPopup(
                                 show = leftMenuExpanded,
                                 popupPositionProvider = leftPopupPositionProvider,
                                 alignment = PopupPositionProvider.Align.BottomStart,

@@ -126,7 +126,8 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
-            FullPagePullToRefresh(
+            CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
+                FullPagePullToRefresh(
                 isRefreshing = feed.refreshing,
                 onRefresh = { scope.launch { feed.refresh() } },
                 modifier = Modifier.fillMaxSize().testTag("supertopic_page"),
@@ -225,6 +226,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                         }
                     }
                 }
+            }
             }
         }
 

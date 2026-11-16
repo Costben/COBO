@@ -90,7 +90,8 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                 .layerBackdropIf(blur, backdrop)
                 .background(pageContainerColor()),
         ) {
-            FullPagePullToRefresh(
+            CompositionLocalProvider(LocalBackdrop provides if (blur) backdrop else null) {
+                FullPagePullToRefresh(
                 isRefreshing = store.refreshing,
                 onRefresh = { scope.launch { store.refresh() } },
                 modifier = Modifier.fillMaxSize(),
@@ -145,6 +146,7 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                         }
                     }
                 }
+            }
             }
         }
 
