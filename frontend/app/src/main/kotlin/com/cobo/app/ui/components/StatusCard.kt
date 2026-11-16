@@ -61,6 +61,7 @@ import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
+import com.cobo.app.data.StatusVisibility
 import com.cobo.app.data.User
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
@@ -92,9 +93,12 @@ import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.preciseClickAnchor
 import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Community
+import io.github.suqi8.coui.kmp.icon.extended.Contacts
 import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Favorites
 import io.github.suqi8.coui.kmp.icon.extended.FavoritesFill
+import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
@@ -312,20 +316,59 @@ fun StatusHeader(
                     )
                 }
             }
-            Text(
-                text = buildString {
-                    append(formatWeiboTime(status.createdAt))
-                    if (status.source.isNotBlank()) {
-                        append(" 来自 ")
-                        append(status.source)
-                    }
-                },
-                fontSize = 11.sp,
-                color = scheme.onSurfaceSecondary,
-                maxLines = 1,
-            )
+            val timeAndSource = buildString {
+                append(formatWeiboTime(status.createdAt))
+                if (status.source.isNotBlank()) {
+                    append(" 来自 ")
+                    append(status.source)
+                }
+            }
+            val visibility = status.visibility
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (timeAndSource.isNotBlank()) {
+                    Text(
+                        text = timeAndSource,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                if (visibility != null) {
+                    if (timeAndSource.isNotBlank()) Spacer(Modifier.width(5.dp))
+                    StatusVisibilityIcon(visibility = visibility)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun StatusVisibilityIcon(
+    visibility: StatusVisibility,
+    compact: Boolean = false,
+) {
+    val scheme = COUITheme.colorScheme
+    val dark = scheme.background.luminance() < 0.5f
+    val (icon, tint) = when (visibility.type) {
+        0 -> COUIIcons.Community to scheme.onSurfaceSecondary
+        6, 2 -> COUIIcons.Contacts to if (dark) Color(0xFF4ADE80) else Color(0xFF16A34A)
+        1 -> COUIIcons.Lock to if (dark) Color(0xFFFBBF24) else Color(0xFFD97706)
+        10 -> COUIIcons.Community to scheme.primary
+        else -> COUIIcons.Lock to scheme.primary
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = visibility.label,
+        tint = tint,
+        modifier = Modifier
+            .size(if (compact) 11.dp else 12.dp)
+            .testTag("status_visibility_${visibility.type}"),
+    )
 }
 
 @Composable
@@ -692,12 +735,24 @@ fun RetweetBlock(
             }
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
-        Text(
-            text = "@${status.user?.name.orEmpty()}：",
-            color = scheme.primary,
-            fontSize = 13.sp,
-            maxLines = 1,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "@${status.user?.name.orEmpty()}：",
+                color = scheme.primary,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            val retweetVisibility = status.visibility
+            if (retweetVisibility != null && !retweetVisibility.isPublic) {
+                Spacer(Modifier.width(5.dp))
+                StatusVisibilityIcon(visibility = retweetVisibility, compact = true)
+            }
+        }
         if (status.textHtml.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
             WeiboText(

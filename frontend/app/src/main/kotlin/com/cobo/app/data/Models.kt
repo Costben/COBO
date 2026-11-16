@@ -350,6 +350,66 @@ fun parseVoteInfoJson(voteId: String, sk: String, vi: JSONObject, fallbackAuthor
     )
 }
 
+/**
+ * 微博发布/可见范围。
+ * 对应接口 `visible: { type, list_id }` 与非公开条目的 `title.text`：
+ * `0` 公开、`1` 仅自己可见、`2` 密友可见、`3` 指定分组可见、`6` 仅好友可见、`10` 仅粉丝可见。
+ */
+data class StatusVisibility(
+    val type: Int,
+    val label: String,
+    val listId: String = "",
+) {
+    val isPublic: Boolean get() = type == 0
+}
+
+private fun isVisibilityTitle(title: String): Boolean {
+    return title == "公开" ||
+        title == "好友圈" ||
+        title == "私密" ||
+        title.contains("可见") ||
+        title.contains("好友") ||
+        title.contains("自己") ||
+        title.contains("粉丝") ||
+        title.contains("密友") ||
+        title.contains("分组")
+}
+
+internal fun defaultVisibilityLabel(type: Int, hint: String = ""): String = when (type) {
+    0 -> "公开"
+    1 -> hint.ifBlank { "仅自己可见" }
+    2 -> hint.ifBlank { "密友可见" }
+    3 -> hint.ifBlank { "指定分组可见" }
+    6 -> hint.ifBlank { "仅好友可见" }
+    10 -> hint.ifBlank { "仅粉丝可见" }
+    else -> hint.ifBlank { "部分可见" }
+}
+
+internal fun parseStatusVisibility(o: JSONObject): StatusVisibility? {
+    val visObj = o.optJSONObject("visible")
+    val rawTitle = o.optJSONObject("title")?.str("text")?.trim().orEmpty()
+    val visibilityTitle = rawTitle.takeIf { it.isNotBlank() && isVisibilityTitle(it) }.orEmpty()
+
+    if (visObj == null) {
+        return when (visibilityTitle) {
+            "公开" -> StatusVisibility(type = 0, label = "公开")
+            "仅自己可见", "私密" -> StatusVisibility(type = 1, label = "仅自己可见")
+            "仅好友可见", "好友圈" -> StatusVisibility(type = 6, label = visibilityTitle)
+            else -> if (visibilityTitle.isNotBlank()) StatusVisibility(type = -1, label = visibilityTitle) else null
+        }
+    }
+
+    val type = visObj.int("type", 0)
+    val listId = visObj.str("list_idstr").ifBlank { visObj.str("list_id") }
+        .takeIf { it.isNotBlank() && it != "0" }
+        .orEmpty()
+    return StatusVisibility(
+        type = type,
+        label = defaultVisibilityLabel(type, visibilityTitle),
+        listId = listId,
+    )
+}
+
 data class Status(
     val id: String,
     val mid: String,
@@ -370,6 +430,7 @@ data class Status(
     val editCount: Int = 0,
     val isVote: Boolean = false,
     val voteId: String? = null,
+    val visibility: StatusVisibility? = null,
 ) {
     val plainText: String get() = stripHtml(textHtml)
 
@@ -453,6 +514,7 @@ data class Status(
                 editCount = o.int("edit_count"),
                 isVote = isVote,
                 voteId = voteId,
+                visibility = parseStatusVisibility(o),
             )
         }
     }
