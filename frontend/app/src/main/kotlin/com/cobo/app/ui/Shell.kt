@@ -758,9 +758,14 @@ fun MainShell(nav: NavState) {
                     onTab = { target -> if (!feedPanelCovering) nav.setTab(target) },
                     bottomLeftAction = bottomLeftAction,
                     onBottomLeftClick = { triggerBottomLeftAction(bottomLeftAction) },
-                    onBottomLeftMenuSelect = { selected ->
+                    onBottomLeftActionTrigger = { action ->
+                        triggerBottomLeftAction(action)
+                    },
+                    onBottomLeftPinSelect = { selected ->
                         App.settings.applyBottomLeftAction(selected)
-                        triggerBottomLeftAction(selected)
+                    },
+                    onOpenSettings = {
+                        if (!feedPanelCovering) nav.push(Route.Settings)
                     },
                     menuEnabled = !feedPanelCovering,
                     onFeedTop = { if (!feedPanelCovering) App.requestFeedTop(scrollToTop = true) },
@@ -1651,7 +1656,9 @@ private fun FloatingBottomBar(
     onTab: (Int) -> Unit,
     bottomLeftAction: BottomLeftAction,
     onBottomLeftClick: () -> Unit,
-    onBottomLeftMenuSelect: (BottomLeftAction) -> Unit,
+    onBottomLeftActionTrigger: (BottomLeftAction) -> Unit,
+    onBottomLeftPinSelect: (BottomLeftAction) -> Unit,
+    onOpenSettings: () -> Unit,
     menuEnabled: Boolean,
     onFeedTop: () -> Unit,
     onPublish: () -> Unit,
@@ -1709,20 +1716,48 @@ private fun FloatingBottomBar(
                             tint = COUITheme.colorScheme.onSurface,
                         )
                         if (menuEnabled) {
-                            OverlayListPopup(
+                            val iconTint = COUITheme.colorScheme.onSurfaceContainer
+                            OverlayCascadingListPopup(
                                 show = leftMenuExpanded,
-                                popupPositionProvider = leftPopupPositionProvider,
-                                alignment = PopupPositionProvider.Align.BottomStart,
-                                maxHeight = NavigationPopupMenuDefaults.MaxHeight,
-                                minWidth = NavigationPopupMenuDefaults.MinWidth,
-                                onDismissRequest = { leftMenuExpanded = false },
-                            ) {
-                                val dismiss = LocalDismissState.current
-                                val iconTint = COUITheme.colorScheme.onSurfaceContainer
-                                ListPopupColumn {
-                                    BottomLeftAction.entries.forEachIndexed { index, option ->
-                                        DropdownImpl(
-                                            item = DropdownItem(
+                                entries = listOf(
+                                    DropdownEntry(
+                                        items = listOf(
+                                            DropdownItem(
+                                                text = "融合球功能",
+                                                summary = bottomLeftAction.label,
+                                                icon = { iconModifier ->
+                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = bottomLeftActionIcon(bottomLeftAction),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp),
+                                                            tint = iconTint,
+                                                        )
+                                                    }
+                                                },
+                                                children = BottomLeftAction.entries.map { option ->
+                                                    DropdownItem(
+                                                        text = option.label,
+                                                        selected = option == bottomLeftAction,
+                                                        icon = { iconModifier ->
+                                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = bottomLeftActionIcon(option),
+                                                                    contentDescription = null,
+                                                                    modifier = Modifier.size(20.dp),
+                                                                    tint = iconTint,
+                                                                )
+                                                            }
+                                                        },
+                                                        onClick = { onBottomLeftPinSelect(option) },
+                                                    )
+                                                },
+                                            ),
+                                        ),
+                                    ),
+                                    DropdownEntry(
+                                        items = BottomLeftAction.entries.map { option ->
+                                            DropdownItem(
                                                 text = option.label,
                                                 icon = { iconModifier ->
                                                     Box(iconModifier, contentAlignment = Alignment.Center) {
@@ -1734,21 +1769,36 @@ private fun FloatingBottomBar(
                                                         )
                                                     }
                                                 },
+                                                onClick = { onBottomLeftActionTrigger(option) },
+                                            )
+                                        },
+                                    ),
+                                    DropdownEntry(
+                                        items = listOf(
+                                            DropdownItem(
+                                                text = "设置",
+                                                icon = { iconModifier ->
+                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = COUIIcons.Settings,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp),
+                                                            tint = iconTint,
+                                                        )
+                                                    }
+                                                },
+                                                onClick = onOpenSettings,
                                             ),
-                                            optionSize = BottomLeftAction.entries.size,
-                                            isSelected = option == bottomLeftAction,
-                                            index = index,
-                                            groupKey = "bottom_left_action",
-                                            modifier = Modifier.testTag("bottom_left_menu_${option.key}"),
-                                            onSelectedIndexChange = {
-                                                dismiss?.invoke()
-                                                leftMenuExpanded = false
-                                                onBottomLeftMenuSelect(option)
-                                            },
-                                        )
-                                    }
-                                }
-                            }
+                                        ),
+                                    ),
+                                ),
+                                onDismissRequest = { leftMenuExpanded = false },
+                                popupPositionProvider = leftPopupPositionProvider,
+                                alignment = PopupPositionProvider.Align.BottomStart,
+                                maxHeight = NavigationPopupMenuDefaults.MaxHeight,
+                                minWidth = NavigationPopupMenuDefaults.MinWidth,
+                                collapseOnSelection = true,
+                            )
                         }
                     }
                 },
