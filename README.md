@@ -43,7 +43,7 @@
 | 层 | 选型 |
 | :--- | :--- |
 | 语言 / UI | Kotlin 2.4 · Jetpack Compose 1.11 |
-| 设计系统 | [COUI 17](https://github.com/Costben/coui17) · [COUI Kit](https://github.com/ItosEO/COUI-Kit)（自维护 ColorOS 17 Compose 组件库与视觉效果库） |
+| 设计系统 | [COUI 17](https://github.com/Costben/coui17) · [COUI Kit](https://github.com/ItosEO/COUI-Kit) |
 | 构建 | AGP 9.3.1 · Gradle 9.8.2 · JDK 17 |
 | 网络 | OkHttp 4.12 |
 | 图片 | Coil 3.6 |
