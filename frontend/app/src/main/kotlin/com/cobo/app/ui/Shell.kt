@@ -189,7 +189,6 @@ import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
-import io.github.suqi8.coui.kmp.window.WindowListPopup
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
@@ -1883,7 +1882,7 @@ private fun RowScope.ProfileFloatingNavItem(
             )
         }
         if (overflowMenu != null) {
-            WindowListPopup(
+            OverlayListPopup(
                 show = menuExpanded,
                 popupPositionProvider = popupPositionProvider,
                 alignment = PopupPositionProvider.Align.BottomEnd,
