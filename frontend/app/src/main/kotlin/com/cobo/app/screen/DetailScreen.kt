@@ -25,11 +25,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -58,9 +58,12 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -80,24 +83,27 @@ import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.pinnedRowsHeight
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.TopBarBounds
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.reportTopBarBottom
 import com.cobo.app.ui.CoboIcons
-import com.cobo.app.ui.components.ActionIcon
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.ComposerBottomSheet
 import com.cobo.app.ui.components.ErrorState
-import com.cobo.app.ui.components.InputDialog
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
-import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
+import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
+import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbar
+import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarDefaults
+import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarGroup
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -113,6 +119,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import kotlinx.coroutines.CancellationException
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlin.math.abs
@@ -268,7 +275,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     // The bar floats over the list the same way it does on the feed: the first card starts below it
     // and everything scrolled past runs underneath the glass.
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-    val bottomBarHeight = 56.dp + navBottomPadding()
+    val bottomBarHeight = pinnedRowsHeight(
+        listOf(
+            BottomFloatingToolbarDefaults.MinHeight,
+            BottomFloatingNavigationBarDefaults.navigationBarPadding(),
+        ),
+    )
     // Rows dim only when the wait is long enough to show the header progress line; a cached or
     // quick response swaps the list with no visible flash at all.
     val commentsAlpha by animateFloatAsState(
@@ -301,6 +313,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         StatusCard(
                             status = status!!,
                             onOpen = {},
+                            onDeleted = { nav.pop() },
                             onUser = { nav.push(Route.Profile(it.id)) },
                             onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                             onVideo = { nav.push(Route.Video(it.url, it.title)) },
@@ -503,101 +516,117 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     )
                 }
             }
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(pageContainerColor())
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            val current = status
-            val currentFavorited = current?.let { App.repo.isFavorited(it) } == true
-            ActionIcon(
-                icon = CoboIcons.Repost,
-                text = "转发 ${fmtCount(current?.reposts ?: 0)}",
-                onClick = { repostDialog = true },
-                modifier = Modifier.weight(1f).testTag("detail_repost"),
-                enabled = !readOnly,
-            )
-            ActionIcon(
-                icon = CoboIcons.Comment,
-                text = "评论 ${fmtCount(current?.comments ?: 0)}",
-                onClick = { commentDialog = true },
-                modifier = Modifier.weight(1f).testTag("detail_comment"),
-                enabled = !readOnly,
-            )
-            ActionIcon(
-                icon = if (currentFavorited) CoboIcons.StarFill else CoboIcons.Star,
-                text = if (currentFavorited) "已收藏" else "收藏",
-                onClick = {
-                    val s = status ?: return@ActionIcon
-                    val next = App.repo.toggleLocalFavorite(s)
-                    status = s.copy(favorited = next)
-                    App.toast(if (next) "已收藏" else "已取消收藏")
-                },
-                tint = if (currentFavorited) scheme.primary
-                else scheme.onSurfaceSecondary,
-                modifier = Modifier.weight(1f).testTag("detail_favorite"),
-                enabled = current != null,
-            )
-            ActionIcon(
-                icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,
-                text = if (current?.liked == true) "已赞" else "赞 ${fmtCount(current?.attitudes ?: 0)}",
-                onClick = {
-                    val s = status ?: return@ActionIcon
-                    scope.launch {
-                        if (!App.confirmLike(s.liked)) return@launch
-                        runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
-                            status = s.copy(
-                                liked = !s.liked,
-                                attitudes = (s.attitudes + if (s.liked) -1 else 1).coerceAtLeast(0),
-                            )
-                        }.onFailure { App.toast(it.message ?: "操作失败") }
+            PinnedBarDensity {
+                val current = status
+                val currentFavorited = current?.let { App.repo.isFavorited(it) } == true
+                BottomFloatingToolbar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = BottomFloatingNavigationBarDefaults.navigationBarPadding()),
+                ) {
+                    BottomFloatingToolbarGroup {
+                        DetailFloatingToolbarItem(
+                            icon = CoboIcons.Repost,
+                            count = fmtCount(current?.reposts ?: 0),
+                            contentDescription = "转发",
+                            onClick = { repostDialog = true },
+                            modifier = Modifier.testTag("detail_repost"),
+                            enabled = !readOnly,
+                        )
+                        DetailFloatingToolbarItem(
+                            icon = CoboIcons.Comment,
+                            count = fmtCount(current?.comments ?: 0),
+                            contentDescription = "评论",
+                            onClick = { commentDialog = true },
+                            modifier = Modifier.testTag("detail_comment"),
+                            enabled = !readOnly,
+                        )
+                        DetailFloatingToolbarItem(
+                            icon = if (currentFavorited) CoboIcons.StarFill else CoboIcons.Star,
+                            count = "",
+                            contentDescription = if (currentFavorited) "已收藏" else "收藏",
+                            onClick = {
+                                val s = status ?: return@DetailFloatingToolbarItem
+                                val next = App.repo.toggleLocalFavorite(s)
+                                status = s.copy(favorited = next)
+                                App.toast(if (next) "已收藏" else "已取消收藏")
+                            },
+                            modifier = Modifier.testTag("detail_favorite"),
+                            active = currentFavorited,
+                            enabled = current != null,
+                        )
+                        DetailFloatingToolbarItem(
+                            icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,
+                            count = fmtCount(current?.attitudes ?: 0),
+                            contentDescription = if (current?.liked == true) "已赞" else "赞",
+                            onClick = {
+                                val s = status ?: return@DetailFloatingToolbarItem
+                                scope.launch {
+                                    if (!App.confirmLike(s.liked)) return@launch
+                                    runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
+                                        status = s.copy(
+                                            liked = !s.liked,
+                                            attitudes = (s.attitudes + if (s.liked) -1 else 1).coerceAtLeast(0),
+                                        )
+                                    }.onFailure { App.toast(it.message ?: "操作失败") }
+                                }
+                            },
+                            modifier = Modifier.testTag("detail_like"),
+                            active = current?.liked == true,
+                            enabled = !readOnly,
+                        )
                     }
-                },
-                tint = if (current?.liked == true) scheme.primary
-                else scheme.onSurfaceSecondary,
-                modifier = Modifier.weight(1f).testTag("detail_like"),
-                enabled = !readOnly,
-            )
+                }
+            }
         }
     }
 
-    if (repostDialog) {
-        InputDialog(
-            title = "转发",
-            hint = "说点什么",
-            onDismiss = { repostDialog = false },
-            onConfirm = { text ->
-                repostDialog = false
-                scope.launch {
-                    runCatching { App.repo.repost(id, effectiveMid(), text) }
-                        .onSuccess { App.toast("已转发") }
-                        .onFailure { App.toast(it.message ?: "转发失败") }
-                }
-            },
-        )
-    }
-    if (commentDialog) {
-        InputDialog(
-            title = "评论",
-            hint = "写评论",
-            onDismiss = { commentDialog = false },
-            onConfirm = { text ->
-                commentDialog = false
-                scope.launch {
-                    runCatching { App.repo.comment(id, effectiveMid(), text) }.onSuccess {
-                        App.toast("评论成功")
-                        loadComments(true, force = true)
-                    }.onFailure { App.toast(it.message ?: "评论失败") }
-                }
-            },
-        )
+    if (repostDialog || commentDialog) {
+        CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
+            if (repostDialog) {
+                ComposerBottomSheet(
+                    title = "转发",
+                    hint = "说点什么",
+                    submitText = "转发",
+                    allowEmpty = true,
+                    showVisibility = true,
+                    onDismiss = { repostDialog = false },
+                    onSubmit = { text, visibility ->
+                        try {
+                            App.repo.repost(id, effectiveMid(), text, visibility.code)
+                            App.toast("已转发")
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            App.toast(t.message ?: "转发失败")
+                            false
+                        }
+                    },
+                )
+            }
+            if (commentDialog) {
+                ComposerBottomSheet(
+                    title = "评论",
+                    hint = "写评论",
+                    submitText = "发布",
+                    onDismiss = { commentDialog = false },
+                    onSubmit = { text, _ ->
+                        try {
+                            App.repo.comment(id, effectiveMid(), text)
+                            App.toast("评论成功")
+                            loadComments(true, force = true)
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            App.toast(t.message ?: "评论失败")
+                            false
+                        }
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -859,19 +888,22 @@ private fun CommentCard(
     }
 
     replyTarget?.let { target ->
-        InputDialog(
+        ComposerBottomSheet(
             title = "回复 @${target.user?.name.orEmpty()}",
-            hint = "回复",
+            hint = "写回复",
+            submitText = "回复",
             onDismiss = { replyTarget = null },
-            onConfirm = { text ->
-                replyTarget = null
-                scope.launch {
-                    runCatching { App.repo.replyComment(statusId, mid, target.id, text) }
-                        .onSuccess {
-                            App.toast("回复成功")
-                            showNewReply(it)
-                        }
-                        .onFailure { App.toast(it.message ?: "回复失败") }
+            onSubmit = { text, _ ->
+                try {
+                    val created = App.repo.replyComment(statusId, mid, target.id, text)
+                    App.toast("回复成功")
+                    showNewReply(created)
+                    true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    App.toast(t.message ?: "回复失败")
+                    false
                 }
             },
         )
@@ -1122,5 +1154,61 @@ private fun SortProgressLine(visible: Boolean, modifier: Modifier = Modifier) {
             size = Size(bar, size.height),
             cornerRadius = radius,
         )
+    }
+}
+
+@Composable
+private fun DetailFloatingToolbarItem(
+    icon: ImageVector,
+    count: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    enabled: Boolean = true,
+) {
+    val scheme = COUITheme.colorScheme
+    val tint = when {
+        !enabled -> scheme.onSurfaceVariantActions
+        active -> scheme.primary
+        else -> scheme.labelPrimaryVariant
+    }
+    Row(
+        modifier = modifier
+            .height(BottomFloatingToolbarDefaults.ItemHeight)
+            .widthIn(min = BottomFloatingToolbarDefaults.ItemWidth)
+            .then(
+                if (enabled) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .semantics { this.contentDescription = contentDescription }
+            .padding(horizontal = if (count.isNotEmpty()) 8.dp else 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = tint,
+        )
+        if (count.isNotEmpty()) {
+            Text(
+                text = count,
+                color = tint,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
     }
 }

@@ -25,18 +25,18 @@ class WriteActionsE2eTest : UiE2eTest() {
         waitText("微博正文")
 
         val like = waitTag("detail_like")
-        val label = like.text.orEmpty()
-        assumeFalse("该微博已点赞，跳过以免改动既有数据：$label", label.startsWith("已赞"))
+        val label = like.contentDescription.orEmpty()
+        assumeFalse("该微博已点赞，跳过以免改动既有数据：$label", label == "已赞")
 
         val id = App.store.history().firstOrNull()?.id
             ?: throw AssertionError("详情页没有写入浏览历史，无法确认微博 id")
 
         tapTag("detail_like")
-        waitText("已赞")
+        waitDesc("已赞")
 
         try {
             tapTag("detail_like")
-            waitTextStartsWith("赞 ")
+            waitDesc("赞")
         } finally {
             // 无论断言是否通过，都尽量把服务端状态还原
             val current = io { App.repo.detail(id, force = true) }
@@ -58,18 +58,18 @@ class WriteActionsE2eTest : UiE2eTest() {
         waitText("微博正文")
 
         val fav = waitTag("detail_favorite")
-        val label = fav.text.orEmpty()
+        val label = fav.contentDescription.orEmpty()
         assumeFalse("该微博已收藏，跳过以免改动既有数据：$label", label == "已收藏")
 
         val id = App.store.history().firstOrNull()?.id
             ?: throw AssertionError("详情页没有写入浏览历史，无法确认微博 id")
 
         tapTag("detail_favorite")
-        waitText("已收藏")
+        waitDesc("已收藏")
 
         try {
             tapTag("detail_favorite")
-            waitText("收藏")
+            waitDesc("收藏")
         } finally {
             val current = io { App.repo.detail(id, force = true) }
             if (current?.favorited == true) {

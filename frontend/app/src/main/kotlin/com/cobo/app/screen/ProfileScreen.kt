@@ -254,6 +254,7 @@ fun ProfileContent(
         }
     }
 
+    SyncDeletedStatuses(items)
     LaunchedEffect(uid) {
         val target = uid ?: runCatching { App.repo.ownUid() }.getOrNull()
         if (target.isNullOrBlank()) {

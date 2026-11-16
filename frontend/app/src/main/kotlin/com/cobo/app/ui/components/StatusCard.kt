@@ -92,6 +92,9 @@ import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.preciseClickAnchor
 import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Delete
+import io.github.suqi8.coui.kmp.icon.extended.Favorites
+import io.github.suqi8.coui.kmp.icon.extended.FavoritesFill
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
@@ -117,9 +120,17 @@ fun StatusCard(
     onComment: () -> Unit = {},
     /** Opens the quoted post when it is tapped; the frame grows from and returns into that block. */
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
+    onDeleted: (() -> Unit)? = null,
 ) {
+    if (App.repo.isDeleted(status.id)) return
     val scheme = COUITheme.colorScheme
+    val scope = rememberCoroutineScope()
     val effectiveFavorited = App.repo.isFavorited(status.id)
+    val canDelete = !App.repo.guest &&
+        !status.user?.id.isNullOrBlank() &&
+        status.user?.id == App.repo.session?.uid
+    var confirmDelete by remember(status.id) { mutableStateOf(false) }
+    var deleting by remember(status.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(status)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
@@ -137,6 +148,7 @@ fun StatusCard(
             compact = compact,
             favorited = effectiveFavorited,
             onToggleFavorite = handleFavorite,
+            onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
         )
         if (status.textHtml.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
@@ -208,6 +220,30 @@ fun StatusCard(
             }
         }
     }
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "删除微博",
+            message = "删除后不可恢复，确定删除这条微博吗？",
+            confirmText = "删除",
+            onDismiss = { confirmDelete = false },
+            onConfirm = {
+                confirmDelete = false
+                if (deleting) return@ConfirmDialog
+                deleting = true
+                scope.launch {
+                    runCatching { App.repo.deleteStatus(status.id, status.mid) }
+                        .onSuccess {
+                            App.toast("已删除")
+                            onDeleted?.invoke()
+                        }
+                        .onFailure {
+                            App.toast(it.message ?: "删除失败")
+                        }
+                    deleting = false
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -218,6 +254,7 @@ fun StatusHeader(
     favorited: Boolean = App.repo.isFavorited(status.id),
     showMore: Boolean = true,
     onToggleFavorite: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
     val user = status.user
@@ -265,12 +302,13 @@ fun StatusHeader(
                         VerifiedBadge()
                     }
                 }
-                if (showMore && onToggleFavorite != null) {
+                if (showMore && (onToggleFavorite != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
                         favorited = favorited,
                         onToggleFavorite = onToggleFavorite,
+                        onDelete = onDelete,
                     )
                 }
             }
@@ -294,10 +332,12 @@ fun StatusHeader(
 private fun StatusMoreButton(
     statusId: String,
     favorited: Boolean,
-    onToggleFavorite: () -> Unit,
+    onToggleFavorite: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
 ) {
     val scheme = COUITheme.colorScheme
     var expanded by remember(statusId) { mutableStateOf(false) }
+    val optionSize = (if (onToggleFavorite != null) 1 else 0) + (if (onDelete != null) 1 else 0)
     Box {
         Box(
             modifier = Modifier
@@ -328,18 +368,52 @@ private fun StatusMoreButton(
         ) {
             val dismiss = LocalDismissState.current
             ListPopupColumn {
-                DropdownImpl(
-                    item = DropdownItem(text = if (favorited) "取消收藏" else "收藏微博"),
-                    optionSize = 1,
-                    isSelected = false,
-                    index = 0,
-                    groupKey = "status_more_$statusId",
-                    onSelectedIndexChange = {
-                        dismiss?.invoke()
-                        expanded = false
-                        onToggleFavorite()
-                    },
-                )
+                var idx = 0
+                if (onToggleFavorite != null) {
+                    val favIcon = if (favorited) COUIIcons.FavoritesFill else COUIIcons.Favorites
+                    val favTint = if (favorited) scheme.primary else scheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = if (favorited) "取消收藏" else "收藏微博",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(favIcon, null, Modifier.size(18.dp), tint = favTint)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onToggleFavorite()
+                        },
+                    )
+                }
+                if (onDelete != null) {
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "删除微博",
+                            alert = true,
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(COUIIcons.Delete, null, Modifier.size(18.dp), tint = scheme.error)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onDelete()
+                        },
+                    )
+                }
             }
         }
     }

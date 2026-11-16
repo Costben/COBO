@@ -456,6 +456,7 @@ fun LazyListScope.searchResultsItems(
                                 .expandOrigin(origin)
                                 .testTag("search_card_$index"),
                             onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onDeleted = { state.weibo.items.removeAll { it.id == status.id } },
                             onOpenQuoted = { quoted, quotedOrigin ->
                                 nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
                             },

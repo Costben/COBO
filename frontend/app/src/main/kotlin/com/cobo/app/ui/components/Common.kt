@@ -211,6 +211,7 @@ fun ActionIcon(
     tint: Color = COUITheme.colorScheme.onSurfaceSecondary,
     /** 只读流里按钮留着给人看计数，但不响应点击。 */
     enabled: Boolean = true,
+    contentDescription: String? = null,
 ) {
     val color = if (enabled) tint else tint.copy(alpha = 0.38f)
     Row(
@@ -221,7 +222,7 @@ fun ActionIcon(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
     ) {
-        Icon(icon, text.ifBlank { null }, Modifier.size(17.dp), tint = color)
+        Icon(icon, contentDescription ?: text.ifBlank { null }, Modifier.size(17.dp), tint = color)
         if (text.isNotBlank()) {
             Text(text, fontSize = 12.sp, color = color)
         }

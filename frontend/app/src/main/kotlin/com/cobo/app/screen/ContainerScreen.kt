@@ -69,6 +69,7 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
     val density = LocalDensity.current
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
+    SyncDeletedStatuses(store)
     LaunchedEffect(cid) { store.loadInitial() }
     if (isFavorites) {
         val favVersion = App.repo.favoritesVersion

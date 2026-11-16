@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -132,6 +133,7 @@ class FeedStore(
     val supportsReverseBrowse: Boolean = false,
     private val reverseBrowseEnabled: () -> Boolean = { App.isReverseBrowseEnabled() },
     private val snapshotOwner: () -> String = { App.repo.session?.uid.orEmpty() },
+    private val isStatusDeleted: (String) -> Boolean = { id -> App.isRepoReady() && App.repo.isDeleted(id) },
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
         App.repo.container(key, sinceId = cursor, force = force)
     },
@@ -269,6 +271,16 @@ class FeedStore(
         }
     }
 
+    fun removeDeleted(deletedIds: Map<String, Boolean>) {
+        if (deletedIds.isEmpty()) return
+        val removedIds = items.asSequence()
+            .filter { it.id in deletedIds || (it.mid.isNotBlank() && it.mid in deletedIds) }
+            .mapTo(HashSet()) { it.id }
+        if (removedIds.isEmpty()) return
+        items.removeAll { it.id in removedIds }
+        gaps.removeAll { it.beforeStatusId in removedIds }
+    }
+
     suspend fun refresh() {
         // 已经有一次刷新在跑：它的 finally 会把 refreshing 降下来，这里直接跟它收尾。
         if (refreshing) return
@@ -296,7 +308,7 @@ class FeedStore(
             }
             val page = loader(null, force)
             val known = HashSet<String>()
-            val unique = page.items.filter { known.add(it.id) }
+            val unique = page.items.filter { !isStatusDeleted(it.id) && known.add(it.id) }
             gaps.clear()
             items.clear()
             items.addAll(unique)
@@ -708,6 +720,27 @@ fun TimelineScreen(
 }
 
 @Composable
+fun SyncDeletedStatuses(store: FeedStore) {
+    val version = App.repo.deletedVersion
+    LaunchedEffect(store, version) {
+        if (App.repo.deletedStatusIds.isNotEmpty()) {
+            store.removeDeleted(App.repo.deletedStatusIds)
+        }
+    }
+}
+
+@Composable
+fun SyncDeletedStatuses(items: SnapshotStateList<Status>) {
+    val version = App.repo.deletedVersion
+    LaunchedEffect(items, version) {
+        val deleted = App.repo.deletedStatusIds
+        if (deleted.isNotEmpty()) {
+            items.removeAll { it.id in deleted || (it.mid.isNotBlank() && it.mid in deleted) }
+        }
+    }
+}
+
+@Composable
 private fun TimelinePage(
     nav: NavState,
     store: FeedStore,
@@ -747,6 +780,7 @@ private fun TimelinePage(
             memory.seen = true
         }
     }
+    SyncDeletedStatuses(store)
     LaunchedEffect(store.gapRestoreGeneration) {
         val restore = store.takePendingGapRestore() ?: return@LaunchedEffect
         val total = store.items.size + store.gaps.size

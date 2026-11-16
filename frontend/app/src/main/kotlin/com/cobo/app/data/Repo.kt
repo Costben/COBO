@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -192,6 +193,26 @@ class Repo(private val context: Context, private val store: Store) {
     var favoritesVersion by mutableIntStateOf(0)
         private set
 
+    val deletedStatusIds = mutableStateMapOf<String, Boolean>()
+
+    var deletedVersion by mutableIntStateOf(0)
+        private set
+
+    @Volatile
+    private var cachedEmotionSections: List<EmojiSection> = emptyList()
+
+    @Volatile
+    private var cachedEmotionCookie: String? = null
+
+    @Volatile
+    private var cachedMentionFriends: List<User> = emptyList()
+
+    @Volatile
+    private var cachedMentionUid: String? = null
+
+    @Volatile
+    private var cachedHotspotTopics: List<TopicSuggestion> = emptyList()
+
     init {
         // 网页端每次都可能在响应里滚一份新的 SUB / ALF，收到就收进表里，不进缓存也不去重。
         Api.cookieSink = { url, headers -> absorbCookies(url, headers) }
@@ -232,6 +253,11 @@ class Repo(private val context: Context, private val store: Store) {
         cachedConfig = null
         configCookie = null
         cachedConfigAt = 0L
+        cachedEmotionSections = emptyList()
+        cachedEmotionCookie = null
+        cachedMentionFriends = emptyList()
+        cachedMentionUid = null
+        cachedHotspotTopics = emptyList()
     }
 
     /**
@@ -251,6 +277,8 @@ class Repo(private val context: Context, private val store: Store) {
     fun isFavorited(id: String): Boolean = id.isNotBlank() && localFavoriteIds[id] == true
 
     fun isFavorited(status: Status): Boolean = isFavorited(status.id)
+
+    fun isDeleted(id: String): Boolean = id.isNotBlank() && deletedStatusIds[id] == true
 
     fun toggleLocalFavorite(status: Status): Boolean {
         val nowFavorited = store.toggleFavorite(status)
@@ -348,6 +376,11 @@ class Repo(private val context: Context, private val store: Store) {
         cachedConfig = null
         configCookie = null
         cachedConfigAt = 0L
+        cachedEmotionSections = emptyList()
+        cachedEmotionCookie = null
+        cachedMentionFriends = emptyList()
+        cachedMentionUid = null
+        cachedHotspotTopics = emptyList()
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -860,13 +893,32 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun superTopic(containerId: String, sinceId: String? = null): SuperTopicPage {
         val id = superTopicId(containerId) ?: throw ApiException("无效的超话地址")
-        if (!hasSession()) throw ApiException("超话需要登录后查看", "-100")
         val cursor = sinceId?.takeIf { it.isNotBlank() }
         if (cursor != null && !cursor.matches(Regex("[0-9]+"))) throw ApiException("无效的超话翻页参数")
-        val params = mapOf(
-            "containerid" to "${id}_-_feed",
-            "since_id" to cursor,
-        )
+        return superTopicTab(id, "${id}_-_feed", cursor)
+    }
+
+    suspend fun superTopicTab(
+        baseContainerId: String,
+        tabContainerId: String,
+        cursor: String? = null,
+    ): SuperTopicPage {
+        val id = superTopicId(baseContainerId) ?: throw ApiException("无效的超话地址")
+        if (!hasSession()) throw ApiException("超话需要登录后查看", "-100")
+        val tabId = tabContainerId.trim().takeIf { it.lowercase().startsWith(id) } ?: "${id}_-_feed"
+        val pageCursor = cursor?.takeIf { it.isNotBlank() }
+        val pageNumber = if (pageCursor?.startsWith("page:") == true) {
+            pageCursor.removePrefix("page:").toIntOrNull()?.coerceAtLeast(2)
+                ?: throw ApiException("无效的超话翻页参数")
+        } else null
+        val params = buildMap {
+            put("containerid", tabId)
+            if (pageNumber != null) {
+                put("page", pageNumber.toString())
+            } else {
+                put("since_id", pageCursor)
+            }
+        }
         val root = try {
             get(Api.url("https://m.weibo.cn/api/container/getIndex", params), loginCookie(), force = true)
         } catch (e: ApiHttpException) {
@@ -878,7 +930,41 @@ class Repo(private val context: Context, private val store: Store) {
             }
             throw ApiException("超话加载失败")
         }
-        return parseSuperTopic(root, id)
+        val parsed = if (tabId.equals("${id}_-_feed", ignoreCase = true)) {
+            parseSuperTopic(root, id)
+        } else {
+            parseSuperTopicTab(root, id, tabId, currentPage = pageNumber ?: 1)
+        }
+        return if (tabId.lowercase().endsWith("_-_video") && parsed.items.isNotEmpty()) {
+            hydrateSuperTopicVideoItems(parsed)
+        } else {
+            parsed
+        }
+    }
+
+    /**
+     * 超话「视频」流（`_-_video`）的 `card_type=52` 仅带精简标题、封面与 `mid`，
+     * 缺少博主头像和可播放的视频流地址；按 `mid` 并发通过 `statuses/show` 补全完整微博。
+     */
+    private suspend fun hydrateSuperTopicVideoItems(page: SuperTopicPage): SuperTopicPage = coroutineScope {
+        val gate = Semaphore(6)
+        val hydrated = page.items.map { item ->
+            if (item.video != null && !item.user?.avatar.isNullOrBlank()) {
+                async { item }
+            } else {
+                async {
+                    gate.withPermit {
+                        try {
+                            detail(item.id, force = false) ?: item
+                        } catch (e: Throwable) {
+                            if (e is CancellationException) throw e
+                            item
+                        }
+                    }
+                }
+            }
+        }.awaitAll()
+        page.copy(items = hydrated)
     }
 
     suspend fun searchSuperTopics(query: String): List<TopicItem> {
@@ -1367,23 +1453,182 @@ class Repo(private val context: Context, private val store: Store) {
             ?: throw ApiException("回复失败")
     }
 
-    suspend fun repost(id: String, mid: String, text: String): Boolean {
-        val ok = postOk(
-            "https://m.weibo.cn/api/statuses/repost",
-            mapOf("id" to id, "mid" to mid.ifBlank { id }, "content" to text),
-        )
+    suspend fun repost(id: String, mid: String, text: String, visible: Int = 0): Boolean {
+        val form = LinkedHashMap<String, String>()
+        form["id"] = id
+        form["mid"] = mid.ifBlank { id }
+        form["content"] = text
+        if (visible != 0) form["visible"] = visible.toString()
+        val ok = postOk("https://m.weibo.cn/api/statuses/repost", form)
         App.cache.clear()
         return ok
     }
 
-    suspend fun publish(text: String, picIds: List<String>): Boolean {
+    suspend fun publish(text: String, picIds: List<String>, visible: Int = 0): Boolean {
         val form = LinkedHashMap<String, String>()
         form["content"] = text
-        form["visible"] = "0"
+        form["visible"] = visible.toString()
         if (picIds.isNotEmpty()) form["pic_ids"] = picIds.joinToString(",")
         val ok = postOk("https://m.weibo.cn/api/statuses/update", form)
         App.cache.clear()
         return ok
+    }
+
+    suspend fun deleteStatus(id: String, mid: String = ""): Boolean {
+        val targetMid = mid.ifBlank { id }
+        val ok = postOk(
+            "https://m.weibo.cn/profile/delMyblog",
+            mapOf("mid" to targetMid),
+        )
+        store.removeFavorite(id)
+        if (targetMid != id) store.removeFavorite(targetMid)
+        withContext(Dispatchers.Main.immediate) {
+            if (localFavoriteIds.remove(id) != null || (targetMid != id && localFavoriteIds.remove(targetMid) != null)) {
+                favoritesVersion++
+            }
+            deletedStatusIds[id] = true
+            if (targetMid.isNotBlank()) deletedStatusIds[targetMid] = true
+            deletedVersion++
+        }
+        App.cache.clear()
+        return ok
+    }
+
+    suspend fun emotions(): List<EmojiSection> {
+        val activeCookie = cookie().orEmpty()
+        if (cachedEmotionSections.isNotEmpty() && cachedEmotionCookie == activeCookie) {
+            return cachedEmotionSections
+        }
+        val sections = try {
+            val root = Api.getDesktop("https://weibo.com/ajax/statuses/config", activeCookie)
+            parseWeiboEmotions(root)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            emptyList()
+        }
+        if (sections.isNotEmpty()) {
+            cachedEmotionSections = sections
+            cachedEmotionCookie = activeCookie
+            return sections
+        }
+        return FallbackWeiboEmojiSections
+    }
+
+    suspend fun mentionCandidates(query: String): List<User> {
+        val friends = loadMentionFriends()
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return friends.take(20)
+        val merged = LinkedHashMap<String, User>()
+        friends.filter { it.name.contains(trimmed, ignoreCase = true) }
+            .forEach { merged.putIfAbsent(it.id, it) }
+        val searched = try {
+            searchUsers(trimmed, page = 1, force = false)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        searched.forEach { merged.putIfAbsent(it.id, it) }
+        return merged.values.take(20)
+    }
+
+    private suspend fun loadMentionFriends(): List<User> {
+        val uid = session?.uid.orEmpty()
+        if (cachedMentionFriends.isNotEmpty() && cachedMentionUid == uid) {
+            return cachedMentionFriends
+        }
+        val cookie = cookie() ?: return emptyList()
+        val fromCompose = try {
+            val root = get(
+                Api.url("https://m.weibo.cn/api/friendships/friends", mapOf("page" to "1")),
+                cookie,
+                force = false,
+            )
+            val arr = root.optJSONObject("data")?.optJSONArray("users")
+            buildList<User> {
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        User.from(arr.optJSONObject(i))?.let(::add)
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        val result = if (fromCompose.isNotEmpty() || uid.isBlank()) {
+            fromCompose
+        } else {
+            try {
+                relations(uid, RelationKind.Following, page = 1, force = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        }
+        if (result.isNotEmpty()) {
+            cachedMentionFriends = result
+            cachedMentionUid = uid
+        }
+        return result
+    }
+
+    suspend fun topicCandidates(query: String): List<TopicSuggestion> {
+        val trimmed = query.trim().trim('#')
+        val cookie = cookie()
+        if (trimmed.isEmpty()) {
+            if (cachedHotspotTopics.isNotEmpty()) return cachedHotspotTopics
+            val hotTopics = try {
+                val root = get("https://m.weibo.cn/api/suggest/hotspot", cookie, force = false)
+                parseHotspotTopics(root)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
+            val result = if (hotTopics.isNotEmpty()) {
+                hotTopics
+            } else {
+                try {
+                    hot(HotBoard.Realtime, force = false).take(20).map {
+                        TopicSuggestion(title = it.title, desc = it.label)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            }
+            if (result.isNotEmpty()) cachedHotspotTopics = result
+            return result.take(20)
+        }
+        val out = LinkedHashMap<String, TopicSuggestion>()
+        try {
+            val root = get(
+                Api.url("https://m.weibo.cn/api/suggest/shotspot", mapOf("keyword" to trimmed)),
+                cookie,
+                force = false,
+            )
+            parseHotspotTopics(root).forEach { out.putIfAbsent(it.title, it) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+        }
+        if (out.isEmpty()) {
+            try {
+                searchTopics(trimmed, page = 1, force = false).forEach {
+                    val clean = it.title.trim('#')
+                    if (clean.isNotBlank()) out.putIfAbsent(clean, TopicSuggestion(clean, it.desc1))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
+        }
+        out.putIfAbsent(trimmed, TopicSuggestion(title = trimmed, desc = "新话题"))
+        return out.values.take(20)
     }
 
     suspend fun uploadImage(uri: Uri): String {

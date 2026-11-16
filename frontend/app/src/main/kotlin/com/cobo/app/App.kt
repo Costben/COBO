@@ -53,6 +53,8 @@ object App {
     lateinit var snapshots: FeedSnapshotStore
         private set
 
+    fun isRepoReady(): Boolean = ::repo.isInitialized
+
     /** Coil 专用客户端：微博附件域名要带登录 cookie。 */
     val imageClient: OkHttpClient by lazy {
         OkHttpClient.Builder().addInterceptor { chain ->

@@ -171,6 +171,129 @@ class SuperTopicTest {
         for (url in urls) assertNull(url, superTopicId(url))
     }
 
+    @Test
+    fun extractsChildTabsAndChannelListWithoutDuplicates() {
+        val root = response()
+        val data = root.getJSONObject("data")
+        val page = data.getJSONObject("pageInfo")
+        page.put(
+            "cardlist_head_cards",
+            JSONArray().put(
+                JSONObject().put(
+                    "channel_list",
+                    JSONArray()
+                        .put(JSONObject().put("id", "feed").put("name", "帖子").put("containerid", "${id}_-_feed"))
+                        .put(JSONObject().put("id", "official").put("name", "官方").put("containerid", "${id}_-_official"))
+                        .put(JSONObject().put("id", "video").put("name", "视频").put("containerid", "${id}_-_video"))
+                        .put(JSONObject().put("id", "album").put("name", "相册").put("containerid", "${id}_-_album"))
+                        .put(JSONObject().put("id", "4587798253404290").put("name", "攻略").put("containerid", "${id}__4587798253404290_-_tag_comment_sort")),
+                ),
+            ),
+        )
+        data.put(
+            "cards",
+            JSONArray().put(
+                JSONObject().put(
+                    "card_group",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("card_type", "121")
+                            .put("itemid", "page_feed_child_tab")
+                            .put(
+                                "filter_group",
+                                JSONArray()
+                                    .put(JSONObject().put("name", "最新评论").put("containerid", "${id}_-_feed"))
+                                    .put(JSONObject().put("name", "最新发帖").put("containerid", "${id}_-_sort_time"))
+                                    .put(JSONObject().put("name", "热门").put("containerid", "${id}_-_recommend"))
+                                    .put(JSONObject().put("name", "精华").put("containerid", "${id}_-_soul")),
+                            ),
+                    ),
+                ),
+            ),
+        )
+        val parsed = parseSuperTopic(root, id)
+        assertEquals(
+            listOf("最新评论", "最新发帖", "热门", "精华", "官方", "视频", "相册", "攻略"),
+            parsed.tabs.map { it.label },
+        )
+        assertEquals(
+            listOf(
+                SuperTopicTabKind.Feed,
+                SuperTopicTabKind.SortTime,
+                SuperTopicTabKind.Recommend,
+                SuperTopicTabKind.Soul,
+                SuperTopicTabKind.Official,
+                SuperTopicTabKind.Video,
+                SuperTopicTabKind.Album,
+                SuperTopicTabKind.Tag,
+            ),
+            parsed.tabs.map { it.kind },
+        )
+    }
+
+    @Test
+    fun parsesTabCursorsAlbumAndVideoCards() {
+        val mblogObj = JSONObject().put("id", "101").put("text", "帖子正文")
+            .put("user", JSONObject().put("id", "42").put("screen_name", "用户A"))
+
+        val recommendRoot = response()
+        recommendRoot.getJSONObject("data").apply {
+            getJSONObject("pageInfo").put("containerid", "${id}_-_recommend").put("since_id", 1)
+            put("cards", JSONArray().put(JSONObject().put("mblog", mblogObj)))
+        }
+        val recommendPage = parseSuperTopicTab(recommendRoot, id, "${id}_-_recommend", currentPage = 1)
+        assertEquals("page:2", recommendPage.nextCursor)
+
+        val soulRoot = response()
+        soulRoot.getJSONObject("data").apply {
+            getJSONObject("pageInfo").put("containerid", "${id}_-_soul").put("since_id", "1790918201.590245")
+            put("cards", JSONArray().put(JSONObject().put("mblog", mblogObj)))
+        }
+        assertEquals("1790918201.590245", parseSuperTopicTab(soulRoot, id, "${id}_-_soul").nextCursor)
+
+        val albumRoot = response()
+        albumRoot.getJSONObject("data").apply {
+            getJSONObject("pageInfo").put("containerid", "${id}_-_album").put("since_id", "5363#pic")
+            put(
+                "cards",
+                JSONArray().put(
+                    JSONObject().put("card_type", "47").put(
+                        "pics",
+                        JSONArray().put(JSONObject().put("mblog", mblogObj)),
+                    ),
+                ),
+            )
+        }
+        val albumPage = parseSuperTopicTab(albumRoot, id, "${id}_-_album")
+        assertEquals(listOf("101"), albumPage.items.map { it.id })
+        assertEquals("5363#pic", albumPage.nextCursor)
+
+        val videoRoot = response()
+        videoRoot.getJSONObject("data").apply {
+            getJSONObject("pageInfo").put("containerid", "${id}_-_video").put("since_id", "5365")
+            put(
+                "cards",
+                JSONArray().put(
+                    JSONObject().put("card_type", "52").put(
+                        "items",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("scheme", "https://m.weibo.cn/feature/applink?scheme=sinaweibo%3A%2F%2Fvideo%2Fvvs%3Fmid%3D999888")
+                                .put("title", "超话视频标题")
+                                .put("desc1", "作者B")
+                                .put("pic", "https://example.com/v.jpg")
+                                .put("video_duration", 65.0),
+                        ),
+                    ),
+                ),
+            )
+        }
+        val videoPage = parseSuperTopicTab(videoRoot, id, "${id}_-_video")
+        assertEquals(listOf("999888"), videoPage.items.map { it.id })
+        assertEquals("超话视频标题", videoPage.items.first().textHtml)
+        assertEquals("01:05", videoPage.items.first().createdAt)
+    }
+
     private fun assertFailure(root: JSONObject) {
         failure(root)
     }

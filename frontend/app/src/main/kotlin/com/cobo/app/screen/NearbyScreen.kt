@@ -157,6 +157,7 @@ fun NearbyScreen(nav: NavState) {
         }
     }
 
+    store?.let { SyncDeletedStatuses(it) }
     LaunchedEffect(Unit) { locate() }
     LaunchedEffect(permissionTick) { if (permissionTick > 0) locate() }
     LaunchedEffect(store) { store?.loadInitial() }

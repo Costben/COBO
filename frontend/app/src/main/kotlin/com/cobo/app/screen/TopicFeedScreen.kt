@@ -33,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -45,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.TopicChannel
+import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
@@ -67,6 +70,7 @@ import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
@@ -86,6 +90,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Image
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.icon.extended.Promotions
 import io.github.suqi8.coui.kmp.icon.extended.Recent
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.overScrollVertical
@@ -143,6 +148,7 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                 val listState = listStates[pageIndex]
                 val pullState = rememberFullPagePullToRefreshState()
 
+                SyncDeletedStatuses(store)
                 LaunchedEffect(store) {
                     if (!store.loaded) store.loadInitial()
                 }
@@ -322,14 +328,19 @@ private fun TopicFilterMenu(
     modifier: Modifier = Modifier,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
+    val iconTint = COUITheme.colorScheme.onSurfaceContainer
+    val selectedTint = COUITheme.colorScheme.primary
     val dropdownPositionProvider = remember(horizontalPadding) {
         ListPopupDefaults.dropdownPositionProvider(horizontalMargin = horizontalPadding)
     }
-    val menuEntries = remember(channels, currentChannel, hapticFeedback) {
+    val menuEntries = remember(channels, currentChannel, hapticFeedback, iconTint, selectedTint) {
         val categoryItems = channels.mapIndexed { index, channel ->
+            val selected = channel == currentChannel
+            val tint = if (selected) selectedTint else iconTint
             DropdownItem(
                 text = channel.label,
-                selected = channel == currentChannel,
+                selected = selected,
+                icon = filterMenuItemIcon(channel.icon(), tint),
                 onClick = {
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
                     onSelectChannel(index)
@@ -339,6 +350,7 @@ private fun TopicFilterMenu(
         val actionItems = listOf(
             DropdownItem(
                 text = "刷新当前分类",
+                icon = filterMenuItemIcon(COUIIcons.Refresh, iconTint),
                 onClick = {
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
                     onRefresh()
@@ -346,6 +358,7 @@ private fun TopicFilterMenu(
             ),
             DropdownItem(
                 text = "在网页中打开",
+                icon = filterMenuItemIcon(CoboIcons.Globe, iconTint),
                 onClick = {
                     hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
                     onOpenWeb()
@@ -370,17 +383,32 @@ private fun TopicFilterMenu(
     }
 }
 
+internal fun filterMenuItemIcon(
+    imageVector: ImageVector,
+    tint: Color,
+): @Composable (Modifier) -> Unit = { iconModifier ->
+    Box(iconModifier, contentAlignment = Alignment.Center) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = tint,
+        )
+    }
+}
+
+private fun TopicChannel.icon(): ImageVector = when (this) {
+    TopicChannel.Comprehensive -> COUIIcons.All
+    TopicChannel.Latest -> COUIIcons.Recent
+    TopicChannel.Pictures -> COUIIcons.Image
+    TopicChannel.Videos -> COUIIcons.Play
+    TopicChannel.Following -> COUIIcons.Contacts
+    TopicChannel.Hot -> COUIIcons.Promotions
+}
+
 @Composable
 private fun rememberTopicChannelTabs(): List<ChipTabData> = remember {
     TopicChannel.entries.map { channel ->
-        val icon = when (channel) {
-            TopicChannel.Comprehensive -> COUIIcons.All
-            TopicChannel.Latest -> COUIIcons.Recent
-            TopicChannel.Pictures -> COUIIcons.Image
-            TopicChannel.Videos -> COUIIcons.Play
-            TopicChannel.Following -> COUIIcons.Contacts
-            TopicChannel.Hot -> COUIIcons.Promotions
-        }
-        ChipTabData(label = channel.label, icon = icon)
+        ChipTabData(label = channel.label, icon = channel.icon())
     }
 }

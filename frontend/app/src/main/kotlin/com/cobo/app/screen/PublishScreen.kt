@@ -35,21 +35,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import coil3.compose.AsyncImage
 import com.cobo.app.App
+import com.cobo.app.data.WeiboVisibility
+import com.cobo.app.data.applyComposerReplacement
+import com.cobo.app.data.detectComposerTrigger
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.components.ActionIcon
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.ComposerSuggestPanel
 import com.cobo.app.ui.components.LoadingState
-import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.CardDefaults
+import com.cobo.app.ui.components.VisibilityPickerDialog
+import com.cobo.app.ui.components.VisibilityPill
+import com.cobo.app.ui.components.WeiboEmojiPanel
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -61,32 +67,41 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Add
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Image
+import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
-private val EMOJIS = listOf(
-    "😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
-    "😋", "😎", "😍", "😘", "😗", "😙", "😚", "🙂", "🤗", "🤩",
-    "🤔", "🤨", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮",
-    "🤐", "😯", "😪", "😫", "🥱", "😴", "😌", "😛", "😜", "😝",
-    "🤤", "😒", "😓", "😔", "😕", "🙃", "🤑", "😲", "🙁", "😖",
-    "😞", "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "🤯",
-    "😬", "😰", "😱", "🥵", "🥶", "😳", "🤪", "😵", "🥴", "😠",
-    "😡", "🤬", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "😇", "🥳",
-    "🥺", "🤠", "🤡", "🤥", "🤫", "🤭", "🧐", "🤓", "😈", "👿",
-    "💀", "👻", "👽", "🤖", "💩", "😺", "😸", "😹", "😻", "😼",
-)
-
 @Composable
 fun PublishScreen(nav: NavState, draft: String) {
     val scope = rememberCoroutineScope()
-    var text by rememberSaveable { mutableStateOf(draft) }
+    var field by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(draft, TextRange(draft.length)))
+    }
     var images by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var publishing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var emojiOpen by remember { mutableStateOf(false) }
+    var visibility by remember { mutableStateOf(WeiboVisibility.Public) }
+    var visibilityDialog by remember { mutableStateOf(false) }
+
+    val activeTrigger = remember(field.text, field.selection) {
+        detectComposerTrigger(field.text, field.selection.end)
+    }
+
+    fun insertAtSelection(snippet: String, cursorBack: Int = 0) {
+        val current = field.text
+        val start = field.selection.min.coerceIn(0, current.length)
+        val end = field.selection.max.coerceIn(start, current.length)
+        val next = buildString {
+            append(current, 0, start)
+            append(snippet)
+            append(current, end, current.length)
+        }
+        val nextPos = (start + snippet.length - cursorBack).coerceIn(0, next.length)
+        field = TextFieldValue(next, TextRange(nextPos))
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(9)
@@ -97,7 +112,7 @@ fun PublishScreen(nav: NavState, draft: String) {
     }
 
     fun leave() {
-        if (text.isNotBlank()) App.store.addDraft(text)
+        if (field.text.isNotBlank()) App.store.addDraft(field.text)
         nav.pop()
     }
 
@@ -117,7 +132,7 @@ fun PublishScreen(nav: NavState, draft: String) {
                         TextButton(
                             text = if (publishing) "发布中…" else "发布",
                             modifier = Modifier.testTag("publish_send"),
-                            enabled = !publishing && (text.isNotBlank() || images.isNotEmpty()),
+                            enabled = !publishing && (field.text.isNotBlank() || images.isNotEmpty()),
                             onClick = {
                                 scope.launch {
                                     publishing = true
@@ -129,7 +144,7 @@ fun PublishScreen(nav: NavState, draft: String) {
                                             ids.add(App.repo.uploadImage(uri))
                                         }
                                         progress = "正在发布…"
-                                        App.repo.publish(text.trim(), ids)
+                                        App.repo.publish(field.text.trim(), ids, visibility.code)
                                         App.notifyPublished()
                                         progress = ""
                                         nav.pop()
@@ -156,14 +171,28 @@ fun PublishScreen(nav: NavState, draft: String) {
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             TextField(
-                value = text,
-                onValueChange = { text = it },
+                value = field,
+                onValueChange = { field = it },
                 modifier = Modifier.fillMaxWidth().testTag("publish_input"),
                 label = "分享新鲜事…",
                 backgroundMode = TextFieldMode.Line,
                 minLines = 7,
                 maxLines = 14,
             )
+            if (activeTrigger != null) {
+                Spacer(Modifier.height(8.dp))
+                ComposerSuggestPanel(
+                    trigger = activeTrigger,
+                    onPickMention = { user ->
+                        val (next, nextCursor) = applyComposerReplacement(field.text, activeTrigger, user.name)
+                        field = TextFieldValue(next, TextRange(nextCursor))
+                    },
+                    onPickTopic = { topic ->
+                        val (next, nextCursor) = applyComposerReplacement(field.text, activeTrigger, topic.title)
+                        field = TextFieldValue(next, TextRange(nextCursor))
+                    },
+                )
+            }
             Spacer(Modifier.height(10.dp))
             if (images.isNotEmpty()) {
                 ImagePickerGrid(images, onRemove = { uri -> images = images - uri }) {
@@ -199,11 +228,15 @@ fun PublishScreen(nav: NavState, draft: String) {
                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 })
                 ActionIcon(CoboIcons.Emoji, "", onClick = { emojiOpen = true })
-                ActionIcon(CoboIcons.At, "", onClick = { text += "@" })
-                ActionIcon(CoboIcons.Topic, "", onClick = { text += "##" })
+                ActionIcon(CoboIcons.At, "", onClick = { insertAtSelection("@") })
+                ActionIcon(CoboIcons.Topic, "", onClick = { insertAtSelection("##", cursorBack = 1) })
                 Spacer(Modifier.weight(1f))
+                VisibilityPill(visibility = visibility) {
+                    visibilityDialog = true
+                }
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    "${text.length}",
+                    "${field.text.length}",
                     fontSize = 12.sp,
                     color = COUITheme.colorScheme.onSurfaceSecondary,
                 )
@@ -222,13 +255,25 @@ fun PublishScreen(nav: NavState, draft: String) {
         }
     }
 
-    if (emojiOpen) {
-        EmojiDialog(
-            onDismiss = { emojiOpen = false },
-            onPick = { emoji ->
-                text += emoji
-                emojiOpen = false
+    OverlayBottomSheet(
+        show = emojiOpen,
+        title = "表情",
+        onDismissRequest = { emojiOpen = false },
+    ) {
+        WeiboEmojiPanel(
+            modifier = Modifier.height(260.dp),
+            onPick = { emoji -> insertAtSelection(emoji.phrase) },
+        )
+    }
+
+    if (visibilityDialog) {
+        VisibilityPickerDialog(
+            selected = visibility,
+            onPick = {
+                visibility = it
+                visibilityDialog = false
             },
+            onDismiss = { visibilityDialog = false },
         )
     }
 }
@@ -289,55 +334,6 @@ private fun ImagePickerGrid(
                         Spacer(Modifier.weight(1f))
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmojiDialog(onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = CardDefaults.CornerRadius,
-        ) {
-            Text(
-                "表情",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 8.dp),
-            )
-            Column(
-                modifier = Modifier
-                    .height(320.dp)
-                    .scrollEndHaptic()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                EMOJIS.chunked(8).forEach { row ->
-                    Row(Modifier.fillMaxWidth()) {
-                        row.forEach { emoji ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onPick(emoji) }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(emoji, fontSize = 22.sp)
-                            }
-                        }
-                        repeat(8 - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(text = "关闭", onClick = onDismiss)
             }
         }
     }
