@@ -118,6 +118,59 @@ object CoboIcons {
         }.build()
     }
 
+    val Star: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Star",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.9f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(12f, 3.6f)
+                lineTo(14.6f, 8.9f)
+                lineTo(20.4f, 9.7f)
+                lineTo(16.2f, 13.8f)
+                lineTo(17.2f, 19.6f)
+                lineTo(12f, 16.8f)
+                lineTo(6.8f, 19.6f)
+                lineTo(7.8f, 13.8f)
+                lineTo(3.6f, 9.7f)
+                lineTo(9.4f, 8.9f)
+                close()
+            }
+        }.build()
+    }
+
+    val StarFill: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "StarFill",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 3.2f)
+                lineTo(14.8f, 8.7f)
+                lineTo(20.9f, 9.6f)
+                lineTo(16.4f, 13.9f)
+                lineTo(17.5f, 20f)
+                lineTo(12f, 17.1f)
+                lineTo(6.5f, 20f)
+                lineTo(7.6f, 13.9f)
+                lineTo(3.1f, 9.6f)
+                lineTo(9.2f, 8.7f)
+                close()
+            }
+        }.build()
+    }
+
     val Emoji: ImageVector by lazy {
         ImageVector.Builder(
             name = "Emoji",

@@ -126,8 +126,6 @@ sealed interface Route {
     data object Main : Route
     /** [relogin] 是要重新登录的那个已保存账号的名字，用来提示该登哪个号。 */
     data class Login(val addAccount: Boolean = false, val fresh: Boolean = false, val relogin: String? = null) : Route
-    /** 手机号 + 短信验证码登录，走客户端接口；被拒时自动退到网页登录。 */
-    data class SmsLogin(val addAccount: Boolean = false, val relogin: String? = null) : Route
     data class Detail(val id: String, val mid: String, val readOnly: Boolean = false) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
@@ -137,6 +135,7 @@ sealed interface Route {
     data class Web(val url: String, val title: String) : Route
     data class Container(val cid: String, val title: String) : Route
     data class SuperTopic(val containerId: String, val fallbackUrl: String) : Route
+    data class TopicFeed(val topic: String) : Route
     data object Drafts : Route
     data object History : Route
     data object Accounts : Route

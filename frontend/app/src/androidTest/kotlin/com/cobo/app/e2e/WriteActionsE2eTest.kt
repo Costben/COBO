@@ -50,6 +50,38 @@ class WriteActionsE2eTest : UiE2eTest() {
     }
 
     @Test
+    fun favorite_togglesAndRestores() {
+        assumeTrue("写入测试未启用：加 -e destructive true", destructive)
+
+        waitTag("feed_card_0")
+        openFirstFeedCard()
+        waitText("微博正文")
+
+        val fav = waitTag("detail_favorite")
+        val label = fav.text.orEmpty()
+        assumeFalse("该微博已收藏，跳过以免改动既有数据：$label", label == "已收藏")
+
+        val id = App.store.history().firstOrNull()?.id
+            ?: throw AssertionError("详情页没有写入浏览历史，无法确认微博 id")
+
+        tapTag("detail_favorite")
+        waitText("已收藏")
+
+        try {
+            tapTag("detail_favorite")
+            waitText("收藏")
+        } finally {
+            val current = io { App.repo.detail(id, force = true) }
+            if (current?.favorited == true) {
+                runCatching { io { App.repo.favorite(id, true) } }
+            }
+        }
+
+        val finalState = io { App.repo.detail(id, force = true) }
+        assertFalse("收藏状态没有还原", finalState?.favorited == true)
+    }
+
+    @Test
     fun follow_togglesAndRestores() {
         assumeTrue("写入测试未启用：加 -e destructive true", destructive)
 

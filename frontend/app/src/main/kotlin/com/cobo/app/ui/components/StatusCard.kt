@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -44,7 +45,10 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -77,16 +81,23 @@ import io.github.suqi8.coui.kmp.basic.ButtonSize
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Checkbox
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
+import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.RadioButton
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.preciseClickAnchor
 import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -108,6 +119,11 @@ fun StatusCard(
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
+    val effectiveFavorited = App.repo.isFavorited(status.id)
+    val handleFavorite: () -> Unit = {
+        val nowFavorited = App.repo.toggleLocalFavorite(status)
+        App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
+    }
     Card(
         modifier = modifier.fillMaxWidth(),
         cornerRadius = CardDefaults.GroupCornerRadius,
@@ -115,7 +131,13 @@ fun StatusCard(
         weight = CardDefaults.GroupWeight,
         onClick = onOpen,
     ) {
-        StatusHeader(status, onUser, compact)
+        StatusHeader(
+            status = status,
+            onUser = onUser,
+            compact = compact,
+            favorited = effectiveFavorited,
+            onToggleFavorite = handleFavorite,
+        )
         if (status.textHtml.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             WeiboText(
@@ -189,7 +211,14 @@ fun StatusCard(
 }
 
 @Composable
-fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
+fun StatusHeader(
+    status: Status,
+    onUser: (User) -> Unit,
+    compact: Boolean,
+    favorited: Boolean = App.repo.isFavorited(status.id),
+    showMore: Boolean = true,
+    onToggleFavorite: (() -> Unit)? = null,
+) {
     val scheme = COUITheme.colorScheme
     val user = status.user
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -200,32 +229,49 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = user?.name.orEmpty(),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = scheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    // 昵称太长时先压缩昵称，别把后面的徽标和认证勾挤出去。
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .clickable { user?.let(onUser) },
-                )
-                val membership = user?.membership ?: Membership.None
-                if (membership != Membership.None) {
-                    Spacer(Modifier.width(4.dp))
-                    MemberBadge(membership, compact = true)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = user?.name.orEmpty(),
+                        fontSize = 15.sp,
+                        lineHeight = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        // 昵称太长时先压缩昵称，别把后面的徽标和认证勾挤出去。
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { user?.let(onUser) },
+                    )
+                    val membership = user?.membership ?: Membership.None
+                    if (membership != Membership.None) {
+                        Spacer(Modifier.width(4.dp))
+                        MemberBadge(membership, compact = true)
+                    }
+                    val tag = FollowTags[user?.id]
+                    if (tag != null) {
+                        Spacer(Modifier.width(4.dp))
+                        FollowTagBadge(tag, compact = true)
+                    }
+                    if (user?.verified == true) {
+                        Spacer(Modifier.width(4.dp))
+                        VerifiedBadge()
+                    }
                 }
-                val tag = FollowTags[user?.id]
-                if (tag != null) {
-                    Spacer(Modifier.width(4.dp))
-                    FollowTagBadge(tag, compact = true)
-                }
-                if (user?.verified == true) {
-                    Spacer(Modifier.width(4.dp))
-                    VerifiedBadge()
+                if (showMore && onToggleFavorite != null) {
+                    Spacer(Modifier.width(6.dp))
+                    StatusMoreButton(
+                        statusId = status.id,
+                        favorited = favorited,
+                        onToggleFavorite = onToggleFavorite,
+                    )
                 }
             }
             Text(
@@ -240,6 +286,61 @@ fun StatusHeader(status: Status, onUser: (User) -> Unit, compact: Boolean) {
                 color = scheme.onSurfaceSecondary,
                 maxLines = 1,
             )
+        }
+    }
+}
+
+@Composable
+private fun StatusMoreButton(
+    statusId: String,
+    favorited: Boolean,
+    onToggleFavorite: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    var expanded by remember(statusId) { mutableStateOf(false) }
+    Box {
+        Box(
+            modifier = Modifier
+                .height(20.dp)
+                .widthIn(min = 32.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { expanded = true },
+                )
+                .padding(horizontal = 2.dp)
+                .semantics { contentDescription = "更多" }
+                .testTag("status_more"),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Icon(
+                imageVector = COUIIcons.More,
+                contentDescription = null,
+                tint = scheme.onSurfaceSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        OverlayListPopup(
+            show = expanded,
+            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+            onDismissRequest = { expanded = false },
+        ) {
+            val dismiss = LocalDismissState.current
+            ListPopupColumn {
+                DropdownImpl(
+                    item = DropdownItem(text = if (favorited) "取消收藏" else "收藏微博"),
+                    optionSize = 1,
+                    isSelected = false,
+                    index = 0,
+                    groupKey = "status_more_$statusId",
+                    onSelectedIndexChange = {
+                        dismiss?.invoke()
+                        expanded = false
+                        onToggleFavorite()
+                    },
+                )
+            }
         }
     }
 }

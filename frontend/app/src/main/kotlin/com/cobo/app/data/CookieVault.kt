@@ -140,6 +140,51 @@ object CookieVault {
         return joinHeader(merged.map { "${it.key}=${it.value}" })
     }
 
+    /**
+     * 为指定 host 拼桌面端请求头：保留该域自身的 cookie（例如 `.weibo.com` 的 `XSRF-TOKEN`），
+     * 仅在缺少 `SUB` / `SUBP` / `ALF` 时从其他微博域补齐身份凭证，不覆盖目标域的同名 cookie。
+     */
+    fun desktopAuthHeader(cookies: Map<String, String>, host: String): String {
+        if (cookies.isEmpty()) return ""
+        val merged = LinkedHashMap<String, String>()
+        fun absorbDomain(domain: String, onlyIfMissing: Set<String>? = null) {
+            for (line in cookies[domain].orEmpty().split('\n')) {
+                val index = line.indexOf('=')
+                if (index <= 0) continue
+                val key = line.substring(0, index).trim()
+                val value = line.substring(index + 1).trim()
+                if (onlyIfMissing != null && (key !in onlyIfMissing || !merged[key].isNullOrBlank())) {
+                    continue
+                }
+                merged[key] = value
+            }
+        }
+        for (domain in cookies.keys.filter { matches(it, host) }.sortedBy { it.length }) {
+            absorbDomain(domain)
+        }
+        val authKeys = setOf("SUB", "SUBP", "ALF")
+        for (domain in cookies.keys.filter { isWeibo(it) && !matches(it, host) }.sortedByDescending { it.length }) {
+            absorbDomain(domain, onlyIfMissing = authKeys)
+        }
+        return joinHeader(merged.map { "${it.key}=${it.value}" })
+    }
+
+    /** 读取指定 host 下某个 cookie 的当前值（仅匹配该 host 自己的域）。 */
+    fun cookieValue(cookies: Map<String, String>, host: String, name: String): String? {
+        if (cookies.isEmpty()) return null
+        var found: String? = null
+        for (domain in cookies.keys.filter { matches(it, host) }.sortedBy { it.length }) {
+            for (line in cookies[domain].orEmpty().split('\n')) {
+                val index = line.indexOf('=')
+                if (index <= 0) continue
+                if (line.substring(0, index).trim().equals(name, ignoreCase = true)) {
+                    found = line.substring(index + 1).trim().ifBlank { null }
+                }
+            }
+        }
+        return found
+    }
+
     private fun matches(domain: String, host: String): Boolean {
         val bare = domain.trimStart('.')
         return host.equals(bare, ignoreCase = true) || host.endsWith(domain, ignoreCase = true)

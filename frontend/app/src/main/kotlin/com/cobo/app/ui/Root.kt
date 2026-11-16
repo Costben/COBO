@@ -77,7 +77,7 @@ import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SettingsScreen
-import com.cobo.app.screen.SmsLoginScreen
+import com.cobo.app.screen.TopicFeedScreen
 import com.cobo.app.screen.TopicScreen
 import com.cobo.app.screen.SuperTopicScreen
 import com.cobo.app.screen.VideoScreen
@@ -117,8 +117,8 @@ fun CoboRoot() {
     val scope = rememberCoroutineScope()
     SideEffect { nav.attach(scope) }
 
-    // 启动时顺手续一次登录态：客户端会话换 cookie，网页会话按浏览器的样子走一趟拿新 cookie。
-    LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
+    // 启动时顺手续一次网页登录态。
+    LaunchedEffect(Unit) { App.repo.refreshSessionIfStale() }
 
     // 启动时静默查一次更新：开关打开后每次启动应用自动发请求。
     LaunchedEffect(Unit) {
@@ -142,11 +142,13 @@ fun CoboRoot() {
             val uid = weiboUserId(url)
             val mention = weiboMentionName(url)
             val topicId = superTopicId(url)
+            val topicQuery = weiboTopicQuery(url)
             val current = nav.stack.lastOrNull()?.route
             val readOnly = current is Route.SuperTopic || (current is Route.Detail && current.readOnly)
             when {
                 topicId != null -> nav.push(Route.SuperTopic(topicId, resolveWeiboLink(url)
                     ?: "https://m.weibo.cn/p/index?containerid=$topicId"))
+                topicQuery != null -> nav.push(Route.TopicFeed(topicQuery))
                 voteId != null -> nav.push(if (readOnly) {
                     Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
                 } else Route.Vote(voteId))
@@ -175,8 +177,11 @@ fun CoboRoot() {
                         } else Route.Vote(vid))
                     } else {
                         val sid = weiboStatusId(resolved)
+                        val resolvedTopicQuery = weiboTopicQuery(resolved)
                         if (sid != null) {
                             nav.push(Route.Detail(sid, "", readOnly))
+                        } else if (resolvedTopicQuery != null) {
+                            nav.push(Route.TopicFeed(resolvedTopicQuery))
                         } else {
                             resolveWeiboLink(resolved)?.let { nav.push(Route.Web(it, "网页")) }
                         }
@@ -626,7 +631,6 @@ private fun RouteContent(route: Route, nav: NavState) {
     when (route) {
         Route.Main -> MainShell(nav)
         is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh, route.relogin)
-        is Route.SmsLogin -> SmsLoginScreen(nav, route.addAccount, route.relogin)
         is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
@@ -644,6 +648,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)
         is Route.Topic -> TopicScreen(nav, route.name)
+        is Route.TopicFeed -> TopicFeedScreen(nav, route.topic)
         is Route.Images -> ImageViewerScreen(nav, route.pics, route.index)
         is Route.Video -> VideoScreen(nav, route.url, route.title)
         is Route.Vote -> VoteScreen(nav, route.voteId)

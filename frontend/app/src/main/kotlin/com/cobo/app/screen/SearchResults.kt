@@ -329,10 +329,17 @@ fun openTopicDestination(
         return
     }
     if (topic.scheme.isNotBlank()) {
-        resolveWeiboLink(topic.scheme)?.let {
-            nav.push(Route.Web(it, topic.title))
+        val topicQuery = com.cobo.app.ui.weiboTopicQuery(topic.scheme)
+        if (topicQuery != null) {
+            nav.push(Route.TopicFeed(topicQuery))
             return
         }
+    }
+    val cleanTitle = topic.title.trim()
+    if (cleanTitle.isNotEmpty()) {
+        val formatted = if (cleanTitle.startsWith("#") && cleanTitle.endsWith("#")) cleanTitle else "#$cleanTitle#"
+        nav.push(Route.TopicFeed(formatted))
+        return
     }
     onSearchKeyword(topic.title)
 }

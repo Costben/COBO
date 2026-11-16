@@ -295,6 +295,64 @@ class Store(private val context: Context) {
 
     fun clearHistory() = write("history.json", JSONArray())
 
+    /**
+     * 本地收藏：全局共用一份 `favorites.json`，跨多账号和纯本地模式共享，切号与退出登录都不清空。
+     */
+    fun favorites(): List<Status> {
+        val arr = readArray("favorites.json")
+        val out = ArrayList<Status>(arr.length())
+        for (i in 0 until arr.length()) {
+            val status = statusFromSnapshot(arr.optJSONObject(i)) ?: continue
+            out.add(if (status.favorited) status else status.copy(favorited = true))
+        }
+        return out
+    }
+
+    fun isFavorite(id: String): Boolean {
+        if (id.isBlank()) return false
+        val arr = readArray("favorites.json")
+        for (i in 0 until arr.length()) {
+            if (arr.optJSONObject(i)?.str("id") == id) return true
+        }
+        return false
+    }
+
+    fun addFavorite(status: Status) {
+        if (status.id.isBlank()) return
+        val arr = readArray("favorites.json")
+        val out = JSONArray()
+        out.put(statusToSnapshot(if (status.favorited) status else status.copy(favorited = true)))
+        for (i in 0 until arr.length()) {
+            if (out.length() >= 500) break
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.str("id") == status.id) continue
+            out.put(o)
+        }
+        write("favorites.json", out)
+    }
+
+    fun removeFavorite(id: String) {
+        if (id.isBlank()) return
+        val arr = readArray("favorites.json")
+        val out = JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.str("id") == id) continue
+            out.put(o)
+        }
+        write("favorites.json", out)
+    }
+
+    fun toggleFavorite(status: Status): Boolean {
+        return if (isFavorite(status.id)) {
+            removeFavorite(status.id)
+            false
+        } else {
+            addFavorite(status)
+            true
+        }
+    }
+
     /** uid -> 关注标记 key。存空串表示「明确清掉」，和「没记过」要分开，否则服务端值会一直补回来。 */
     private fun readFollowTags(): JSONObject {
         val f = file("follows.json")

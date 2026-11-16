@@ -514,6 +514,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             val current = status
+            val currentFavorited = current?.let { App.repo.isFavorited(it) } == true
             ActionIcon(
                 icon = CoboIcons.Repost,
                 text = "转发 ${fmtCount(current?.reposts ?: 0)}",
@@ -527,6 +528,20 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 onClick = { commentDialog = true },
                 modifier = Modifier.weight(1f).testTag("detail_comment"),
                 enabled = !readOnly,
+            )
+            ActionIcon(
+                icon = if (currentFavorited) CoboIcons.StarFill else CoboIcons.Star,
+                text = if (currentFavorited) "已收藏" else "收藏",
+                onClick = {
+                    val s = status ?: return@ActionIcon
+                    val next = App.repo.toggleLocalFavorite(s)
+                    status = s.copy(favorited = next)
+                    App.toast(if (next) "已收藏" else "已取消收藏")
+                },
+                tint = if (currentFavorited) scheme.primary
+                else scheme.onSurfaceSecondary,
+                modifier = Modifier.weight(1f).testTag("detail_favorite"),
+                enabled = current != null,
             )
             ActionIcon(
                 icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,

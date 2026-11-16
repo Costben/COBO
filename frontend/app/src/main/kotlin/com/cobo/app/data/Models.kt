@@ -196,12 +196,22 @@ internal fun picsOf(o: JSONObject): List<Pic> {
         }
     }
     val ids = o.optJSONArray("pic_ids") ?: return emptyList()
-    val infos = o.optJSONObject("pic_infos") ?: return emptyList()
+    val infos = o.optJSONObject("pic_infos")
     return buildList {
         for (i in 0 until ids.length()) {
             val id = ids.optString(i).orEmpty()
             if (id.isBlank()) continue
-            infos.optJSONObject(id)?.let { picOf(it) }?.let(::add)
+            val parsed = infos?.optJSONObject(id)?.let { picOf(it) }
+            if (parsed != null) {
+                add(parsed)
+            } else {
+                add(
+                    Pic(
+                        thumb = "https://wx1.sinaimg.cn/orj360/$id.jpg",
+                        large = "https://wx1.sinaimg.cn/large/$id.jpg",
+                    ),
+                )
+            }
         }
     }
 }
@@ -355,6 +365,7 @@ data class Status(
     val comments: Int = 0,
     val attitudes: Int = 0,
     val liked: Boolean = false,
+    val favorited: Boolean = false,
     val region: String = "",
     val editCount: Int = 0,
     val isVote: Boolean = false,
@@ -437,6 +448,7 @@ data class Status(
                 comments = o.int("comments_count"),
                 attitudes = o.int("attitudes_count"),
                 liked = o.optBoolean("liked", false),
+                favorited = o.optBoolean("favorited", false),
                 region = o.str("region_name"),
                 editCount = o.int("edit_count"),
                 isVote = isVote,

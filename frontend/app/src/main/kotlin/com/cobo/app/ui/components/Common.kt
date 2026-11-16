@@ -219,7 +219,7 @@ fun ActionIcon(
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
     ) {
         Icon(icon, text.ifBlank { null }, Modifier.size(17.dp), tint = color)
         if (text.isNotBlank()) {

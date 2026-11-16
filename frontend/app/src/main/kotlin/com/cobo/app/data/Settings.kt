@@ -95,6 +95,20 @@ enum class SearchPanelAnimation(val key: String, val label: String) {
     }
 }
 
+/** 底栏左下角融合球按钮的功能。 */
+enum class BottomLeftAction(val key: String, val label: String) {
+    Refresh("refresh", "回到顶部刷新"),
+    Search("search", "搜索"),
+    Favorites("favorites", "打开收藏夹"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): BottomLeftAction {
+            return entries.firstOrNull { it.key == key } ?: Refresh
+        }
+    }
+}
+
 class Settings(context: Context) {
     private val sp = context.getSharedPreferences("app", Context.MODE_PRIVATE)
 
@@ -224,6 +238,12 @@ class Settings(context: Context) {
     /** 首页搜索面板的展开方式：上下扩展、淡入淡出、从搜索按钮展开。默认淡入淡出。 */
     var searchPanelAnimation by mutableStateOf(
         SearchPanelAnimation.fromKey(sp.getString("search_panel_animation", null))
+    )
+        private set
+
+    /** 底栏左下角融合球按钮的作用：回到顶部刷新 / 搜索 / 打开收藏夹。 */
+    var bottomLeftAction by mutableStateOf(
+        BottomLeftAction.fromKey(sp.getString("bottom_left_action", null))
     )
         private set
 
@@ -436,6 +456,11 @@ class Settings(context: Context) {
     fun applySearchPanelAnimation(value: SearchPanelAnimation) {
         searchPanelAnimation = value
         sp.edit().putString("search_panel_animation", value.key).apply()
+    }
+
+    fun applyBottomLeftAction(value: BottomLeftAction) {
+        bottomLeftAction = value
+        sp.edit().putString("bottom_left_action", value.key).apply()
     }
 
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */

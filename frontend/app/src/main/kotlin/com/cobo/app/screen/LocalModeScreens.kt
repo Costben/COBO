@@ -154,6 +154,14 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
                 )
                 PreferenceDivider()
                 ArrowPreference(
+                    title = "收藏",
+                    modifier = Modifier.testTag("local_favorites"),
+                    summary = "${App.repo.localFavoriteIds.size} 条收藏",
+                    cardListPosition = CardListPosition.Middle,
+                    onClick = { nav.push(Route.Container("230267", "收藏")) },
+                )
+                PreferenceDivider()
+                ArrowPreference(
                     title = "话题 / 超话",
                     modifier = Modifier.testTag("local_topic"),
                     summary = "按话题浏览",

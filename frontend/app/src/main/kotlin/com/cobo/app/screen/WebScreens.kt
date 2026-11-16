@@ -147,12 +147,6 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                     fontSize = 12.sp,
                     color = COUITheme.colorScheme.onSurfaceSecondary,
                 )
-                // 客户端接口被拒时会自己跳回这里，所以这个入口留着没有副作用。
-                TextButton(
-                    text = "用手机号短信登录",
-                    onClick = { nav.push(Route.SmsLogin(addAccount, relogin)) },
-                    modifier = Modifier.testTag("login_sms"),
-                )
                 // 只在启动就落到登录页时给：从纯本地模式点进来登录的，返回键就能回去。
                 if (!addAccount && nav.stack.size == 1) {
                     TextButton(

@@ -180,6 +180,68 @@ fun weiboStatusId(raw: String): String? {
 /** 投票直链（vote.weibo.com 或带有 vote_id 参数的页面）。 */
 fun weiboVoteId(raw: String): String? = com.cobo.app.data.extractVoteId(raw)
 
+/**
+ * 普通 `#话题#` 搜索链接 → 话题文本。排除 `100808` 超话链接（超话走原生超话页）。
+ * 支持 `m.weibo.cn/search?containerid=231522...|100103...`、`s.weibo.com/weibo?q=...`、
+ * `s.weibo.com/weibo/<话题>`、`m.weibo.cn/k/<话题>` 及 `sinaweibo://searchall?...`。
+ */
+fun weiboTopicQuery(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    if (com.cobo.app.data.superTopicId(trimmed) != null) return null
+
+    fun decode(value: String): String = try {
+        java.net.URLDecoder.decode(value, "UTF-8")
+    } catch (_: Throwable) {
+        value
+    }
+
+    fun wrapHash(value: String): String =
+        if (value.startsWith("#") && value.endsWith("#")) value else "#$value#"
+
+    val path = trimmed.substringBefore('?')
+    val lowerPath = path.lowercase()
+    val kIdx = lowerPath.indexOf("/k/")
+    if (kIdx >= 0 && (lowerPath.contains("weibo.cn") || lowerPath.contains("weibo.com") || lowerPath.startsWith("/k/"))) {
+        val rawName = decode(path.substring(kIdx + 3).trim('/')).trim()
+        if (rawName.isNotEmpty() && !rawName.contains('/')) {
+            return wrapHash(rawName)
+        }
+    }
+
+    val sWeiboMarker = "s.weibo.com/weibo/"
+    val sWeiboIdx = lowerPath.indexOf(sWeiboMarker)
+    if (sWeiboIdx >= 0) {
+        val rawSeg = decode(path.substring(sWeiboIdx + sWeiboMarker.length).trim('/')).trim()
+        if (rawSeg.isNotEmpty() && !rawSeg.contains('/')) {
+            return wrapHash(rawSeg)
+        }
+    }
+
+    // Topic URLs often put raw `#话题#` in query params (`q=#早安#`), so do not truncate at `#`
+    // before extracting `&`-delimited query parameters.
+    val rawQuery = trimmed.substringAfter('?', "").substringBefore("#Intent")
+    if (rawQuery.isEmpty()) return null
+
+    val cid = param(rawQuery, "containerid")?.let(::decode)
+    if (cid != null && (cid.startsWith("100103") || cid.startsWith("231522"))) {
+        val cidQuery = cid.substringAfter('?', cid)
+        param(cidQuery, "q")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        param(cidQuery, "extparam")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        param(rawQuery, "q")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        param(rawQuery, "extparam")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
+
+    val looksLikeSearchHost = lowerPath.contains("/search") ||
+        lowerPath.contains("s.weibo.com/weibo") ||
+        lowerPath.startsWith("sinaweibo://searchall")
+    if (looksLikeSearchHost) {
+        param(rawQuery, "q")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        param(rawQuery, "extparam")?.let(::decode)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
+    return null
+}
+
 /** 是否是 t.cn 这类短链接，点击时先探测目标地址以防掉进通用网页 WebView。 */
 fun isWeiboShortLink(raw: String): Boolean {
     val trimmed = raw.trim().lowercase()

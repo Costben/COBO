@@ -19,6 +19,7 @@ class DetailE2eTest : UiE2eTest() {
         waitText("微博正文")
         scrollToText("热门评论")
         waitAny(By.res("detail_like"), By.textStartsWith("赞"))
+        waitAny(By.res("detail_favorite"), By.text("收藏"), By.text("已收藏"))
         tapDesc("返回")
         waitTag("feed_card_0")
     }

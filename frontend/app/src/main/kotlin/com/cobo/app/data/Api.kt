@@ -126,7 +126,7 @@ object Api {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", DESKTOP_UA)
-                .header("Accept", "application/json")
+                .header("Accept", "application/json, text/plain, */*")
                 .header("Referer", "https://weibo.com/")
                 .header("X-Requested-With", "XMLHttpRequest")
                 .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
@@ -134,6 +134,28 @@ object Api {
                 .build()
             execute(request)
         }
+
+    suspend fun postDesktopJson(
+        url: String,
+        jsonBody: String,
+        cookie: String?,
+        xsrfToken: String?,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DESKTOP_UA)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "https://weibo.com/")
+            .header("Origin", "https://weibo.com")
+            .header("X-Requested-With", "XMLHttpRequest")
+            .apply {
+                if (!cookie.isNullOrBlank()) header("Cookie", cookie)
+                if (!xsrfToken.isNullOrBlank()) header("X-XSRF-TOKEN", xsrfToken)
+            }
+            .post(jsonBody.toRequestBody(JSON))
+            .build()
+        execute(request)
+    }
 
     suspend fun post(
         url: String,

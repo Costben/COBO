@@ -145,8 +145,17 @@ class ApiContractTest : DataE2eTest() {
 
     @Test
     fun favorites_doesNotFail() {
-        val page = net { App.repo.favorites(force = false) }
-        page.items.forEach { assertTrue("收藏微博 id 为空", it.id.isNotBlank()) }
+        val page = net { App.repo.favorites(force = true) }
+        page.items.forEach { status ->
+            assertTrue("收藏微博 id 为空", status.id.isNotBlank())
+            assertNotNull("收藏微博缺少作者", status.user)
+            assertTrue("收藏列表条目应标记为已收藏", status.favorited)
+        }
+        val next = page.sinceId
+        if (next != null) {
+            val page2 = net { App.repo.favorites(cursor = next, force = true) }
+            page2.items.forEach { assertTrue("收藏第二页微博 id 为空", it.id.isNotBlank()) }
+        }
     }
 
     @Test

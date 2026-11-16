@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -110,6 +111,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.data.Account
+import com.cobo.app.data.BottomLeftAction
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.FeedTabSelection
@@ -176,9 +178,11 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.ExpandableIndicator
 import io.github.suqi8.coui.kmp.icon.extended.Add
+import io.github.suqi8.coui.kmp.icon.extended.Favorites
 import io.github.suqi8.coui.kmp.icon.extended.GridView
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import io.github.suqi8.coui.kmp.icon.extended.Search
 import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -261,7 +265,7 @@ fun MainShell(nav: NavState) {
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
     val guest = remember { App.repo.guest }
     val accountOwner = remember { App.repo.session?.uid.orEmpty() }
-    LaunchedEffect(Unit) { App.repo.refreshClientSessionIfStale() }
+    LaunchedEffect(Unit) { App.repo.refreshSessionIfStale() }
     val leftTab = App.settings.feedLeftTab
     val centerTab = App.settings.feedCenterTab
     val rightTab = App.settings.feedRightTab
@@ -282,8 +286,8 @@ fun MainShell(nav: NavState) {
                 originalFeed(cursor, force)
             },
             FeedFilter.Unread to FeedStore("unread", snapshotOwner = { accountOwner }) { _, _ -> FeedPage(emptyList(), null) },
-            FeedFilter.Favorites to FeedStore("favorites", resumable = true, snapshotOwner = { accountOwner }) { _, force ->
-                App.repo.favorites(force)
+            FeedFilter.Favorites to FeedStore("favorites") { cursor, force ->
+                App.repo.favorites(cursor, force)
             },
             FeedFilter.Special to FeedStore("special", resumable = true, supportsReverseBrowse = true, snapshotOwner = { accountOwner }) { cursor, force ->
                 App.repo.special(cursor, force)
@@ -298,6 +302,11 @@ fun MainShell(nav: NavState) {
                 App.repo.localFollows(cursor, force)
             },
         )
+    }
+    val favoritesVersion = App.repo.favoritesVersion
+    LaunchedEffect(favoritesVersion) {
+        val favStore = filterStores[FeedFilter.Favorites] ?: return@LaunchedEffect
+        if (favoritesVersion > 0 && favStore.loaded) favStore.refresh()
     }
     val recommendStore = remember { FeedStore("102803", readOnly = guest, resumable = true, snapshotOwner = { accountOwner }) }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
@@ -691,6 +700,27 @@ fun MainShell(nav: NavState) {
         // Layer 3: 悬浮底部导航栏（在面板之下，展开时被面板盖住）。
         val quickSwitchAccount = App.settings.quickSwitchAccount
         val profileTabAvatar = App.settings.profileTabAvatar
+        val bottomLeftAction = App.settings.bottomLeftAction
+        val triggerBottomLeftAction: (BottomLeftAction) -> Unit = { action ->
+            if (!feedPanelCovering) {
+                when (action) {
+                    BottomLeftAction.Refresh -> {
+                        if (tab == 1) App.requestMessagesTop()
+                        else {
+                            if (tab != 0) nav.setTab(0)
+                            App.requestFeedTop(scrollToTop = false)
+                        }
+                    }
+                    BottomLeftAction.Search -> {
+                        if (tab != 0) nav.setTab(0)
+                        openFeedSearch()
+                    }
+                    BottomLeftAction.Favorites -> {
+                        nav.push(Route.Container("230267", "收藏"))
+                    }
+                }
+            }
+        }
         val activeUid = App.repo.session?.uid.orEmpty()
         var profileAvatarUrl by remember(activeUid, guest) {
             mutableStateOf(
@@ -724,12 +754,13 @@ fun MainShell(nav: NavState) {
                 FloatingBottomBar(
                     tab = tab,
                     onTab = { target -> if (!feedPanelCovering) nav.setTab(target) },
-                    // 刷新键跟随当前页：消息页刷消息，其余仍走微博刷新（倒序浏览下不强制回顶）。
-                    onRefresh = {
-                        if (!feedPanelCovering) {
-                            if (tab == 1) App.requestMessagesTop() else App.requestFeedTop(scrollToTop = false)
-                        }
+                    bottomLeftAction = bottomLeftAction,
+                    onBottomLeftClick = { triggerBottomLeftAction(bottomLeftAction) },
+                    onBottomLeftMenuSelect = { selected ->
+                        App.settings.applyBottomLeftAction(selected)
+                        triggerBottomLeftAction(selected)
                     },
+                    menuEnabled = !feedPanelCovering,
                     onFeedTop = { if (!feedPanelCovering) App.requestFeedTop(scrollToTop = true) },
                     onPublish = {
                         if (!feedPanelCovering) {
@@ -1616,7 +1647,10 @@ private fun FeedTabs(
 private fun FloatingBottomBar(
     tab: Int,
     onTab: (Int) -> Unit,
-    onRefresh: () -> Unit,
+    bottomLeftAction: BottomLeftAction,
+    onBottomLeftClick: () -> Unit,
+    onBottomLeftMenuSelect: (BottomLeftAction) -> Unit,
+    menuEnabled: Boolean,
     onFeedTop: () -> Unit,
     onPublish: () -> Unit,
     profileAvatarUrl: String? = null,
@@ -1637,6 +1671,8 @@ private fun FloatingBottomBar(
         }
         onTab(0)
     }
+    var leftMenuExpanded by remember { mutableStateOf(false) }
+    val leftPopupPositionProvider = remember { bottomLeftPopupPositionProvider() }
     Box(
         modifier
             .fillMaxWidth()
@@ -1652,19 +1688,66 @@ private fun FloatingBottomBar(
                         modifier = Modifier
                             .fillMaxSize()
                             .testTag("bottom_refresh")
-                            .clickable(
-                                interactionSource = null,
+                            .combinedClickable(
+                                interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                                 role = Role.Button,
-                                onClick = onRefresh,
+                                onLongClick = if (menuEnabled) {
+                                    { leftMenuExpanded = true }
+                                } else {
+                                    null
+                                },
+                                onClick = onBottomLeftClick,
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            COUIIcons.Refresh,
-                            "刷新",
+                            imageVector = bottomLeftActionIcon(bottomLeftAction),
+                            contentDescription = bottomLeftAction.label,
                             tint = COUITheme.colorScheme.onSurface,
                         )
+                        if (menuEnabled) {
+                            WindowListPopup(
+                                show = leftMenuExpanded,
+                                popupPositionProvider = leftPopupPositionProvider,
+                                alignment = PopupPositionProvider.Align.BottomStart,
+                                maxHeight = NavigationPopupMenuDefaults.MaxHeight,
+                                minWidth = NavigationPopupMenuDefaults.MinWidth,
+                                onDismissRequest = { leftMenuExpanded = false },
+                            ) {
+                                val dismiss = LocalDismissState.current
+                                val iconTint = COUITheme.colorScheme.onSurfaceContainer
+                                ListPopupColumn {
+                                    BottomLeftAction.entries.forEachIndexed { index, option ->
+                                        DropdownImpl(
+                                            item = DropdownItem(
+                                                text = option.label,
+                                                icon = { iconModifier ->
+                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = bottomLeftActionIcon(option),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp),
+                                                            tint = iconTint,
+                                                        )
+                                                    }
+                                                },
+                                            ),
+                                            optionSize = BottomLeftAction.entries.size,
+                                            isSelected = option == bottomLeftAction,
+                                            index = index,
+                                            groupKey = "bottom_left_action",
+                                            modifier = Modifier.testTag("bottom_left_menu_${option.key}"),
+                                            onSelectedIndexChange = {
+                                                dismiss?.invoke()
+                                                leftMenuExpanded = false
+                                                onBottomLeftMenuSelect(option)
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 endAccessory = {
@@ -1929,3 +2012,41 @@ private fun ProfileQuickSwitchMenu(
         )
     }
 }
+
+private fun bottomLeftActionIcon(action: BottomLeftAction): ImageVector = when (action) {
+    BottomLeftAction.Refresh -> COUIIcons.Refresh
+    BottomLeftAction.Search -> COUIIcons.Search
+    BottomLeftAction.Favorites -> COUIIcons.Favorites
+}
+
+private fun bottomLeftPopupPositionProvider(): PopupPositionProvider =
+    object : PopupPositionProvider {
+        private val margins = PaddingValues(
+            horizontal = NavigationPopupMenuDefaults.HorizontalMargin,
+            vertical = NavigationPopupMenuDefaults.VerticalMargin,
+        )
+
+        override fun calculatePosition(
+            anchorBounds: IntRect,
+            windowBounds: IntRect,
+            layoutDirection: LayoutDirection,
+            popupContentSize: IntSize,
+            popupMargin: IntRect,
+            alignment: PopupPositionProvider.Align,
+        ): IntOffset {
+            val minX = windowBounds.left + popupMargin.left
+            val maxX = (windowBounds.right - popupContentSize.width - popupMargin.right)
+                .coerceAtLeast(minX)
+            val minY = windowBounds.top + popupMargin.top
+            val maxY = (windowBounds.bottom - popupContentSize.height - popupMargin.bottom)
+                .coerceAtLeast(minY)
+            val offsetY = (anchorBounds.top - popupContentSize.height - popupMargin.bottom)
+                .coerceIn(minY, maxY)
+            return IntOffset(
+                x = anchorBounds.left.coerceIn(minX, maxX),
+                y = offsetY,
+            )
+        }
+
+        override fun getMargins(): PaddingValues = margins
+    }

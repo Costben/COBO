@@ -235,6 +235,7 @@ internal fun statusToSnapshot(s: Status): JSONObject = JSONObject().apply {
     put("comments", s.comments)
     put("attitudes", s.attitudes)
     put("liked", s.liked)
+    put("favorited", s.favorited)
     put("region", s.region)
     put("editCount", s.editCount)
     put("isVote", s.isVote)
@@ -272,6 +273,7 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
         comments = o.int("comments"),
         attitudes = o.int("attitudes"),
         liked = o.optBoolean("liked"),
+        favorited = o.optBoolean("favorited"),
         region = o.str("region"),
         editCount = o.int("editCount"),
         isVote = o.optBoolean("isVote"),

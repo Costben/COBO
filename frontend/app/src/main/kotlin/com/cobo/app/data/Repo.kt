@@ -2,6 +2,10 @@ package com.cobo.app.data
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.setValue
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
@@ -22,12 +26,6 @@ import java.net.URLDecoder
 
 /** `/api/config` 下发的 st 会过期，过期后写操作一律 403（errno 100006 请求非法）。 */
 private const val ST_TTL_MS = 10 * 60 * 1000L
-
-/**
- * 客户端登录的 cookie 多久换一次。参考同类客户端：6 小时换一次，
- * 远早于微博真正让 cookie 失效的时间，续期失败也还有好几天可以重试。
- */
-private const val GSID_TTL_MS = 6 * 60 * 60 * 1000L
 
 /** 网页会话的心跳间隔：像浏览器一样隔几小时打开一次页面，让服务端重发 SUB。 */
 private const val WEB_HEARTBEAT_MS = 6 * 60 * 60 * 1000L
@@ -63,9 +61,8 @@ private const val VISITOR_RETRY_MS = 60_000L
 private const val GUEST_BLOCKED = "纯本地模式看不了这里，登录后可用"
 private const val LOGIN_REQUIRED = "纯本地模式不能这样操作，登录后可用"
 
-/** 登录渠道。数字与 Share 账号表里的 `loginType` 对齐：1 网页、4 客户端。 */
+/** 登录渠道：统一采用网页端登录。 */
 const val LOGIN_TYPE_WEB = 1
-const val LOGIN_TYPE_CLIENT = 4
 
 /** 「本地关注」每轮并发拉几个人的主页时间线：并发再高容易被微博限流。 */
 private const val TAG_FEED_CONCURRENCY = 4
@@ -153,6 +150,16 @@ enum class SearchSort(val label: String, val type: Int) {
     Hot("最热", 60),
 }
 
+/** 话题详情页顶部分类标签，对应微博搜索频道 `100103type=X`。 */
+enum class TopicChannel(val label: String, val type: Int) {
+    Comprehensive("综合", 1),
+    Latest("实时", 61),
+    Pictures("图片", 63),
+    Videos("视频", 64),
+    Following("关注", 62),
+    Hot("热门", 60),
+}
+
 class Repo(private val context: Context, private val store: Store) {
 
     @Volatile
@@ -177,8 +184,13 @@ class Repo(private val context: Context, private val store: Store) {
 
     private val visitorLock = Mutex()
 
-    /** 续期要串行：并发进来的几个请求会同时看到同一个过期 gsid。 */
-    private val clientRefreshLock = Mutex()
+    /** 全局本地收藏状态：跨多账号与纯本地模式共用，切号与登出均保留。 */
+    val localFavoriteIds = mutableStateMapOf<String, Boolean>().apply {
+        store.favorites().forEach { put(it.id, true) }
+    }
+
+    var favoritesVersion by mutableIntStateOf(0)
+        private set
 
     init {
         // 网页端每次都可能在响应里滚一份新的 SUB / ALF，收到就收进表里，不进缓存也不去重。
@@ -231,47 +243,32 @@ class Repo(private val context: Context, private val store: Store) {
         withContext(Dispatchers.Main) { CookieVault.inject(cookies) }
     }
 
-    /**
-     * 要用客户端会话之前先确认 gsid 还能用，对应 Share 的 `C0484Lf.O00000oO()`：
-     * 会话不是客户端登录、或者 gsid 已经该换了，就现换一份；换不到返回 false，
-     * 调用方自己退回网页登录。
-     */
-    suspend fun ensureClientSession(): Boolean {
-        val active = session ?: return false
-        if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return false
-        if (System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) return true
-        return refreshClientSession()
-    }
-
     fun hasSession(): Boolean = session?.loggedIn == true
 
     /** 纯本地模式：没有登录账号，只读浏览，关注全靠本机标记。 */
     val guest: Boolean get() = !hasSession()
+
+    fun isFavorited(id: String): Boolean = id.isNotBlank() && localFavoriteIds[id] == true
+
+    fun isFavorited(status: Status): Boolean = isFavorited(status.id)
+
+    fun toggleLocalFavorite(status: Status): Boolean {
+        val nowFavorited = store.toggleFavorite(status)
+        if (nowFavorited) localFavoriteIds[status.id] = true else localFavoriteIds.remove(status.id)
+        favoritesVersion++
+        return nowFavorited
+    }
 
     /** 写操作只认登录账号的 cookie，访客身份发出去只会被拒。 */
     private fun loginCookie(): String =
         session?.takeIf { it.loggedIn }?.cookie ?: throw ApiException(LOGIN_REQUIRED)
 
     /**
-     * 只读请求的统一入口。登录态直接走 [Api.get]；客户端登录的会话被拒（`ok:-100` 或 432）时，
-     * 先拿 gsid 换一份新 cookie 再试一次。纯本地模式下换上访客 cookie，
+     * 只读请求的统一入口。登录态直接走 [Api.get]；纯本地模式下换上访客 cookie，
      * 被拒（HTTP 432 或 `ok:-100`）就重领一次访客身份再试，还不行说明这个接口确实要登录。
      */
     private suspend fun get(url: String, cookie: String?, force: Boolean = false): JSONObject {
         val active = session
-        if (active != null && active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
-            // 照 Share 的顺序：每次带登录态的请求之前先确认 gsid 还能用，换到了就直接用新 cookie。
-            ensureClientSession()
-            val root = try {
-                Api.get(url, cookie ?: session?.cookie ?: active.cookie, force)
-            } catch (e: ApiHttpException) {
-                if (e.code != 432) throw e
-                JSONObject().put("ok", -100)
-            }
-            if (root.optInt("ok", 1) != -100) return root
-            if (refreshClientSession()) return Api.get(url, cookie(), force = true)
-            return root
-        }
         if (active != null || (cookie != null && cookie != visitorCookie)) return Api.get(url, cookie, force)
         val first = cookie ?: visitorFor(stale = null)
         val root = try {
@@ -311,22 +308,11 @@ class Repo(private val context: Context, private val store: Store) {
         session = store.session()
     }
 
-    /** 切换到已保存账号：客户端登录保留 gsid 以支持无感续期，网页登录保留 cookie 会话。 */
+    /** 切换到已保存账号：沿用网页登录 cookie 会话。 */
     fun switchAccount(account: Account) {
         resetAccountCaches(clearGroupTabs = true)
         App.settings.applyLocalMode(false)
-        if (account.gsid.isNotBlank()) {
-            store.saveClientSession(
-                uid = account.uid,
-                gsid = account.gsid,
-                cookie = account.cookie,
-                accessToken = "",
-                expires = 0L,
-                gsidAt = account.gsidAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
-            )
-        } else {
-            store.saveSession(account.cookie, account.uid)
-        }
+        store.saveSession(account.cookie, account.uid)
         session = store.session()
     }
 
@@ -413,112 +399,13 @@ class Repo(private val context: Context, private val store: Store) {
         return account
     }
 
-    /** 发登录短信。图形验证码由服务端按风控决定要不要，这里不做本地拦截。 */
-    suspend fun sendLoginCode(phone: String, area: String = "") {
-        ClientLogin.sendCode(phone, area)
-    }
-
     /**
-     * 客户端登录：一次拿到 cookie、gsid 和长期凭证。之后 cookie 过期可以用 gsid 续，
-     * 不用再把用户送回登录页。
-     */
-    suspend fun loginWithClient(phone: String, code: String, area: String = ""): Account {
-        var result = ClientLogin.verify(phone, area, code)
-        if (result.cookie.isBlank() && result.gsid.isNotBlank()) {
-            result = ClientLogin.refresh(result.uid, result.gsid)
-        }
-        if (result.cookie.isBlank()) throw ApiException("登录失败：没有拿到 Cookie")
-        // 容器会话下发的 cookie 不保证能用于 m.weibo.cn，这里改用容器接口验一次：
-        // 能读到未读数就说明 gsid + 签名链都被服务端认了。
-        val probe = runCatching {
-            ContainerApi.get(
-                "remind/unread_count",
-                session = Session(
-                    cookie = result.cookie,
-                    uid = result.uid,
-                    savedAt = System.currentTimeMillis(),
-                    gsid = result.gsid,
-                ),
-            )
-        }
-        if (probe.isFailure) {
-            val reason = probe.exceptionOrNull()?.message.orEmpty()
-            throw ApiException("登录成功，但容器会话不可用：$reason")
-        }
-        val uid = result.uid
-        val user = runCatching { profileFor(result.cookie, uid, force = true) }.getOrNull()
-        resetAccountCaches(clearGroupTabs = true)
-        App.settings.applyLocalMode(false)
-        store.saveClientSession(
-            uid,
-            result.gsid,
-            result.cookie,
-            result.accessToken,
-            result.expires,
-            result.cookies,
-        )
-        session = store.session()
-        cachedConfig = null
-        configCookie = null
-        cachedConfigAt = 0L
-        injectCookies(session?.cookies.orEmpty())
-        val account = Account(
-            uid = uid,
-            name = user?.name.orEmpty(),
-            avatar = user?.avatar.orEmpty(),
-            cookie = result.cookie,
-            gsid = result.gsid,
-            gsidAt = System.currentTimeMillis(),
-        )
-        store.saveAccount(account)
-        return account
-    }
-
-    /**
-     * 拿 gsid 换一份新 cookie。只换 cookie 和 gsid，昵称头像沿用账号列表里的旧值——
-     * 这里刻意不拉 profile，避免在持锁期间又走到 [get] 触发一次续期。
-     */
-    private suspend fun refreshClientSession(): Boolean = clientRefreshLock.withLock {
-        val active = session ?: return@withLock false
-        if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return@withLock false
-        val result = runCatching { ClientLogin.refresh(active.uid, active.gsid) }.getOrNull()
-            ?: return@withLock false
-        if (result.cookie.isBlank()) return@withLock false
-        val gsid = result.gsid.ifBlank { active.gsid }
-        val cookies = if (result.cookies.isEmpty()) active.cookies else result.cookies
-        store.updateClientSession(gsid, result.cookie, result.accessToken, result.expires, cookies)
-        session = store.session()
-        App.cache.clear()
-        cachedConfig = null
-        configCookie = null
-        cachedConfigAt = 0L
-        // 换完立刻刷进 WebView，站内页面不会拿着上一份过期的 cookie 去请求。
-        injectCookies(cookies)
-        val known = store.accounts().firstOrNull { it.uid == active.uid }
-        if (known != null) {
-            store.saveAccount(
-                known.copy(
-                    cookie = result.cookie,
-                    gsid = gsid,
-                    gsidAt = System.currentTimeMillis(),
-                )
-            )
-        }
-        true
-    }
-
-    /**
-     * 冷启动时顺手续一次。
-     *
-     * 客户端登录的会话距上次换 cookie 超过 [GSID_TTL_MS] 就现换一份；
-     * 网页登录的会话没法向服务端要凭证，只能像浏览器一样真的打开一次页面，
+     * 冷启动时顺手续一次网页登录态：像浏览器一样真的打开一次页面，
      * 让微博把 `SUB` / `_T_WM` 重新下发一遍——这一步是网页登录能长期不掉的关键。
      */
-    suspend fun refreshClientSessionIfStale() {
+    suspend fun refreshSessionIfStale() {
         val active = session ?: return
-        if (active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
-            if (System.currentTimeMillis() - active.gsidAt >= GSID_TTL_MS) refreshClientSession()
-        } else if (active.loggedIn) {
+        if (active.loggedIn) {
             webHeartbeat(active)
         }
         injectCookies(session?.cookies.orEmpty())
@@ -595,8 +482,6 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun followGroups(force: Boolean = false): List<FollowGroup> {
         if (guest) return emptyList()
-        // 网页版接口不走 get()，客户端登录的 gsid 过期后这里会直接 401；先续一次（有效时是空操作）。
-        ensureClientSession()
         val fresh = System.currentTimeMillis() - cachedFollowGroupsAt < FOLLOW_GROUPS_TTL_MS
         if (!force && fresh) return cachedFollowGroups
         val root = Api.getDesktop(
@@ -621,8 +506,6 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun groupFeed(gid: String, maxId: String? = null): FeedPage {
         if (gid.isBlank()) return FeedPage(emptyList(), null)
-        // 网页版时间线不经过 get()，客户端登录的 gsid 过期后这里会直接 401；先续一次（有效时是空操作）。
-        ensureClientSession()
         val params = LinkedHashMap<String, String?>()
         params["list_id"] = gid
         params["refresh"] = "4"
@@ -1034,6 +917,23 @@ class Repo(private val context: Context, private val store: Store) {
         )
     }
 
+    suspend fun topicChannelFeed(
+        query: String,
+        channel: TopicChannel,
+        cursor: String? = null,
+        force: Boolean = false,
+    ): FeedPage {
+        val page = cursor?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val cid = "100103type=${channel.type}&q=$query"
+        val res = container(
+            cid,
+            extra = if (page > 1) mapOf("page" to page.toString()) else emptyMap(),
+            force = force,
+        )
+        val next = if (res.items.isNotEmpty()) (page + 1).toString() else null
+        return FeedPage(res.items, next)
+    }
+
     /**
      * 搜索的「用户」分类（containerid 的 `type=3`）。和微博搜索一样按 page 翻页，
      * 空页就是到底了。
@@ -1071,7 +971,10 @@ class Repo(private val context: Context, private val store: Store) {
             cookie(),
             force,
         )
-        return Status.from(root.optJSONObject("data"))
+        val dataObj = root.optJSONObject("data")
+        val parsed = Status.from(dataObj) ?: return null
+        val favorited = isFavorited(id)
+        return if (parsed.favorited == favorited) parsed else parsed.copy(favorited = favorited)
     }
 
     suspend fun editHistory(mid: String, page: Int = 1): List<EditVersion> {
@@ -1387,6 +1290,24 @@ class Repo(private val context: Context, private val store: Store) {
         return ok
     }
 
+    suspend fun favorite(id: String, favorited: Boolean): Boolean {
+        if (favorited) {
+            store.removeFavorite(id)
+            withContext(Dispatchers.Main.immediate) {
+                localFavoriteIds.remove(id)
+                favoritesVersion++
+            }
+            return true
+        }
+        val status = detail(id) ?: throw ApiException("微博不存在")
+        store.addFavorite(status)
+        withContext(Dispatchers.Main.immediate) {
+            localFavoriteIds[id] = true
+            favoritesVersion++
+        }
+        return true
+    }
+
     suspend fun follow(uid: String, follow: Boolean): Boolean {
         val cookie = loginCookie()
         val url = if (follow) {
@@ -1691,7 +1612,8 @@ class Repo(private val context: Context, private val store: Store) {
         return parseRelationUsers(root)
     }
 
-    suspend fun favorites(force: Boolean = false): FeedPage = container("230267", force = force)
+    suspend fun favorites(cursor: String? = null, force: Boolean = false): FeedPage =
+        FeedPage(store.favorites(), null)
 
     /**
      * 附近。
