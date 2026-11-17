@@ -8,6 +8,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -27,7 +30,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,11 +48,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,28 +79,32 @@ import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.COUISmoothCapsuleShape
+import com.cobo.app.ui.components.CompactSendButton
+import com.cobo.app.ui.components.ComposerEmoteTextField
+import com.cobo.app.ui.components.ComposerToolButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.WeiboEmojiPanel
 import com.cobo.app.ui.components.WeiboRichText
+import com.cobo.app.ui.components.capsuleMaterial
 import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.luminance
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.TextField
-import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.layout.SheetCloseCapsule
 import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.icon.COUIIcons
-import io.github.suqi8.coui.kmp.icon.extended.Image
+import io.github.suqi8.coui.kmp.icon.extended.Photos
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
@@ -111,14 +122,14 @@ private const val ChatPollMillis = 15_000L
 /** 两条消息间隔超过这个值就在上面插一条时间。H5 里也是 5 分钟。 */
 private const val TimeGapMillis = 5 * 60 * 1000L
 
-/** 底栏单行高度：输入胶囊、表情/图片按钮、发送按钮共用，保证三者底边齐平。 */
-private val ComposerHeight = 44.dp
+/** 底栏胶囊高度：输入框与发送按钮共用，保证两者单行时严格等高。 */
+private val ChatComposerHeight = 36.dp
 
-/** 输入换行后每多一行长高多少。发送按钮不跟着长，仍按 [ComposerHeight] 下对齐。 */
-private val ComposerLineStep = 22.dp
+/** 输入框最多长到多高，再多就在框里自己滚。 */
+private val ChatComposerMaxHeight = 108.dp
 
-/** 输入胶囊和发送按钮的圆角，正好是单行高度的一半。 */
-private val ComposerShape = RoundedCornerShape(22.dp)
+/** 底栏连续曲率胶囊，和 BiliCO 私信页同一套 18dp 圆角。 */
+private val ChatComposerShape = COUISmoothCapsuleShape(18.dp)
 
 private val WeiboTimeFormat = "EEE MMM dd HH:mm:ss Z yyyy"
 
@@ -147,9 +158,29 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     var sending by remember { mutableStateOf(false) }
     var emojiOpen by remember { mutableStateOf(false) }
-    // 输入框当前排了几行：单行 44dp，之后每多一行长高一点，最多 4 行。
-    var inputLines by remember { mutableStateOf(1) }
+    // 底栏实测高度（px）：输入框换行会整体往上长，列表底部要按它让位。
+    var composerHeightPx by remember { mutableIntStateOf(0) }
+    // 输入框要把 [表情] 就地画成图，先备好「标记 -> 图片地址」。
+    var emotes by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val composerFocus = remember { FocusRequester() }
+    val composerInteraction = remember { MutableInteractionSource() }
+    val composerFocused by composerInteraction.collectIsFocusedAsState()
+    val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        emotes = runCatching {
+            App.repo.emotions()
+                .flatMap { section -> section.items }
+                .mapNotNull { emoji -> emoji.url.takeIf { it.isNotBlank() }?.let { emoji.phrase to it } }
+                .toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    // 点回输入框就收起表情面板，光标和面板不同时抢焦点。
+    LaunchedEffect(composerFocused) {
+        if (composerFocused) emojiOpen = false
+    }
 
     // 20003：对方账号已注销，聊天记录取不到、消息也发不出去，界面直接收成一句话。
     // 群聊没有这个状态，群里某个成员注销不该把整间群锁死。
@@ -319,10 +350,27 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> if (uri != null) sendImage(uri) }
 
+    val blur = blurEffectsEnabled()
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    // 键盘弹起时输入栏贴着键盘，不用再补导航条高度；收起时才补。
+    val navPad = if (imeBottom > 0) 0.dp else navBottomPadding()
+
+    // 底栏浮在列表上面：列表底部空出底栏的实测高度，长草稿把输入框顶高时消息跟着往上走，
+    // 不会被盖住。测不到高度时退回单行底栏的估算值。
+    val composerHeight = with(density) { composerHeightPx.toDp() }
+    val listBottomPadding = if (dead) {
+        12.dp
+    } else {
+        (composerHeight.takeIf { it > 0.dp } ?: (ChatComposerHeight + 24.dp)) + 8.dp
+    }
+
     Box(Modifier.fillMaxSize().background(pageColor)) {
-        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
-            Column(Modifier.fillMaxSize().imePadding()) {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+        Column(Modifier.fillMaxSize().imePadding()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                // 只把消息列表录进 backdrop：输入胶囊浮在它上面，磨到的就是消息本身。
+                // 录制层必须自带不透明底色——layerBackdrop 不包含父级背景，透明像素模糊后会泛白，
+                // 胶囊就会糊出一圈白边。
+                Box(Modifier.fillMaxSize().layerBackdropIf(blur, backdrop).background(pageColor)) {
                     when {
                         // 状态页都从顶栏下面开始，否则会被顶栏的毛玻璃糊成一团黑影。
                         messages.isEmpty() && loading -> Box(
@@ -350,7 +398,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                             reverseLayout = true,
                             contentPadding = PaddingValues(
                                 top = topBarHeight + 10.dp,
-                                bottom = 10.dp,
+                                bottom = listBottomPadding,
                             ),
                         ) {
                             itemsIndexed(
@@ -409,82 +457,42 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                     }
                 }
 
-                if (dead) return@Column
-                val imeBottom = WindowInsets.ime.getBottom(density)
-                val navPad = if (imeBottom > 0) 0.dp else navBottomPadding()
-                val canSend = draft.text.isNotBlank() && !sending
-                // 单行时和发送按钮一样高；换行后胶囊长高，发送按钮原地不动，整体仍然下对齐。
-                val inputHeight = ComposerHeight + ComposerLineStep * (inputLines - 1).coerceIn(0, 3)
-                // 一整条胶囊：输入框占左边，表情 / 图片按钮贴在输入框右边，发送按钮单独一颗。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(pageColor)
-                        .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp + navPad),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(inputHeight)
-                            .clip(ComposerShape)
-                            .background(scheme.surfaceContainer),
-                        verticalAlignment = Alignment.Bottom,
+                if (!dead) {
+                    // 底栏照搬 BiliCO 私信页：整条不铺底色，输入胶囊和发送按钮各自悬浮在页面上，
+                    // 两者共用同一个高度，单行时严格等高。
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(bottom = navPad)
+                            .onSizeChanged { composerHeightPx = it.height },
                     ) {
-                        TextField(
+                        ChatBottomBar(
                             value = draft,
                             onValueChange = { draft = it },
-                            // 显式高度顶掉 COUI 的 62dp 最小高度，单行压成搜索框那种胶囊；
-                            // 换行后按行数长高，超长内容在框里自己滚。
-                            modifier = Modifier.weight(1f).height(inputHeight).testTag("chat_input"),
+                            emotes = emotes,
                             label = if (isGroup) "发送消息…" else "发送私信…",
-                            backgroundMode = TextFieldMode.None,
-                            insideMargin = DpSize(14.dp, 4.dp),
-                            maxLines = 4,
-                            onTextLayout = { inputLines = it.lineCount },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { send() }),
-                        )
-                        ComposerIconButton(
-                            icon = CoboIcons.Emoji,
-                            contentDescription = "表情",
-                            tint = scheme.onSurfaceSecondary,
-                            modifier = Modifier.testTag("chat_emoji"),
-                            onClick = {
-                                keyboard?.hide()
-                                emojiOpen = true
+                            onSend = { send() },
+                            isSending = sending,
+                            emotePanelOpen = emojiOpen,
+                            onToggleEmote = {
+                                if (emojiOpen) {
+                                    emojiOpen = false
+                                } else {
+                                    focusManager.clearFocus()
+                                    keyboard?.hide()
+                                    emojiOpen = true
+                                }
                             },
-                        )
-                        ComposerIconButton(
-                            icon = COUIIcons.Image,
-                            contentDescription = "发送图片",
-                            tint = scheme.onSurfaceSecondary,
-                            modifier = Modifier.testTag("chat_pick"),
-                            onClick = {
+                            onPickImage = {
+                                if (emojiOpen) emojiOpen = false
+                                keyboard?.hide()
                                 pickImage.launch(
-                                    PickVisualMediaRequest(
-                                        ActivityResultContracts.PickVisualMedia.ImageOnly,
-                                    ),
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                                 )
                             },
-                        )
-                        Spacer(Modifier.width(2.dp))
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .height(ComposerHeight)
-                            .clip(ComposerShape)
-                            .background(if (canSend) scheme.primary else scheme.surfaceContainerHigh)
-                            .clickable(enabled = canSend) { send() }
-                            .padding(horizontal = 16.dp)
-                            .testTag("chat_send"),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "发送",
-                            fontSize = 14.sp,
-                            color = if (canSend) scheme.onPrimary else scheme.onSurfaceSecondary,
+                            focusRequester = composerFocus,
+                            interactionSource = composerInteraction,
                         )
                     }
                 }
@@ -531,11 +539,25 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
 
     OverlayBottomSheet(
         show = emojiOpen,
-        title = "表情",
+        // 「表情」从大标题挪到顶栏「关闭」右边，省下的 42dp 全给表情网格，
+        // 同样的面板高度能多显示一排。
+        startAction = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SheetCloseCapsule(onClick = { emojiOpen = false })
+                Text(
+                    "表情",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onBackground,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
+        },
         onDismissRequest = { emojiOpen = false },
     ) {
         WeiboEmojiPanel(
-            modifier = Modifier.height(260.dp),
+            // 原本 260dp，加上被大标题占掉的 3 + 27 + 12 = 42dp。
+            modifier = Modifier.height(302.dp),
             // 私信里表情就是微博那套 [微笑] 标记，和发博输入框一致，由服务端渲染成图。
             onPick = { emoji ->
                 insertAtSelection(emoji.phrase)
@@ -545,27 +567,109 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
     }
 }
 
-/** 胶囊里的方形点击区：表情、图片共用，保证两个图标的触摸范围和基线一致。 */
+/** 私信底栏：一个输入胶囊 + 一个发送胶囊，两者共用 [ChatComposerHeight]，单行时严格等高。 */
 @Composable
-private fun ComposerIconButton(
-    icon: ImageVector,
-    contentDescription: String,
-    tint: Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+private fun ChatBottomBar(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    emotes: Map<String, String>,
+    label: String,
+    onSend: () -> Unit,
+    isSending: Boolean,
+    emotePanelOpen: Boolean,
+    onToggleEmote: () -> Unit,
+    onPickImage: () -> Unit,
+    focusRequester: FocusRequester,
+    interactionSource: MutableInteractionSource,
 ) {
-    Box(
-        modifier = modifier
-            .size(ComposerHeight)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+    val scheme = COUITheme.colorScheme
+    val isDark = scheme.background.luminance() < 0.5f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Bottom,
     ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(21.dp),
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = ChatComposerHeight)
+                .capsuleMaterial(isDark, shape = ChatComposerShape)
+                .background(
+                    color = scheme.surfaceContainer,
+                    shape = ChatComposerShape,
+                )
+                .clip(ChatComposerShape),
+        ) {
+            ComposerEmoteTextField(
+                value = value,
+                onValueChange = onValueChange,
+                emotes = emotes,
+                maxHeight = ChatComposerMaxHeight,
+                focusRequester = focusRequester,
+                interactionSource = interactionSource,
+                modifier = Modifier
+                    .weight(1f)
+                    .align(Alignment.CenterVertically)
+                    .testTag("chat_input"),
+                label = label,
+                minLines = 1,
+                insideMargin = DpSize(14.dp, 6.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                compact = true,
+            )
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Bottom)
+                    .padding(bottom = 3.dp, end = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ComposerToolButton(
+                    active = emotePanelOpen,
+                    size = 30.dp,
+                    cornerRadius = 15.dp,
+                    onClick = onToggleEmote,
+                    modifier = Modifier.testTag("chat_emoji"),
+                ) {
+                    Icon(
+                        imageVector = CoboIcons.Emoji,
+                        contentDescription = "表情",
+                        modifier = Modifier.size(20.dp),
+                        tint = if (emotePanelOpen) scheme.primary else scheme.onSurface,
+                    )
+                }
+
+                Spacer(Modifier.width(2.dp))
+
+                ComposerToolButton(
+                    active = false,
+                    size = 30.dp,
+                    cornerRadius = 15.dp,
+                    onClick = onPickImage,
+                    modifier = Modifier.testTag("chat_pick"),
+                ) {
+                    Icon(
+                        imageVector = COUIIcons.Photos,
+                        contentDescription = "图片",
+                        modifier = Modifier.size(20.dp),
+                        tint = scheme.onSurface,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        CompactSendButton(
+            text = if (isSending) "发送中" else "发送",
+            onClick = onSend,
+            enabled = value.text.isNotBlank() && !isSending,
+            height = ChatComposerHeight,
+            containerColor = scheme.surfaceContainer,
+            isDark = isDark,
+            modifier = Modifier.testTag("chat_send"),
         )
     }
 }
