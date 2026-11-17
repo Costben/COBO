@@ -1649,6 +1649,7 @@ class Repo(private val context: Context, private val store: Store) {
                     user = User.from(o.optJSONObject("user")),
                     unread = o.int("unread"),
                     scheme = o.str("scheme"),
+                    gid = chatGidOf(o.str("scheme")),
                 )
             )
         }
@@ -1659,25 +1660,30 @@ class Repo(private val context: Context, private val store: Store) {
      * 聊天记录。接口给的是**最新在前**，[ChatPage.messages] 保持这个顺序，
      * 界面用 `reverseLayout = true` 铺，index 0 落在屏幕最下面。
      *
+     * 群聊走 `api/groupchat/list`（参数 `gid`），返回是**旧→新**，这里统一翻成最新在前。
+     *
      * @param maxId 取更早的一屏（传当前最旧那条的 id）
      * @param sinceId 取更新的消息（轮询用）
      */
     suspend fun chat(
-        uid: String,
+        uid: String = "",
+        gid: String = "",
         maxId: String? = null,
         sinceId: String? = null,
         count: Int = 20,
         force: Boolean = false,
     ): ChatPage {
+        val isGroup = gid.isNotBlank()
+        val params = LinkedHashMap<String, String?>()
+        params[if (isGroup) "gid" else "uid"] = if (isGroup) gid else uid
+        params["count"] = count.toString()
+        params["max_id"] = maxId
+        params["since_id"] = sinceId
+        if (sinceId != null) params["is_continuous"] = "1"
         val url = Api.url(
-            "https://m.weibo.cn/api/chat/list",
-            mapOf(
-                "uid" to uid,
-                "count" to count.toString(),
-                "max_id" to maxId,
-                "since_id" to sinceId,
-                "is_continuous" to if (sinceId != null) "1" else null,
-            ),
+            if (isGroup) "https://m.weibo.cn/api/groupchat/list"
+            else "https://m.weibo.cn/api/chat/list",
+            params,
         )
         val root = get(url, cookie(), force)
         if (root.optInt("ok", 1) == 0) {
@@ -1686,42 +1692,45 @@ class Repo(private val context: Context, private val store: Store) {
         }
         val data = root.optJSONObject("data")
             ?: return ChatPage(emptyList(), emptyMap(), "", 0)
-        val arr = data.optJSONArray("msgs")
-        val messages = ArrayList<ChatMessage>()
-        if (arr != null) {
-            for (i in 0 until arr.length()) {
-                ChatMessage.from(arr.optJSONObject(i))?.let { messages.add(it) }
-            }
-        }
-        val users = LinkedHashMap<String, User>()
-        data.optJSONObject("users")?.let { o ->
-            o.keys().forEach { key -> User.from(o.optJSONObject(key))?.let { users[key] = it } }
-        }
-        return ChatPage(
-            messages = messages,
-            users = users,
-            title = data.str("title"),
-            total = data.int("total_number"),
-        )
+        return parseChatPage(data, isGroup)
     }
 
-    /** 发一条纯文字私信。成功返回服务端那条消息，失败抛 [ApiException]。 */
-    suspend fun sendChat(uid: String, text: String): ChatMessage? =
-        sendChatForm(mapOf("uid" to uid, "content" to text))
+    /** 发一条纯文字私信。群聊传 [gid]，一对一传 [uid]。 */
+    suspend fun sendChat(uid: String, text: String, gid: String = ""): ChatMessage? =
+        if (gid.isNotBlank()) {
+            sendChatForm(
+                "https://m.weibo.cn/api/groupchat/send",
+                mapOf("gid" to gid, "content" to text),
+            )
+        } else {
+            sendChatForm(
+                "https://m.weibo.cn/api/chat/send",
+                mapOf("uid" to uid, "content" to text),
+            )
+        }
 
     /**
      * 发图片私信。
      *
      * H5 是两步：先 `api/chat/upload`（multipart `file` + `tuid`）拿 `fids`，
      * 再把 `fids` 交给 `api/chat/send`（`media_type=1`，`content` 留空）。
+     * 群聊的发送接口是 `api/groupchat/send`，参数换成 `gid`。
      */
-    suspend fun sendChatImage(uid: String, fids: String): ChatMessage? =
-        sendChatForm(
-            mapOf("uid" to uid, "content" to "", "media_type" to "1", "fids" to fids),
-        )
+    suspend fun sendChatImage(uid: String, fids: String, gid: String = ""): ChatMessage? =
+        if (gid.isNotBlank()) {
+            sendChatForm(
+                "https://m.weibo.cn/api/groupchat/send",
+                mapOf("gid" to gid, "content" to "", "media_type" to "1", "fids" to fids),
+            )
+        } else {
+            sendChatForm(
+                "https://m.weibo.cn/api/chat/send",
+                mapOf("uid" to uid, "content" to "", "media_type" to "1", "fids" to fids),
+            )
+        }
 
-    private suspend fun sendChatForm(form: Map<String, String>): ChatMessage? {
-        val root = postJson("https://m.weibo.cn/api/chat/send", form)
+    private suspend fun sendChatForm(url: String, form: Map<String, String>): ChatMessage? {
+        val root = postJson(url, form)
         if (root.optInt("ok", 0) != 1) {
             // 关注门槛这类业务拦截，人话在 extra 里，msg 只有「出错了，未知错误」。
             throw ApiException(
@@ -1734,8 +1743,8 @@ class Repo(private val context: Context, private val store: Store) {
         )
     }
 
-    /** 上传私信图片，返回 `fids`。 */
-    suspend fun uploadChatImage(uid: String, uri: Uri): String {
+    /** 上传私信图片，返回 `fids`。群聊传 [gid]，上传字段换成 `tochatid`。 */
+    suspend fun uploadChatImage(uid: String, uri: Uri, gid: String = ""): String {
         val cookie = loginCookie()
         val resolver = context.contentResolver
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
@@ -1743,10 +1752,10 @@ class Repo(private val context: Context, private val store: Store) {
         val mime = resolver.getType(uri) ?: "image/jpeg"
         val name = "chat." + (mime.substringAfterLast('/', "jpg"))
         var st = st()
-        var root = uploadChat(uid, bytes, name, mime, cookie, st)
+        var root = uploadChat(uid, gid, bytes, name, mime, cookie, st)
         if (root.optInt("ok", 0) != 1 && isCsrfBody(root)) {
             st = config(force = true).st
-            root = uploadChat(uid, bytes, name, mime, cookie, st)
+            root = uploadChat(uid, gid, bytes, name, mime, cookie, st)
         }
         val fids = root.optJSONObject("data")?.str("fids").orEmpty()
         if (fids.isBlank()) throw ApiException(root.str("msg", "图片上传失败"), root.str("errno"))
@@ -1755,6 +1764,7 @@ class Repo(private val context: Context, private val store: Store) {
 
     private suspend fun uploadChat(
         uid: String,
+        gid: String,
         bytes: ByteArray,
         name: String,
         mime: String,
@@ -1768,7 +1778,7 @@ class Repo(private val context: Context, private val store: Store) {
         cookie,
         st,
         field = "file",
-        extra = mapOf("tuid" to uid),
+        extra = if (gid.isNotBlank()) mapOf("tochatid" to gid) else mapOf("tuid" to uid),
     )
 
     suspend fun profileFor(cookie: String?, uid: String, force: Boolean = false): User? {

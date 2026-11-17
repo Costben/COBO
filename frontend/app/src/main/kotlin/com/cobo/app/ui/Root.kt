@@ -636,7 +636,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
         is Route.Publish -> PublishScreen(nav, route.draft)
-        is Route.Chat -> ChatScreen(nav, route.uid, route.name)
+        is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
         is Route.Web -> WebScreen(nav, route.url, route.title)
         is Route.Container -> ContainerScreen(nav, route.cid, route.title)
         is Route.SuperTopic -> SuperTopicScreen(nav, route.containerId, route.fallbackUrl)

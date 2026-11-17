@@ -648,7 +648,24 @@ data class MessageItem(
     val user: User?,
     val unread: Int,
     val scheme: String,
+    /** 群聊会话的 gid；一对一私信为空串。 */
+    val gid: String = "",
 )
+
+/**
+ * 会话 scheme 里的群聊 id。
+ *
+ * 一对一私信是 `/message/chat?uid=<uid>`，群聊是 `/message/chat?gid=<gid>`；
+ * 列表接口不给单独字段，只能从 scheme 里拆。群聊的 `user` 是群主或系统号，
+ * 拿它当 uid 去调私信接口会得到 20003「用户不存在」。
+ */
+internal fun chatGidOf(scheme: String): String =
+    scheme.substringAfter('?', "")
+        .split('&')
+        .firstOrNull { it.startsWith("gid=") }
+        ?.substringAfter('=')
+        ?.takeIf { it.isNotBlank() }
+        .orEmpty()
 
 /**
  * 一条私信。
@@ -682,10 +699,12 @@ data class ChatMessage(
             if (id.isBlank()) return null
             val attachment = o.optJSONObject("attachment")
             val original = attachment?.optJSONObject("original_image")
+            // 群聊消息的发送者有时不出 sender_id，只给一个 from_user 对象。
+            val fromUser = o.optJSONObject("from_user")
             return ChatMessage(
                 id = id,
                 text = o.str("text"),
-                senderId = o.str("sender_id"),
+                senderId = o.str("sender_id").ifBlank { fromUser?.str("id").orEmpty() },
                 recipientId = o.str("recipient_id"),
                 createdAt = o.str("created_at"),
                 mediaType = o.int("media_type"),
@@ -706,6 +725,33 @@ data class ChatPage(
     val title: String,
     val total: Int,
 )
+
+/**
+ * 聊天记录响应 → [ChatPage]。
+ *
+ * 私信接口返回最新在前，群聊接口（`api/groupchat/list`）返回旧→新，这里统一翻成最新在前，
+ * 界面只认一种顺序。
+ */
+internal fun parseChatPage(data: JSONObject, isGroup: Boolean): ChatPage {
+    val messages = ArrayList<ChatMessage>()
+    val arr = data.optJSONArray("msgs")
+    if (arr != null) {
+        for (i in 0 until arr.length()) {
+            ChatMessage.from(arr.optJSONObject(i))?.let { messages.add(it) }
+        }
+    }
+    if (isGroup) messages.reverse()
+    val users = LinkedHashMap<String, User>()
+    data.optJSONObject("users")?.let { o ->
+        o.keys().forEach { key -> User.from(o.optJSONObject(key))?.let { users[key] = it } }
+    }
+    return ChatPage(
+        messages = messages,
+        users = users,
+        title = data.str("title"),
+        total = data.int("total_number"),
+    )
+}
 
 /** 微博「关注分组」：gid 是分组 id，title 是分组名。分组属于账号，换账号就是另一套。 */
 data class FollowGroup(val gid: String, val title: String)

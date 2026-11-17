@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -29,6 +29,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -45,7 +47,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -56,6 +64,7 @@ import com.cobo.app.data.chatPlainText
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
+import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
@@ -66,9 +75,11 @@ import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.WeiboEmojiPanel
 import com.cobo.app.ui.components.WeiboRichText
 import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -80,9 +91,9 @@ import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Image
-import io.github.suqi8.coui.kmp.icon.extended.Send
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
@@ -100,10 +111,20 @@ private const val ChatPollMillis = 15_000L
 /** 两条消息间隔超过这个值就在上面插一条时间。H5 里也是 5 分钟。 */
 private const val TimeGapMillis = 5 * 60 * 1000L
 
+/** 底栏单行高度：输入胶囊、表情/图片按钮、发送按钮共用，保证三者底边齐平。 */
+private val ComposerHeight = 44.dp
+
+/** 输入换行后每多一行长高多少。发送按钮不跟着长，仍按 [ComposerHeight] 下对齐。 */
+private val ComposerLineStep = 22.dp
+
+/** 输入胶囊和发送按钮的圆角，正好是单行高度的一半。 */
+private val ComposerShape = RoundedCornerShape(22.dp)
+
 private val WeiboTimeFormat = "EEE MMM dd HH:mm:ss Z yyyy"
 
 @Composable
-fun ChatScreen(nav: NavState, uid: String, name: String) {
+fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
+    val isGroup = gid.isNotBlank()
     val scheme = COUITheme.colorScheme
     val pageColor = pageContainerColor()
     val backdrop = rememberLayerBackdrop()
@@ -123,13 +144,22 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
     var end by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var errorErrno by remember { mutableStateOf<String?>(null) }
-    var draft by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf(TextFieldValue("")) }
     var sending by remember { mutableStateOf(false) }
+    var emojiOpen by remember { mutableStateOf(false) }
+    // 输入框当前排了几行：单行 44dp，之后每多一行长高一点，最多 4 行。
+    var inputLines by remember { mutableStateOf(1) }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     // 20003：对方账号已注销，聊天记录取不到、消息也发不出去，界面直接收成一句话。
-    val dead = errorErrno == "20003"
+    // 群聊没有这个状态，群里某个成员注销不该把整间群锁死。
+    val dead = errorErrno == "20003" && !isGroup
     val peer = users[uid]
-    val peerName = peer?.name?.ifBlank { name } ?: name.ifBlank { "私信" }
+    val peerName = if (isGroup) {
+        name.ifBlank { "群聊" }
+    } else {
+        peer?.name?.ifBlank { name } ?: name.ifBlank { "私信" }
+    }
 
     suspend fun load(reset: Boolean, force: Boolean) {
         if (reset) {
@@ -143,6 +173,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
         try {
             val page = App.repo.chat(
                 uid = uid,
+                gid = gid,
                 maxId = if (reset) null else messages.last().id,
                 count = ChatPageSize,
                 force = force,
@@ -177,7 +208,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
             val newest = messages.firstOrNull()?.id ?: continue
             // force 必须开：GET 缓存没有 TTL，since_id 不变时 URL 不变，走缓存就永远收不到新消息。
             val page = runCatching {
-                App.repo.chat(uid = uid, sinceId = newest, count = ChatPageSize, force = true)
+                App.repo.chat(uid = uid, gid = gid, sinceId = newest, count = ChatPageSize, force = true)
             }.getOrNull() ?: continue
             if (page.users.isNotEmpty()) users.putAll(page.users)
             val known = messages.mapTo(HashSet()) { it.id }
@@ -198,11 +229,20 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
             }
     }
 
+    /** 在光标处插入一段文本（表情走这里），光标停在插入内容末尾。 */
+    fun insertAtSelection(snippet: String) {
+        val current = draft.text
+        val start = draft.selection.min.coerceIn(0, current.length)
+        val end = draft.selection.max.coerceIn(start, current.length)
+        val next = current.substring(0, start) + snippet + current.substring(end)
+        draft = TextFieldValue(next, TextRange((start + snippet.length).coerceIn(0, next.length)))
+    }
+
     fun send() {
-        val content = draft.trim()
+        val content = draft.text.trim()
         if (content.isEmpty() || sending) return
         sending = true
-        draft = ""
+        draft = TextFieldValue("")
         val tempId = "local-${System.currentTimeMillis()}"
         messages.add(
             0,
@@ -210,7 +250,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                 id = tempId,
                 text = toChatHtml(content),
                 senderId = me,
-                recipientId = uid,
+                recipientId = if (isGroup) gid else uid,
                 createdAt = SimpleDateFormat(WeiboTimeFormat, Locale.US).format(Date()),
                 pending = true,
             ),
@@ -218,7 +258,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
         scope.launch {
             listState.animateScrollToItem(0)
             try {
-                val real = App.repo.sendChat(uid, content)
+                val real = App.repo.sendChat(uid, content, gid)
                 val index = messages.indexOfFirst { it.id == tempId }
                 if (index >= 0) {
                     messages[index] = real ?: messages[index].copy(pending = false)
@@ -247,7 +287,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                 id = tempId,
                 text = "",
                 senderId = me,
-                recipientId = uid,
+                recipientId = if (isGroup) gid else uid,
                 createdAt = SimpleDateFormat(WeiboTimeFormat, Locale.US).format(Date()),
                 mediaType = 1,
                 imageUrl = uri.toString(),
@@ -258,8 +298,8 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
         scope.launch {
             listState.animateScrollToItem(0)
             try {
-                val fids = App.repo.uploadChatImage(uid, uri)
-                val real = App.repo.sendChatImage(uid, fids)
+                val fids = App.repo.uploadChatImage(uid, uri, gid)
+                val real = App.repo.sendChatImage(uid, fids, gid)
                 val index = messages.indexOfFirst { it.id == tempId }
                 if (index >= 0) {
                     messages[index] = real ?: messages[index].copy(pending = false)
@@ -330,17 +370,27 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                         )
                                     }
+                                    val sender = users[item.senderId]
                                     ChatBubble(
                                         message = item,
                                         mine = item.senderId == me,
-                                        avatar = if (item.senderId == me) null else peer?.avatar,
+                                        avatar = when {
+                                            item.senderId == me -> null
+                                            isGroup -> sender?.avatar
+                                            else -> peer?.avatar
+                                        },
+                                        senderName = if (isGroup && item.senderId != me) {
+                                            sender?.name.orEmpty()
+                                        } else {
+                                            null
+                                        },
                                         onRetry = {
                                             if (item.isImage) {
                                                 val local = item.imageUrl
                                                 messages.remove(item)
                                                 if (local.isNotBlank()) sendImage(Uri.parse(local))
                                             } else {
-                                                draft = chatPlainText(item.text)
+                                                draft = TextFieldValue(chatPlainText(item.text))
                                                 messages.remove(item)
                                             }
                                         },
@@ -362,6 +412,10 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                 if (dead) return@Column
                 val imeBottom = WindowInsets.ime.getBottom(density)
                 val navPad = if (imeBottom > 0) 0.dp else navBottomPadding()
+                val canSend = draft.text.isNotBlank() && !sending
+                // 单行时和发送按钮一样高；换行后胶囊长高，发送按钮原地不动，整体仍然下对齐。
+                val inputHeight = ComposerHeight + ComposerLineStep * (inputLines - 1).coerceIn(0, 3)
+                // 一整条胶囊：输入框占左边，表情 / 图片按钮贴在输入框右边，发送按钮单独一颗。
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -369,54 +423,68 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                         .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp + navPad),
                     verticalAlignment = Alignment.Bottom,
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .clickable(enabled = !sending) {
+                            .weight(1f)
+                            .height(inputHeight)
+                            .clip(ComposerShape)
+                            .background(scheme.surfaceContainer),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        TextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            // 显式高度顶掉 COUI 的 62dp 最小高度，单行压成搜索框那种胶囊；
+                            // 换行后按行数长高，超长内容在框里自己滚。
+                            modifier = Modifier.weight(1f).height(inputHeight).testTag("chat_input"),
+                            label = if (isGroup) "发送消息…" else "发送私信…",
+                            backgroundMode = TextFieldMode.None,
+                            insideMargin = DpSize(14.dp, 4.dp),
+                            maxLines = 4,
+                            onTextLayout = { inputLines = it.lineCount },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { send() }),
+                        )
+                        ComposerIconButton(
+                            icon = CoboIcons.Emoji,
+                            contentDescription = "表情",
+                            tint = scheme.onSurfaceSecondary,
+                            modifier = Modifier.testTag("chat_emoji"),
+                            onClick = {
+                                keyboard?.hide()
+                                emojiOpen = true
+                            },
+                        )
+                        ComposerIconButton(
+                            icon = COUIIcons.Image,
+                            contentDescription = "发送图片",
+                            tint = scheme.onSurfaceSecondary,
+                            modifier = Modifier.testTag("chat_pick"),
+                            onClick = {
                                 pickImage.launch(
                                     PickVisualMediaRequest(
                                         ActivityResultContracts.PickVisualMedia.ImageOnly,
                                     ),
                                 )
-                            }
-                            .testTag("chat_pick"),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            COUIIcons.Image,
-                            contentDescription = "发送图片",
-                            tint = scheme.onSurfaceSecondary,
-                            modifier = Modifier.size(22.dp),
+                            },
                         )
+                        Spacer(Modifier.width(2.dp))
                     }
-                    Spacer(Modifier.width(4.dp))
-                    TextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        modifier = Modifier.weight(1f).testTag("chat_input"),
-                        label = "说点什么…",
-                        backgroundMode = TextFieldMode.Rectangle,
-                        maxLines = 4,
-                    )
                     Spacer(Modifier.width(8.dp))
-                    val canSend = draft.isNotBlank() && !sending
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (canSend) scheme.primary else scheme.surfaceContainerHigh,
-                            )
+                            .height(ComposerHeight)
+                            .clip(ComposerShape)
+                            .background(if (canSend) scheme.primary else scheme.surfaceContainerHigh)
                             .clickable(enabled = canSend) { send() }
+                            .padding(horizontal = 16.dp)
                             .testTag("chat_send"),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            COUIIcons.Send,
-                            contentDescription = "发送",
-                            tint = if (canSend) scheme.onPrimary else scheme.onSurfaceSecondary,
-                            modifier = Modifier.size(20.dp),
+                        Text(
+                            text = "发送",
+                            fontSize = 14.sp,
+                            color = if (canSend) scheme.onPrimary else scheme.onSurfaceSecondary,
                         )
                     }
                 }
@@ -444,19 +512,61 @@ fun ChatScreen(nav: NavState, uid: String, name: String) {
                         gradientGlass = false,
                         navigationIcon = { BackIconButton { nav.pop() } },
                         actions = {
-                            Avatar(
-                                url = peer?.avatar,
-                                size = 28.dp,
-                                modifier = Modifier
-                                    .padding(end = 12.dp)
-                                    .clickable { nav.push(Route.Profile(uid)) }
-                                    .testTag("chat_peer_avatar"),
-                            )
+                            if (!isGroup) {
+                                Avatar(
+                                    url = peer?.avatar,
+                                    size = 28.dp,
+                                    modifier = Modifier
+                                        .padding(end = 12.dp)
+                                        .clickable { nav.push(Route.Profile(uid)) }
+                                        .testTag("chat_peer_avatar"),
+                                )
+                            }
                         },
                     )
                 }
             }
         }
+    }
+
+    OverlayBottomSheet(
+        show = emojiOpen,
+        title = "表情",
+        onDismissRequest = { emojiOpen = false },
+    ) {
+        WeiboEmojiPanel(
+            modifier = Modifier.height(260.dp),
+            // 私信里表情就是微博那套 [微笑] 标记，和发博输入框一致，由服务端渲染成图。
+            onPick = { emoji ->
+                insertAtSelection(emoji.phrase)
+                emojiOpen = false
+            },
+        )
+    }
+}
+
+/** 胶囊里的方形点击区：表情、图片共用，保证两个图标的触摸范围和基线一致。 */
+@Composable
+private fun ComposerIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(ComposerHeight)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(21.dp),
+        )
     }
 }
 
@@ -465,6 +575,7 @@ private fun ChatBubble(
     message: ChatMessage,
     mine: Boolean,
     avatar: String?,
+    senderName: String? = null,
     onRetry: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
@@ -497,6 +608,16 @@ private fun ChatBubble(
             Spacer(Modifier.width(8.dp))
         }
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+            if (!mine && !senderName.isNullOrBlank()) {
+                Text(
+                    senderName,
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceSecondary,
+                    modifier = Modifier.padding(start = 2.dp, bottom = 3.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Box(
                 modifier = Modifier
                     .widthIn(max = 262.dp)

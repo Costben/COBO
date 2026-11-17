@@ -143,14 +143,22 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
             }
             itemsIndexed(items, key = { index, item -> "${item.id.ifBlank { item.scheme }}#$index" }) { index, item ->
                 val uid = item.user?.id.orEmpty()
+                // 群聊没有 uid，已读记录改用 gid 当会话键，否则所有群聊会挤在同一条记录里。
+                val chatKey = if (item.gid.isNotBlank()) "gid:${item.gid}" else uid
                 MessageRow(
                     item = item,
                     // 服务端没有已读接口，只能拿「上次点进去时这条会话的预览文字」比：文字变了就是新消息。
-                    seen = App.store.chatSeen(uid) == item.text,
+                    seen = App.store.chatSeen(chatKey) == item.text,
                     modifier = Modifier.testTag("message_row_$index"),
                 ) {
-                    App.store.markChatSeen(uid, item.text)
-                    nav.push(Route.Chat(uid, item.user?.name.orEmpty()))
+                    App.store.markChatSeen(chatKey, item.text)
+                    nav.push(
+                        Route.Chat(
+                            uid = uid,
+                            name = item.user?.name.orEmpty(),
+                            gid = item.gid,
+                        ),
+                    )
                 }
             }
             if (items.isNotEmpty()) {

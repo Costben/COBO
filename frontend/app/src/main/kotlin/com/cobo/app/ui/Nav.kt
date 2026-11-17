@@ -131,7 +131,7 @@ sealed interface Route {
     data class Profile(val uid: String?) : Route
     data class Relations(val uid: String, val kind: RelationKind) : Route
     data class Publish(val draft: String = "") : Route
-    data class Chat(val uid: String, val name: String) : Route
+    data class Chat(val uid: String = "", val name: String, val gid: String = "") : Route
     data class Web(val url: String, val title: String) : Route
     data class Container(val cid: String, val title: String) : Route
     data class SuperTopic(val containerId: String, val fallbackUrl: String) : Route
