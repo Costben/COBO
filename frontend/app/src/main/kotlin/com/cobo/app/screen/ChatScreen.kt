@@ -88,7 +88,7 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.WeiboEmojiPanel
 import com.cobo.app.ui.components.WeiboRichText
-import com.cobo.app.ui.components.capsuleMaterial
+import com.cobo.app.ui.components.inputCapsuleGlass
 import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -98,6 +98,7 @@ import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.blur.Backdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -493,6 +494,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                             },
                             focusRequester = composerFocus,
                             interactionSource = composerInteraction,
+                            backdrop = if (blur) backdrop else null,
                         )
                     }
                 }
@@ -581,6 +583,7 @@ private fun ChatBottomBar(
     onPickImage: () -> Unit,
     focusRequester: FocusRequester,
     interactionSource: MutableInteractionSource,
+    backdrop: Backdrop?,
 ) {
     val scheme = COUITheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
@@ -594,11 +597,9 @@ private fun ChatBottomBar(
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = ChatComposerHeight)
-                .capsuleMaterial(isDark, shape = ChatComposerShape)
-                .background(
-                    color = scheme.surfaceContainer,
-                    shape = ChatComposerShape,
-                )
+                // 和发送按钮同一块材质：有 backdrop 就走 COUI 磨砂（背后消息被高斯磨平再叠混合色），
+                // 没有就退回平面胶囊。
+                .inputCapsuleGlass(backdrop = backdrop, isDark = isDark)
                 .clip(ChatComposerShape),
         ) {
             ComposerEmoteTextField(
@@ -669,6 +670,7 @@ private fun ChatBottomBar(
             height = ChatComposerHeight,
             containerColor = scheme.surfaceContainer,
             isDark = isDark,
+            backdrop = backdrop,
             modifier = Modifier.testTag("chat_send"),
         )
     }

@@ -3,7 +3,6 @@ package com.cobo.app.ui.components
 import android.graphics.RuntimeShader
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -25,7 +24,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -205,18 +203,6 @@ private fun DrawScope.drawChipTabCheckedRim(silhouette: Path, isDark: Boolean) {
         )
     }
 }
-
-/**
- * 胶囊材质描边（用于无 backdrop 的纯平面输入容器兜底）。
- */
-internal fun Modifier.capsuleMaterial(
-    isDark: Boolean,
-    shape: Shape = COUISmoothCapsuleShape,
-): Modifier = border(
-    width = 0.5.dp,
-    color = if (isDark) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.45f),
-    shape = shape,
-)
 
 private val ChipTabCausticDark = Color(0x33FFFFFF)
 private val ChipTabCausticBottomOffset = 4.299988.dp
