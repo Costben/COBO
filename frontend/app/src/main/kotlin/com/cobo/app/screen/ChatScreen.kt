@@ -599,7 +599,11 @@ private fun ChatBottomBar(
                 .heightIn(min = ChatComposerHeight)
                 // 和发送按钮同一块材质：有 backdrop 就走 COUI 磨砂（背后消息被高斯磨平再叠混合色），
                 // 没有就退回平面胶囊。
-                .inputCapsuleGlass(backdrop = backdrop, isDark = isDark)
+                .inputCapsuleGlass(
+                    backdrop = backdrop,
+                    isDark = isDark,
+                    cornerRadius = ChatComposerHeight / 2,
+                )
                 .clip(ChatComposerShape),
         ) {
             ComposerEmoteTextField(

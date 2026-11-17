@@ -285,11 +285,13 @@ private fun Modifier.chipTabCausticLight(): Modifier {
 internal fun Modifier.inputCapsuleGlass(
     backdrop: Backdrop?,
     isDark: Boolean,
+    // 单行高度的一半。只长高不放大圆角：草稿换行后是圆角矩形，不再是半径跟着高度变的药丸。
+    cornerRadius: Dp = 18.dp,
     fallbackColor: Color = COUITheme.colorScheme.surfaceContainer,
 ): Modifier {
     val squircleEnabled = isSquircleEnabled()
-    val pillShape = remember(squircleEnabled) {
-        CapsuleOutlineShape(squircleEnabled = squircleEnabled)
+    val pillShape = remember(squircleEnabled, cornerRadius) {
+        CapsuleOutlineShape(cornerRadius = cornerRadius, squircleEnabled = squircleEnabled)
     }
     val density = LocalDensity.current
     val blurActive = blurEffectsEnabled() && isBlurEnabled() && backdrop != null
@@ -374,7 +376,12 @@ internal fun CompactSendButton(
                 scaleX = scale
                 scaleY = scale
             }
-            .inputCapsuleGlass(backdrop = backdrop, isDark = isDark, fallbackColor = containerColor)
+            .inputCapsuleGlass(
+                backdrop = backdrop,
+                isDark = isDark,
+                cornerRadius = height / 2,
+                fallbackColor = containerColor,
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
