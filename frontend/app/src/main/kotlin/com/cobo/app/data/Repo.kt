@@ -557,11 +557,7 @@ class Repo(private val context: Context, private val store: Store) {
             throw e
         }
         val statuses = root.optJSONArray("statuses") ?: JSONArray()
-        val items = buildList {
-            for (i in 0 until statuses.length()) {
-                Status.from(statuses.optJSONObject(i))?.let(::add)
-            }
-        }
+        val items = statusesOf(statuses)
         if (items.isEmpty() && root.optInt("ok", 1) != 1) {
             // 网页版两种字段名都出现过：老接口回 msg，新接口回 message。
             val message = root.str("msg").ifBlank { root.str("message") }.ifBlank { "加载失败" }
@@ -818,10 +814,7 @@ class Repo(private val context: Context, private val store: Store) {
             throw ApiException(message)
         }
         val arr = data.optJSONArray("statuses") ?: JSONArray()
-        val items = ArrayList<Status>(arr.length())
-        for (i in 0 until arr.length()) {
-            Status.from(arr.optJSONObject(i))?.let(items::add)
-        }
+        val items = statusesOf(arr)
         val next = data.str("max_id").ifBlank { data.str("since_id") }
         return FeedPage(items, next.ifBlank { null })
     }
@@ -838,26 +831,7 @@ class Repo(private val context: Context, private val store: Store) {
             cookie,
             force,
         )
-        val cards = root.optJSONObject("data")?.optJSONArray("cards") ?: return emptyList()
-        val out = ArrayList<HotItem>()
-        for (i in 0 until cards.length()) {
-            val card = cards.optJSONObject(i) ?: continue
-            val group = card.optJSONArray("card_group") ?: continue
-            for (j in 0 until group.length()) {
-                val g = group.optJSONObject(j) ?: continue
-                val title = g.str("desc").ifBlank { g.str("title_sub") }
-                if (title.isBlank()) continue
-                out.add(
-                    HotItem(
-                        title = title,
-                        scheme = g.str("scheme"),
-                        label = g.str("card_type_name"),
-                        rank = out.size + 1,
-                    )
-                )
-            }
-        }
-        return out
+        return parseHotItems(root)
     }
 
     /**

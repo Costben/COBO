@@ -280,14 +280,16 @@ private fun collectSuperTopicCards(cards: JSONArray?, items: MutableMap<String, 
     if (cards == null) return
     for (i in 0 until cards.length()) {
         val card = cards.optJSONObject(i) ?: continue
-        Status.from(card.optJSONObject("mblog"))?.let { items.putIfAbsent(it.id, it) }
+        card.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
+            ?.let { Status.from(it)?.let { status -> items.putIfAbsent(status.id, status) } }
         val cardType = card.str("card_type")
         if (cardType == "47") {
             val pics = card.optJSONArray("pics")
             if (pics != null) {
                 for (p in 0 until pics.length()) {
                     val picObj = pics.optJSONObject(p) ?: continue
-                    Status.from(picObj.optJSONObject("mblog"))?.let { items.putIfAbsent(it.id, it) }
+                    picObj.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
+                        ?.let { Status.from(it)?.let { status -> items.putIfAbsent(status.id, status) } }
                 }
             }
         } else if (cardType == "52") {

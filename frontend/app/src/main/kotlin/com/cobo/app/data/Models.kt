@@ -774,6 +774,59 @@ fun formatWeiboTime(raw: String?): String {
     return SimpleDateFormat(pattern, Locale.US).format(date)
 }
 
+/**
+ * 服务端塞进时间线的推广博。
+ *
+ * 信息流广告的 `mark` 形如 `999_reallog_mark_ad:999|WeiboAD`（广告位）或
+ * `...|WeiboADNatural`（自然流投放）。只认这个标记：`ad_state` 同样打在明星、
+ * 品牌自己发的商业博上，那些在关注流和主页里是正常内容，不能一起删掉。
+ */
+internal fun JSONObject.isPromotedStatus(): Boolean {
+    val mark = optString("mark")
+    return mark.contains("reallog_mark_ad") || mark.contains("WeiboAD")
+}
+
+/** `statuses` 数组 → 微博列表，顺手丢掉推广博。时间线和分组流共用。 */
+internal fun statusesOf(arr: JSONArray): List<Status> {
+    val items = ArrayList<Status>(arr.length())
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        if (o.isPromotedStatus()) continue
+        Status.from(o)?.let(items::add)
+    }
+    return items
+}
+
+/**
+ * 热搜榜条目。
+ *
+ * 广告位的 `itemid` 带 `is_ad_pos:1|adid:<id>`，普通词条只有 `seqid` / `cate` / `t`，
+ * 按这个字段就能整条跳过，不必看标题。跳过后 [HotItem.rank] 自然顺延，榜单不留空号。
+ */
+internal fun parseHotItems(root: JSONObject?): List<HotItem> {
+    val cards = root?.optJSONObject("data")?.optJSONArray("cards") ?: return emptyList()
+    val out = ArrayList<HotItem>()
+    for (i in 0 until cards.length()) {
+        val card = cards.optJSONObject(i) ?: continue
+        val group = card.optJSONArray("card_group") ?: continue
+        for (j in 0 until group.length()) {
+            val g = group.optJSONObject(j) ?: continue
+            if (g.str("itemid").contains("is_ad_pos")) continue
+            val title = g.str("desc").ifBlank { g.str("title_sub") }
+            if (title.isBlank()) continue
+            out.add(
+                HotItem(
+                    title = title,
+                    scheme = g.str("scheme"),
+                    label = g.str("card_type_name"),
+                    rank = out.size + 1,
+                )
+            )
+        }
+    }
+    return out
+}
+
 fun parseCards(root: JSONObject?): FeedPage {
     val data = root?.optJSONObject("data")
     val items = ArrayList<Status>()
@@ -781,11 +834,13 @@ fun parseCards(root: JSONObject?): FeedPage {
     if (cards != null) {
         for (i in 0 until cards.length()) {
             val card = cards.optJSONObject(i) ?: continue
-            card.optJSONObject("mblog")?.let { Status.from(it)?.let(items::add) }
+            card.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
+                ?.let { Status.from(it)?.let(items::add) }
             val group = card.optJSONArray("card_group")
             if (group != null) {
                 for (j in 0 until group.length()) {
                     group.optJSONObject(j)?.optJSONObject("mblog")
+                        ?.takeUnless { it.isPromotedStatus() }
                         ?.let { Status.from(it)?.let(items::add) }
                 }
             }
