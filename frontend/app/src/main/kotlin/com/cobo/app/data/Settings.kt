@@ -153,6 +153,10 @@ class Settings(context: Context) {
     var fontScale by mutableFloatStateOf(sp.getFloat("font_scale", 1f))
         private set
 
+    /** 自定义强调色（ARGB 整型）；`0` 表示使用 COUI 默认蓝。 */
+    var accentColor by mutableIntStateOf(sp.getInt("accent_color", 0))
+        private set
+
     var mainTab by mutableIntStateOf(sp.getInt("main_tab", 0))
         private set
 
@@ -555,6 +559,15 @@ class Settings(context: Context) {
     fun applyFontScale(value: Float) {
         fontScale = value
         sp.edit().putFloat("font_scale", value).apply()
+    }
+
+    fun applyAccentColor(argb: Int) {
+        val normalized = when (argb) {
+            0, com.cobo.app.ui.AccentHueCycle -> argb
+            else -> argb or 0xFF000000.toInt()
+        }
+        accentColor = normalized
+        sp.edit().putInt("accent_color", normalized).apply()
     }
 
     fun cycleFontScale(): Float {

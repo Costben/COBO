@@ -69,6 +69,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.toArgb
@@ -960,7 +961,6 @@ private object ComposerPanel {
         edgeWidth = 2.dp,
         shadowFadeIn = 0.03f,
     )
-    val ActionGradient = listOf(Color(0xFF1A8CFE), Color(0xFF3198FF))
     val ToolbarFillDark = Color(0x20FFFFFF)
     val ToolbarHaloLight = Shadow(
         radius = 16.dp,
@@ -1053,13 +1053,15 @@ private fun ActionCapsule(
     onClick: () -> Unit,
 ) {
     val capsuleShape = rememberComposerCapsuleShape()
+    val scheme = COUITheme.colorScheme
+    val actionGradient = listOf(scheme.primary, lerp(scheme.primary, Color.White, 0.14f))
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(ComposerPanel.ActionHeight)
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
             .clip(capsuleShape)
-            .background(Brush.verticalGradient(ComposerPanel.ActionGradient))
+            .background(Brush.verticalGradient(actionGradient))
             .border(
                 BorderStroke(1.dp, Brush.verticalGradient(ComposerPanel.ActionEdgeGradient)),
                 capsuleShape,
@@ -1073,7 +1075,7 @@ private fun ActionCapsule(
             fontSize = 16.sp,
             lineHeight = 16.sp,
             fontWeight = FontWeight.Medium,
-            color = Color.White,
+            color = scheme.onPrimary,
         )
     }
 }

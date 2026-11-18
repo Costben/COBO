@@ -162,6 +162,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.cobo.app.ui.findActivity
 import com.cobo.app.ui.isDarkTheme
+import io.github.suqi8.coui.kmp.theme.COUITheme
 import coil3.BitmapImage
 import coil3.compose.AsyncImage
 import coil3.decode.DataSource
@@ -654,7 +655,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                         ) {
                             Text(
                                 "原图",
-                                color = if (original) Color(0xFF1A8CFF) else ink,
+                                color = if (original) COUITheme.colorScheme.primary else ink,
                                 fontSize = 13.sp,
                             )
                         }
