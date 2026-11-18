@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -75,6 +76,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -132,6 +134,7 @@ import com.cobo.app.screen.SearchResultsState
 import com.cobo.app.screen.SearchTab
 import com.cobo.app.screen.TimelineScreen
 import com.cobo.app.screen.dismissHistoryEditingOnTap
+import com.cobo.app.screen.rememberCoverContrast
 import com.cobo.app.screen.rememberSearchDiscoverState
 import com.cobo.app.screen.rememberSearchFilterTabs
 import com.cobo.app.screen.rememberSearchResultsState
@@ -144,6 +147,7 @@ import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
@@ -437,6 +441,23 @@ fun MainShell(nav: NavState) {
         topBarHeight
     }
     var feedCollapse by remember { mutableFloatStateOf(0f) }
+    val profileListState = rememberLazyListState()
+    var profileActiveCover by remember { mutableStateOf<String?>(null) }
+    val profileScrolledPast by remember(profileListState, galleryDensity) {
+        derivedStateOf {
+            val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+            else profileListState.firstVisibleItemScrollOffset.toFloat()
+            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, galleryDensity) >= 0.45f
+        }
+    }
+    val isTopRoute = rememberIsTopRoute(nav)
+    val profileCoverContrast = rememberCoverContrast(
+        coverUrl = if (guest) null else profileActiveCover,
+        topBarHeight = topBarHeight,
+        active = tab == 2 && !guest && !profileScrolledPast && isTopRoute,
+        manageStatusBar = isTopRoute,
+    )
+    val meTitleColor = if (profileCoverContrast.useWhiteContent) Color.White else COUITheme.colorScheme.onSurface
     var feedSearchQuery by remember { mutableStateOf("") }
     var feedSearchExpanded by remember { mutableStateOf(false) }
     val panelAnimation = App.settings.searchPanelAnimation
@@ -658,6 +679,8 @@ fun MainShell(nav: NavState) {
                                     modifier = Modifier.fillMaxSize(),
                                     topInset = topBarHeight,
                                     extraBottom = FloatingBarContentGap,
+                                    listState = profileListState,
+                                    onActiveCover = { profileActiveCover = it },
                                 )
                             }
                         }
@@ -681,6 +704,7 @@ fun MainShell(nav: NavState) {
                     centerOptions = centerOptions,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
+                    profileListState = profileListState,
                     searchExpanded = feedSearchExpanded,
                     panelCovering = feedPanelCovering,
                     bounds = topBarBounds,
@@ -834,6 +858,7 @@ fun MainShell(nav: NavState) {
                     tab = tab,
                     nav = nav,
                     guest = guest,
+                    meTitleColor = meTitleColor,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
                     searchQuery = feedSearchQuery,
@@ -926,6 +951,7 @@ private fun MainBarUnderlay(
     centerOptions: List<FeedTabSelection>,
     collapsed: Float,
     titleHeightPx: Float,
+    profileListState: LazyListState,
     searchExpanded: Boolean,
     panelCovering: Boolean,
     bounds: TopBarBounds,
@@ -934,6 +960,7 @@ private fun MainBarUnderlay(
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val pageBarHeight = statusBarTop + FeedTitleRowHeight
     val feedHasTabs = feedTabs.size > 1
@@ -947,6 +974,18 @@ private fun MainBarUnderlay(
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarFeedWeight",
     )
+    val meProfileWeight = animateFloatAsState(
+        targetValue = if (tab == 2 && !guest) 1f else 0f,
+        animationSpec = tween(MainTabFadeMillis),
+        label = "mainBarMeWeight",
+    )
+    val profileScrollAlpha = remember(profileListState, density) {
+        {
+            val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+            else profileListState.firstVisibleItemScrollOffset.toFloat()
+            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+        }
+    }
     val materialShift = { (collapsed * titleHeightPx * feedWeight.value).roundToInt() }
     val materialHeight = animateDpAsState(
         targetValue = if (tab == 0) feedBarHeight else pageBarHeight,
@@ -969,7 +1008,7 @@ private fun MainBarUnderlay(
                 .offset { IntOffset(0, -materialShift()) }
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
-            scrollFraction = { 1f },
+            scrollFraction = { 1f - meProfileWeight.value * (1f - profileScrollAlpha()) },
         ) {
             Box(
                 Modifier
@@ -1192,6 +1231,7 @@ private fun MainTitleRow(
     tab: Int,
     nav: NavState,
     guest: Boolean,
+    meTitleColor: Color,
     collapsed: Float,
     titleHeightPx: Float,
     searchQuery: String,
@@ -1243,6 +1283,7 @@ private fun MainTitleRow(
 
             else -> PageTitleBar(
                 title = "我",
+                titleColor = meTitleColor,
                 actions = {
                     HighlightedIconButton(
                         onClick = { nav.push(Route.Settings) },
@@ -1264,6 +1305,7 @@ private fun MainTitleRow(
 @Composable
 private fun PageTitleBar(
     title: String,
+    titleColor: Color = COUITheme.colorScheme.onSurface,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Column(
@@ -1274,7 +1316,7 @@ private fun PageTitleBar(
         Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
             Text(
                 title,
-                color = COUITheme.colorScheme.onSurface,
+                color = titleColor,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier

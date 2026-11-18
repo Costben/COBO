@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -22,12 +25,15 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -38,10 +44,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import android.graphics.Bitmap
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.core.view.WindowCompat
+import coil3.BitmapImage
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import com.cobo.app.ui.findActivity
+import com.cobo.app.ui.isDarkTheme
+import com.cobo.app.ui.rememberIsTopRoute
+import io.github.suqi8.coui.kmp.theme.LocalContentColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,6 +81,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
+import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.rememberExpandOrigin
@@ -79,6 +100,7 @@ import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -121,17 +143,174 @@ import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import kotlin.math.roundToInt
 
+internal data class CoverContrast(
+    val useWhiteContent: Boolean = false,
+)
+
+/**
+ * 判断封面裁切绘制区中 `[bandTopPx, bandBottomPx]` 这一横条叠完顶部 30% 黑色遮罩后是否偏深：
+ * 用于个人主页和“我”页未滚动离开封面时，自适应把顶部文字与状态栏图标反色为白色。
+ */
+internal fun isCoverCropBandDark(
+    width: Int,
+    height: Int,
+    pixelAt: (x: Int, y: Int) -> Int,
+    containerWidthPx: Float,
+    containerHeightPx: Float,
+    bandTopPx: Float,
+    bandBottomPx: Float,
+    overlayAlpha: Float = 0.3f,
+): Boolean {
+    if (width <= 0 || height <= 0 || containerWidthPx <= 0f || containerHeightPx <= 0f) return false
+    val clampedTop = bandTopPx.coerceIn(0f, containerHeightPx)
+    val clampedBottom = bandBottomPx.coerceIn(0f, containerHeightPx)
+    if (clampedBottom <= clampedTop) return false
+
+    val scale = maxOf(containerWidthPx / width.toFloat(), containerHeightPx / height.toFloat())
+    val drawnW = width * scale
+    val drawnH = height * scale
+    val offsetX = (containerWidthPx - drawnW) / 2f
+    val offsetY = (containerHeightPx - drawnH) / 2f
+    val factor = (1f - overlayAlpha).coerceIn(0f, 1f).toDouble()
+
+    val cols = 12
+    val rows = 6
+    var sum = 0.0
+    var count = 0
+    for (rIdx in 0 until rows) {
+        val sy = clampedTop + (clampedBottom - clampedTop) * ((rIdx + 0.5f) / rows)
+        val py = ((sy - offsetY) / scale).toInt().coerceIn(0, height - 1)
+        for (cIdx in 0 until cols) {
+            val sx = containerWidthPx * ((cIdx + 0.5f) / cols)
+            val px = ((sx - offsetX) / scale).toInt().coerceIn(0, width - 1)
+            val argb = pixelAt(px, py)
+            val red = ((argb ushr 16) and 0xFF) * factor
+            val green = ((argb ushr 8) and 0xFF) * factor
+            val blue = (argb and 0xFF) * factor
+            sum += (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0
+            count++
+        }
+    }
+    return count > 0 && (sum / count) < 0.48
+}
+
+@Composable
+internal fun rememberCoverContrast(
+    coverUrl: String?,
+    topBarHeight: Dp,
+    active: Boolean,
+    manageStatusBar: Boolean,
+): CoverContrast {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val statusBarBottomPx = WindowInsets.statusBars.getTop(density).toFloat()
+    val containerWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val topBarBottomPx = with(density) { topBarHeight.toPx() }
+    val coverHeightPx = with(density) { (topBarHeight + ProfileAvatarRing * 1.5f).toPx() }
+
+    val sampled by produceState(
+        initialValue = CoverContrast(),
+        coverUrl,
+        containerWidthPx,
+        coverHeightPx,
+        statusBarBottomPx,
+        topBarBottomPx,
+    ) {
+        if (coverUrl.isNullOrBlank()) {
+            value = CoverContrast()
+            return@produceState
+        }
+        value = runCatching {
+            val request = ImageRequest.Builder(context)
+                .data(coverUrl)
+                .size(144)
+                .build()
+            val raw = ((context.imageLoader.execute(request) as? SuccessResult)?.image as? BitmapImage)
+                ?.bitmap ?: return@runCatching CoverContrast()
+            val bitmap = if (raw.config == Bitmap.Config.HARDWARE) {
+                raw.copy(Bitmap.Config.ARGB_8888, false) ?: return@runCatching CoverContrast()
+            } else {
+                raw
+            }
+            val bw = bitmap.width
+            val bh = bitmap.height
+            // 以“主页”标题所在顶栏条带为准：状态栏与标题颜色统一受同一个判定控制，同步变化。
+            val bandTop = if (topBarBottomPx > statusBarBottomPx) statusBarBottomPx else 0f
+            val bandDark = isCoverCropBandDark(
+                width = bw,
+                height = bh,
+                pixelAt = { x, y -> bitmap.getPixel(x, y) },
+                containerWidthPx = containerWidthPx,
+                containerHeightPx = coverHeightPx,
+                bandTopPx = bandTop,
+                bandBottomPx = topBarBottomPx,
+            )
+            CoverContrast(useWhiteContent = bandDark)
+        }.getOrDefault(CoverContrast())
+    }
+
+    val effective = if (active && !coverUrl.isNullOrBlank()) sampled else CoverContrast()
+    val darkTheme = isDarkTheme()
+    val window = remember(context) { context.findActivity()?.window }
+    val controller = remember(window) {
+        window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+    }
+    val lightStatusBars = !(darkTheme || effective.useWhiteContent)
+    LaunchedEffect(controller, manageStatusBar, lightStatusBars) {
+        if (manageStatusBar) {
+            controller?.isAppearanceLightStatusBars = lightStatusBars
+        }
+    }
+    DisposableEffect(controller, manageStatusBar, darkTheme) {
+        onDispose {
+            if (manageStatusBar) {
+                controller?.isAppearanceLightStatusBars = !darkTheme
+            }
+        }
+    }
+    return effective
+}
+
 @Composable
 fun ProfileScreen(nav: NavState, uid: String?) {
     val key = uid.orEmpty()
     val tag = FollowTags[key]
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    var activeCoverUrl by remember(uid) { mutableStateOf<String?>(null) }
+    val scrollAlpha = remember(listState, density) {
+        {
+            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+            else listState.firstVisibleItemScrollOffset.toFloat()
+            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+        }
+    }
+    val scrolledPastCover by remember(scrollAlpha) {
+        derivedStateOf { scrollAlpha() >= 0.45f }
+    }
+    val isTopRoute = rememberIsTopRoute(nav)
+    val coverContrast = rememberCoverContrast(
+        coverUrl = activeCoverUrl,
+        topBarHeight = topBarHeight,
+        active = !scrolledPastCover && isTopRoute,
+        manageStatusBar = isTopRoute,
+    )
+    val titleColor = if (coverContrast.useWhiteContent) Color.White else COUITheme.colorScheme.onSurface
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
-        // 内容铺到顶栏底下，顶栏的渐变玻璃才有东西可采样；和「我」页同一套材质。
+        // 内容铺到顶栏底下，滚动后顶栏的渐变玻璃才渐入；未滑动时完全透明不模糊封面。
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffectsEnabled(), backdrop)) {
             CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
-                ProfileContent(nav, uid, Modifier.fillMaxSize(), topInset = topBarHeight)
+                ProfileContent(
+                    nav = nav,
+                    uid = uid,
+                    modifier = Modifier.fillMaxSize(),
+                    topInset = topBarHeight,
+                    listState = listState,
+                    onActiveCover = { activeCoverUrl = it },
+                )
             }
         }
         CompositionLocalProvider(
@@ -142,10 +321,11 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                 AppBarSurface(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageContainerColor(),
-                    scrollFraction = { 1f },
+                    scrollFraction = scrollAlpha,
                 ) {
                     SmallTopAppBar(
                         title = "主页",
+                        titleColor = titleColor,
                         color = Color.Transparent,
                         showDivider = false,
                         gradientGlass = false,
@@ -182,7 +362,7 @@ private fun ProfileMoreAction(tag: FollowTag?, onSelect: (FollowTag?) -> Unit) {
                         Modifier
                             .size(3.5.dp)
                             .clip(CircleShape)
-                            .background(COUITheme.colorScheme.onSurface)
+                            .background(LocalContentColor.current)
                     )
                 }
             }
@@ -219,6 +399,8 @@ fun ProfileContent(
     modifier: Modifier = Modifier,
     topInset: Dp = 0.dp,
     extraBottom: Dp = 0.dp,
+    listState: LazyListState = rememberLazyListState(),
+    onActiveCover: (String?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var user by remember(uid) { mutableStateOf<User?>(null) }
@@ -229,7 +411,6 @@ fun ProfileContent(
     var end by remember(uid) { mutableStateOf(false) }
     var error by remember(uid) { mutableStateOf<String?>(null) }
     var resolvedUid by remember(uid) { mutableStateOf<String?>(uid) }
-    val listState = rememberLazyListState()
     val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
@@ -321,6 +502,7 @@ fun ProfileContent(
                     tag = tag,
                     topInset = topInset,
                     pullState = pullState,
+                    onActiveCover = onActiveCover,
                     onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
                     onRelations = { kind ->
                         val target = user?.id ?: resolvedUid
@@ -499,6 +681,7 @@ private fun ProfileHeader(
     tag: FollowTag? = null,
     /** 顶栏（含状态栏）的高度：封面顶到屏幕最上沿，多出这一截藏在顶栏玻璃下面。 */
     topInset: Dp = 0.dp,
+    onActiveCover: (String?) -> Unit = {},
     onCover: (List<Pic>, Int) -> Unit = { _, _ -> },
     onRelations: (RelationKind) -> Unit = {},
 ) {
@@ -508,6 +691,9 @@ private fun ProfileHeader(
     // 头像和昵称压在封面上；有封面图时整体压暗一层，文字统一用白色保证看得清。
     val onCoverColor = if (hasCover) Color.White else scheme.onSurface
     val pagerState = rememberPagerState { covers.size }
+    LaunchedEffect(covers, pagerState.currentPage) {
+        onActiveCover(covers.getOrNull(pagerState.currentPage))
+    }
     // 封面在列表里只露中间一条，真实宽高比要等图片解码完才知道。记下来交给看图页，
     // 点开时才能从这一条长出来，而不是从整张图的居中位置凭空出现。
     val coverAspects = remember(covers) { mutableStateMapOf<Int, Float>() }
@@ -546,6 +732,7 @@ private fun ProfileHeader(
                     ),
             ) {
             if (hasCover) {
+                val origins = LocalImageOrigins.current
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize().testTag("profile_cover"),
@@ -556,6 +743,7 @@ private fun ProfileHeader(
                         contentDescription = "封面",
                         contentScale = ContentScale.Crop,
                         onSuccess = { state ->
+                            origins.putCacheKey(covers[page], state.result.memoryCacheKey)
                             val size = state.painter.intrinsicSize
                             if (size.width > 0f && size.height > 0f) {
                                 coverAspects[page] = size.width / size.height
@@ -633,25 +821,29 @@ private fun ProfileHeader(
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    if (tag != null) {
-                        FollowTagBadge(tag)
+                    val membership = user?.membership ?: Membership.None
+                    if (tag != null || membership != Membership.None) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (tag != null) {
+                                FollowTagBadge(tag)
+                            }
+                            if (membership != Membership.None) {
+                                MemberBadge(membership)
+                            }
+                        }
                         Spacer(Modifier.height(2.dp))
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            user?.name ?: "加载中…",
-                            color = onCoverColor,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        val membership = user?.membership ?: Membership.None
-                        if (membership != Membership.None) {
-                            Spacer(Modifier.width(6.dp))
-                            MemberBadge(membership)
-                        }
-                    }
+                    Text(
+                        user?.name ?: "加载中…",
+                        color = onCoverColor,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     if (user?.verified == true) {
                         Text(
                             "已认证",

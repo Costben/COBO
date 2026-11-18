@@ -145,6 +145,12 @@ internal val LocalExpandOriginVisibility = staticCompositionLocalOf<ExpandOrigin
 internal val LocalCurrentNavEntry = staticCompositionLocalOf<NavEntry?> { null }
 
 @Composable
+internal fun rememberIsTopRoute(nav: NavState): Boolean {
+    val current = LocalCurrentNavEntry.current ?: return false
+    return nav.stack.lastOrNull { !it.exiting } === current
+}
+
+@Composable
 fun Modifier.expandOrigin(origin: ExpandOrigin): Modifier {
     val visibility = LocalExpandOriginVisibility.current
     val currentEntry = LocalCurrentNavEntry.current
