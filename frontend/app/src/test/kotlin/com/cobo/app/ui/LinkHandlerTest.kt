@@ -1,6 +1,8 @@
 package com.cobo.app.ui
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,5 +34,27 @@ class LinkHandlerTest {
         assertTrue(isVideoLink("sinaweibo://video/play?fid=1034:5000000001"))
         assertFalse(isVideoLink("https://m.weibo.cn/detail/123456"))
         assertFalse(isVideoLink("https://www.example.com/article/1"))
+    }
+
+    @Test
+    fun parsesExternalWeiboDeepLinks() {
+        assertEquals("P1234abcd", weiboStatusId("https://weibo.com/1669879400/P1234abcd"))
+        assertEquals("5012345678901234", weiboStatusId("https://www.weibo.com/1669879400/5012345678901234?from=share"))
+        assertEquals("O1a2b3c4d", weiboStatusId("https://m.weibo.cn/status/O1a2b3c4d"))
+        assertEquals("P1234abcd", weiboStatusId("sinaweibo://detail?mblogid=P1234abcd"))
+        assertNull(weiboStatusId("https://weibo.com/1669879400"))
+
+        assertEquals("1669879400", weiboUserId("https://weibo.com/1669879400"))
+        assertEquals("1669879400", weiboUserId("sinaweibo://userinfo?uid=1669879400"))
+
+        assertTrue(isWeiboHomeLink("https://weibo.com/"))
+        assertTrue(isWeiboHomeLink("sinaweibo://home"))
+        assertFalse(isWeiboHomeLink("https://weibo.com/1669879400/P1234abcd"))
+
+        assertEquals(
+            "https://weibo.com/1669879400",
+            unwrapWeiboBrowserUrl("sinaweibo://browser?url=https%3A%2F%2Fweibo.com%2F1669879400"),
+        )
+        assertNull(unwrapWeiboBrowserUrl("https://weibo.com/1669879400"))
     }
 }

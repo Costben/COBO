@@ -1,5 +1,6 @@
 package com.cobo.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
@@ -17,6 +18,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         App.init(this)
         App.startRoute = intent?.getStringExtra("cobo.route")
+        handleDeepLinkIntent(intent)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -45,5 +47,17 @@ class MainActivity : ComponentActivity() {
                 CoboRoot()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val data = intent.dataString ?: return
+        App.enqueueDeepLink(data)
     }
 }

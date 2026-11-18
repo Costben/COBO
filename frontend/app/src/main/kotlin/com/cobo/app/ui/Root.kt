@@ -141,8 +141,10 @@ fun CoboRoot() {
 
     val linkHandler = remember(nav, scope) {
         { raw: String ->
-            // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，先拆出真实地址再决定去哪。
-            val url = unwrapSinaUrl(raw) ?: raw
+            // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，流体云深链会包一层 sinaweibo://browser?url=<真实地址>，
+            // 先拆出真实地址再决定去哪。
+            val unwrapped = unwrapWeiboBrowserUrl(raw) ?: raw
+            val url = unwrapSinaUrl(unwrapped) ?: unwrapped
             val voteId = weiboVoteId(url)
             val statusId = weiboStatusId(url)
             val uid = weiboUserId(url)
@@ -200,6 +202,14 @@ fun CoboRoot() {
                 else -> resolveWeiboLink(url)?.let { nav.push(Route.Web(it, "网页")) }
             }
             Unit
+        }
+    }
+
+    LaunchedEffect(App.deepLinkVersion) {
+        val deepLink = App.consumeDeepLink() ?: return@LaunchedEffect
+        val unwrapped = unwrapWeiboBrowserUrl(deepLink) ?: deepLink
+        if (!isWeiboHomeLink(unwrapped)) {
+            linkHandler(unwrapped)
         }
     }
 

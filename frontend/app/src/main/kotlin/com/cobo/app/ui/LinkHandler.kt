@@ -65,8 +65,10 @@ private fun weiboPrivateLink(raw: String): String? {
             else -> null
         }
     }
-    if (!lower.startsWith("sinaweibo://")) return null
-    val body = raw.substring("sinaweibo://".length)
+    val isSinaWeibo = lower.startsWith("sinaweibo://")
+    val isWeibo = lower.startsWith("weibo://")
+    if (!isSinaWeibo && !isWeibo) return null
+    val body = raw.substring(if (isSinaWeibo) "sinaweibo://".length else "weibo://".length)
     val path = body.substringBefore('?')
     val query = queryOf(body)
     return when {
@@ -87,11 +89,40 @@ private fun weiboPrivateLink(raw: String): String? {
         // 单条微博：sinaweibo://detail?mblogid=...
         path.startsWith("detail") || path.startsWith("status") -> {
             val id = param(query, "mblogid") ?: param(query, "id")
-            id?.takeIf { it.all(Char::isDigit) }?.let { "$WeiboMobile/detail/$it" }
+            id?.takeIf { it.isNotEmpty() && it.all(Char::isLetterOrDigit) }?.let { "$WeiboMobile/detail/$it" }
+        }
+
+        // 个人主页：sinaweibo://userinfo?uid=...
+        path.startsWith("userinfo") -> {
+            val uid = param(query, "uid")
+            uid?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.let { "$WeiboMobile/u/$it" }
+        }
+
+        // 内置浏览器跳转：sinaweibo://browser?url=...
+        path.startsWith("browser") -> {
+            val target = param(query, "url")?.let {
+                runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it)
+            }
+            target?.takeIf {
+                it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
+            }
         }
 
         else -> null
     }
+}
+
+/**
+ * 拆掉 `sinaweibo://browser?url=<encoded>` / `weibo://browser?url=<encoded>` 外壳，
+ * 还原真实目标链接，避免外部深链（如系统流体云下发的跳端地址）直接落入内置 WebView。
+ */
+fun unwrapWeiboBrowserUrl(raw: String): String? {
+    val trimmed = raw.trim()
+    val lower = trimmed.lowercase()
+    if (!lower.startsWith("sinaweibo://browser") && !lower.startsWith("weibo://browser")) return null
+    val target = param(queryOf(trimmed), "url") ?: return null
+    val decoded = runCatching { java.net.URLDecoder.decode(target, "UTF-8") }.getOrDefault(target).trim()
+    return decoded.takeIf { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
 }
 
 /**
@@ -138,14 +169,28 @@ fun weiboMentionName(raw: String): String? {
     }
 }
 
-/** `/u/<uid>`、`/profile/<uid>`、`m.weibo.cn/u/<uid>` → uid。 */
+/** `/u/<uid>`、`/profile/<uid>`、`m.weibo.cn/u/<uid>`、`weibo.com/<uid>`、`sinaweibo://userinfo?uid=<uid>` → uid。 */
 fun weiboUserId(raw: String): String? {
-    val path = raw.trim().substringBefore('?').substringBefore('#')
+    val trimmed = raw.trim()
+    val lower = trimmed.lowercase()
+    if (lower.startsWith("sinaweibo://userinfo") || lower.startsWith("weibo://userinfo")) {
+        val uid = param(queryOf(trimmed), "uid")
+        if (!uid.isNullOrEmpty() && uid.all(Char::isDigit)) return uid
+    }
+    val path = trimmed.substringBefore('?').substringBefore('#')
     for (prefix in listOf("/u/", "/profile/")) {
         val at = path.indexOf(prefix)
         if (at < 0) continue
         val id = path.substring(at + prefix.length).trim('/').substringBefore('/')
         if (id.isNotEmpty() && id.all(Char::isDigit)) return id
+    }
+    val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return null
+    val host = uri.host?.lowercase() ?: return null
+    if (host == "weibo.com" || host == "www.weibo.com" || host == "m.weibo.cn" || host == "weibo.cn") {
+        val segments = uri.rawPath.orEmpty().split('/').filter { it.isNotBlank() }
+        if (segments.size == 1 && segments[0].all(Char::isDigit)) {
+            return segments[0]
+        }
     }
     return null
 }
@@ -198,22 +243,56 @@ fun isVideoLink(raw: String): Boolean {
 }
 
 /**
- * Extracts the status id from a link that points at a single 微博, so "全文" and
- * shared status links open the in-app detail page instead of a WebView.
+ * Extracts the status id (numeric id or Base62 mblogid) from a link that points at a single 微博,
+ * so "全文" and shared status links open the in-app detail page instead of a WebView.
  */
 fun weiboStatusId(raw: String): String? {
-    var path = raw.trim().substringBefore('?').substringBefore('#')
+    val trimmed = raw.trim()
+    val lower = trimmed.lowercase()
+    if (lower.startsWith("sinaweibo://detail") || lower.startsWith("sinaweibo://status") ||
+        lower.startsWith("weibo://detail") || lower.startsWith("weibo://status")
+    ) {
+        val query = queryOf(trimmed)
+        val id = param(query, "mblogid") ?: param(query, "id")
+        return id?.takeIf { it.isNotEmpty() && it.all(Char::isLetterOrDigit) }
+    }
+    var path = trimmed.substringBefore('?').substringBefore('#')
     val scheme = path.indexOf("://")
-    if (scheme >= 0) path = path.substring(scheme + 3)
+    var host = ""
+    if (scheme >= 0) {
+        path = path.substring(scheme + 3)
+        host = path.substringBefore('/').lowercase()
+    }
     if (path.startsWith("//")) path = path.substring(2)
     val segments = path.split('/').filter { it.isNotBlank() }.toMutableList()
     if (segments.isNotEmpty() && (segments[0].contains('.') || segments[0].contains(':'))) {
-        segments.removeAt(0)
+        host = segments.removeAt(0).lowercase()
     }
     val head = segments.firstOrNull() ?: return null
-    val id = segments.getOrNull(1) ?: return null
-    if (head != "status" && head != "detail") return null
-    return id.takeIf { it.all(Char::isDigit) }
+    val second = segments.getOrNull(1) ?: return null
+    if (head == "status" || head == "detail") {
+        return second.takeIf { it.isNotEmpty() && it.all(Char::isLetterOrDigit) }
+    }
+    val isWeiboHost = host == "weibo.com" || host == "www.weibo.com" || host == "weibo.cn" || host == "m.weibo.cn"
+    if (isWeiboHost && segments.size == 2 && head.all(Char::isDigit) && second.isNotEmpty() && second.all(Char::isLetterOrDigit)) {
+        return second
+    }
+    return null
+}
+
+/** 是否指向微博首页（外部深链只拉起主界面，不必再套一层 WebView）。 */
+fun isWeiboHomeLink(raw: String): Boolean {
+    val lower = raw.trim().lowercase().substringBefore('?').substringBefore('#').trimEnd('/')
+    return lower == "https://weibo.com" ||
+        lower == "http://weibo.com" ||
+        lower == "https://www.weibo.com" ||
+        lower == "http://www.weibo.com" ||
+        lower == "https://m.weibo.cn" ||
+        lower == "http://m.weibo.cn" ||
+        lower == "https://weibo.cn" ||
+        lower == "http://weibo.cn" ||
+        lower == "sinaweibo://home" ||
+        lower == "weibo://home"
 }
 
 /** 投票直链（vote.weibo.com 或带有 vote_id 参数的页面）。 */

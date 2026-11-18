@@ -79,6 +79,24 @@ object App {
     /** 临时：`am start --es cobo.route tablab` 直接进顶栏对比页，验完删。 */
     var startRoute: String? = null
 
+    /** 待处理的外部深链（流体云/系统跳转传入），由根节点消费后清空。 */
+    var pendingDeepLink by mutableStateOf<String?>(null)
+        private set
+    var deepLinkVersion by mutableIntStateOf(0)
+        private set
+
+    fun enqueueDeepLink(rawUrl: String?) {
+        val trimmed = rawUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        pendingDeepLink = trimmed
+        deepLinkVersion++
+    }
+
+    fun consumeDeepLink(): String? {
+        val target = pendingDeepLink
+        pendingDeepLink = null
+        return target
+    }
+
     /** 正在检查更新：设置页那一行据此换成「正在检查…」。 */
     var checkingUpdate by mutableStateOf(false)
         private set

@@ -150,7 +150,8 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     val topBarBounds = remember { TopBarBounds() }
     val backdrop = rememberLayerBackdrop()
 
-    // A link only carries the numeric status id; the mblogid comes with the loaded status.
+    // A link may carry a Base62 mblogid or numeric id; once loaded, prefer the canonical numeric id and mid.
+    fun effectiveId(): String = status?.id?.takeIf { it.isNotBlank() } ?: id
     fun effectiveMid(): String = status?.mid?.takeIf { it.isNotBlank() } ?: mid
 
     suspend fun loadComments(reset: Boolean, force: Boolean = false) {
@@ -161,7 +162,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         val requestedSort = sort
         try {
             val page = App.repo.comments(
-                id = id,
+                id = effectiveId(),
                 mid = effectiveMid(),
                 sort = requestedSort,
                 maxId = if (reset) null else maxId,
