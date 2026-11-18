@@ -3,9 +3,7 @@ package com.cobo.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -36,6 +34,7 @@ import com.cobo.app.App
 import com.cobo.app.data.Pic
 import com.cobo.app.data.RelationKind
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
+import io.github.suqi8.coui.kmp.utils.PredictiveBackMotionDefaults
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -44,8 +43,6 @@ import kotlin.math.roundToInt
 val ExpandEasing = CubicBezierEasing(0.3f, 0f, 0.1f, 1f)
 const val ExpandEnterMillis = 420
 const val ExpandExitMillis = 220
-const val MinCardFlingExitMillis = 260
-const val MinImageFlingExitMillis = 240
 const val RouteSlideMillis = 320
 const val RouteParallaxDivisor = 4f
 
@@ -328,8 +325,8 @@ class NavState {
             val hasFlingOffset = entry.offset.value != Offset.Zero || initialVelocity != Offset.Zero
             val baseRemaining = (baseMillis * remaining).roundToInt().coerceAtLeast(1)
             val millis = when {
-                expand && hasFlingOffset -> maxOf(baseRemaining, MinCardFlingExitMillis)
-                entry.growsFromImage && hasFlingOffset -> maxOf(baseRemaining, MinImageFlingExitMillis)
+                expand && hasFlingOffset -> maxOf(baseRemaining, PredictiveBackMotionDefaults.MIN_CARD_FLING_EXIT_MILLIS)
+                entry.growsFromImage && hasFlingOffset -> maxOf(baseRemaining, PredictiveBackMotionDefaults.MIN_IMAGE_FLING_EXIT_MILLIS)
                 else -> baseRemaining
             }
             coroutineScope {
@@ -355,16 +352,12 @@ class NavState {
                         if (entry.growsFromImage && !entry.hasReturnTarget) {
                             entry.offset.animateTo(
                                 targetValue = entry.offset.value + initialVelocity * 0.14f,
-                                animationSpec = tween(millis, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
+                                animationSpec = PredictiveBackMotionDefaults.flingDecaySpec(millis),
                             )
                         } else {
                             entry.offset.animateTo(
                                 targetValue = Offset.Zero,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioNoBouncy,
-                                    stiffness = 700f,
-                                    visibilityThreshold = Offset(0.5f, 0.5f),
-                                ),
+                                animationSpec = PredictiveBackMotionDefaults.flingReturnSpringSpec(),
                                 initialVelocity = initialVelocity,
                             )
                         }

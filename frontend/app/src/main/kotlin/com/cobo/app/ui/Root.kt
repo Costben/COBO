@@ -1,9 +1,7 @@
 package com.cobo.app.ui
 
 import android.os.Build
-import android.os.SystemClock
 import android.view.RoundedCorner
-import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.LinearEasing
@@ -34,13 +32,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -103,55 +99,23 @@ import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.addSquircleRect
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.COUIPopupUtils.Companion.COUIPopupHost
+import io.github.suqi8.coui.kmp.utils.PredictiveBackDragTracker
+import io.github.suqi8.coui.kmp.utils.PredictiveBackMotionDefaults
+import io.github.suqi8.coui.kmp.utils.applyPredictiveBackBlur
+import io.github.suqi8.coui.kmp.utils.calculatePredictiveBackBlurRadiusPx
+import io.github.suqi8.coui.kmp.utils.isPredictiveBackBlurSupported
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
 /**
  * How far a back gesture must pull before the page sits back on its card. A release from there
  * returns for good: the frame is already home, so springing the page open again reads as a bug.
  */
 private const val LandedProgress = 0.2f
-private const val DragFollowFactor = 0.65f
-private const val MaxPredictiveFlingSpeedDp = 1600f
-private val BackPageMaxBlurRadius = 28.dp
-private val BackPageBlurOffsetSpan = 160.dp
-
-private class PredictiveDragTracker {
-    private data class Sample(val timeMs: Long, val pos: Offset)
-
-    private var startTouch: Offset? = null
-    private val samples = ArrayDeque<Sample>(8)
-
-    fun record(event: BackEventCompat): Offset {
-        val touch = Offset(event.touchX, event.touchY)
-        // 部分设备或无触控回退首帧可能传 (0, 0)，等到首个有效坐标再锁定起点，避免首帧跳变。
-        if (touch == Offset.Zero && startTouch == null) return Offset.Zero
-        val start = startTouch ?: touch.also { startTouch = it }
-        val timeMs = if (event.frameTimeMillis > 0L) event.frameTimeMillis else SystemClock.uptimeMillis()
-        if (samples.size >= 8) samples.removeFirst()
-        samples.addLast(Sample(timeMs, touch))
-        return touch - start
-    }
-
-    fun velocityPxPerSec(maxSpeed: Float): Offset {
-        val newest = samples.lastOrNull() ?: return Offset.Zero
-        val nowMs = SystemClock.uptimeMillis()
-        // 手指停顿超过 90ms 后再松手时不附带甩出惯性；先校验时钟同源再比较差值。
-        if (abs(nowMs - newest.timeMs) < 5_000L && nowMs - newest.timeMs > 90L) return Offset.Zero
-        val windowStart = newest.timeMs - 100L
-        val oldest = samples.firstOrNull { it.timeMs >= windowStart && it !== newest } ?: samples.firstOrNull() ?: return Offset.Zero
-        val dtSec = (newest.timeMs - oldest.timeMs) / 1000f
-        if (dtSec <= 0.004f) return Offset.Zero
-        val vel = (newest.pos - oldest.pos) / dtSec
-        val speed = vel.getDistance()
-        return if (speed > maxSpeed && speed > 0f) vel * (maxSpeed / speed) else vel
-    }
-}
 
 @Composable
 fun CoboRoot() {
@@ -404,7 +368,7 @@ fun CoboPredictiveBackHandler(nav: NavState) {
         }
         return
     }
-    val densityPx = LocalDensity.current.density
+    val maxFlingSpeedPx = with(LocalDensity.current) { PredictiveBackMotionDefaults.MaxFlingSpeed.toPx() }
     PredictiveBackHandler(enabled = hasPage) { events ->
         val entry = nav.stack.lastOrNull()
         if (entry == null || nav.stack.size <= 1) {
@@ -422,7 +386,7 @@ fun CoboPredictiveBackHandler(nav: NavState) {
             entry.expand -> App.settings.predictiveBackCardFling
             else -> false
         }
-        val dragTracker = if (trackFinger) PredictiveDragTracker() else null
+        val dragTracker = if (trackFinger) PredictiveBackDragTracker() else null
         var lastProgress = 1f
         var moved = false
         val token = ++entry.previewGeneration
@@ -439,14 +403,10 @@ fun CoboPredictiveBackHandler(nav: NavState) {
                 entry.progress.snapTo(value)
                 if (entry.expand) entry.fade.snapTo(value)
                 if (dragTracker != null) {
-                    entry.offset.snapTo(dragTracker.record(event) * DragFollowFactor)
+                    entry.offset.snapTo(dragTracker.record(event.touchX, event.touchY, event.frameTimeMillis))
                 }
             }
-            val commitVelocity = if (dragTracker != null) {
-                dragTracker.velocityPxPerSec(MaxPredictiveFlingSpeedDp * densityPx) * DragFollowFactor
-            } else {
-                Offset.Zero
-            }
+            val commitVelocity = dragTracker?.velocityPxPerSec(maxFlingSpeedPx) ?: Offset.Zero
             // Released past the threshold: finish from wherever the finger left the page.
             if (lastProgress <= 0.02f && moved && entry.offset.value == Offset.Zero && commitVelocity == Offset.Zero) {
                 nav.completePredictivePop(entry)
@@ -458,11 +418,7 @@ fun CoboPredictiveBackHandler(nav: NavState) {
             // gesture, but there is nothing left to preview, so it goes instead of springing
             // back open under the finger.
             if (lastProgress <= LandedProgress && moved) {
-                val cancelVelocity = if (dragTracker != null) {
-                    dragTracker.velocityPxPerSec(MaxPredictiveFlingSpeedDp * densityPx) * DragFollowFactor
-                } else {
-                    Offset.Zero
-                }
+                val cancelVelocity = dragTracker?.velocityPxPerSec(maxFlingSpeedPx) ?: Offset.Zero
                 if (entry.offset.value == Offset.Zero && cancelVelocity == Offset.Zero) {
                     nav.completePredictivePop(entry)
                 } else {
@@ -521,12 +477,12 @@ private fun RouteLayer(
     // 11px at this device's 150px corner — so the four corners showed a crescent of window
     // background. SquircleShape traces the same silhouette.
     val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
-    val backBlurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+    val backBlurSupported = isPredictiveBackBlurSupported() &&
         blurEffectsEnabled() &&
         App.settings.predictiveBackBlur
     val density = LocalDensity.current
-    val maxBlurRadiusPx = with(density) { BackPageMaxBlurRadius.toPx() }
-    val blurOffsetSpanPx = with(density) { BackPageBlurOffsetSpan.toPx() }
+    val maxBlurRadiusPx = with(density) { PredictiveBackMotionDefaults.BackBlurMaxRadius.toPx() }
+    val blurOffsetSpanPx = with(density) { PredictiveBackMotionDefaults.BackBlurOffsetSpan.toPx() }
 
     val layer = Modifier
         .fillMaxSize()
@@ -563,20 +519,17 @@ private fun RouteLayer(
                 } else {
                     p
                 }
-                val offsetFraction = if (top.expand || top.hasReturnTarget) {
-                    (top.offset.value.getDistance() / blurOffsetSpanPx).coerceIn(0f, 1f)
-                } else {
-                    0f
-                }
-                maxBlurRadiusPx * maxOf(baseFraction, offsetFraction)
+                val offsetDistance = if (top.expand || top.hasReturnTarget) top.offset.value.getDistance() else 0f
+                calculatePredictiveBackBlurRadiusPx(
+                    progressFraction = baseFraction,
+                    offsetDistancePx = offsetDistance,
+                    maxBlurRadiusPx = maxBlurRadiusPx,
+                    blurOffsetSpanPx = blurOffsetSpanPx,
+                )
             } else {
                 0f
             }
-            renderEffect = if (blurRadiusPx > 0.5f) {
-                BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Clamp)
-            } else {
-                null
-            }
+            applyPredictiveBackBlur(blurRadiusPx)
         }
 
     // The viewer reads its own entrance curve through this; everything else is moved by the host.
