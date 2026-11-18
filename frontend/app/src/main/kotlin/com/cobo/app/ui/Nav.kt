@@ -3,6 +3,9 @@ package com.cobo.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -18,6 +21,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -35,10 +39,13 @@ import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 val ExpandEasing = CubicBezierEasing(0.3f, 0f, 0.1f, 1f)
 const val ExpandEnterMillis = 420
 const val ExpandExitMillis = 220
+const val MinCardFlingExitMillis = 260
+const val MinImageFlingExitMillis = 240
 const val RouteSlideMillis = 320
 const val RouteParallaxDivisor = 4f
 
@@ -54,7 +61,12 @@ const val ImageZoomMillis = 420
  * and draw blocks, so a running transition never recomposes the page.
  */
 @Stable
-class RouteTransition(val progress: () -> Float, val exiting: () -> Boolean)
+class RouteTransition(
+    val progress: () -> Float,
+    val exiting: () -> Boolean,
+    val offset: () -> Offset = { Offset.Zero },
+    val onHasReturnTarget: (Boolean) -> Unit = {},
+)
 
 val LocalRouteTransition = staticCompositionLocalOf<RouteTransition?> { null }
 
@@ -105,10 +117,43 @@ fun rememberExpandOrigin(cornerRadius: Dp = 24.dp): ExpandOrigin {
     }
 }
 
-fun Modifier.expandOrigin(origin: ExpandOrigin): Modifier =
+@Stable
+internal class ExpandOriginVisibility(
+    private val stack: List<NavEntry>,
+) {
+    fun isHidden(origin: ExpandOrigin, currentEntry: NavEntry?): Boolean {
+        val startIndex = if (currentEntry != null) {
+            val idx = stack.indexOfFirst { it === currentEntry }
+            if (idx >= 0) idx + 1 else 1
+        } else {
+            1
+        }
+        for (i in stack.lastIndex downTo startIndex) {
+            val entry = stack[i]
+            if (!entry.expand) continue
+            if (matches(entry.origin, origin)) return true
+        }
+        return false
+    }
+
+    private fun matches(active: ExpandOrigin?, candidate: ExpandOrigin): Boolean {
+        if (active == null) return false
+        if (active === candidate) return true
+        val key = active.rowKey
+        return key != null && key == candidate.rowKey
+    }
+}
+
+internal val LocalExpandOriginVisibility = staticCompositionLocalOf<ExpandOriginVisibility?> { null }
+internal val LocalCurrentNavEntry = staticCompositionLocalOf<NavEntry?> { null }
+
+@Composable
+fun Modifier.expandOrigin(origin: ExpandOrigin): Modifier {
+    val visibility = LocalExpandOriginVisibility.current
+    val currentEntry = LocalCurrentNavEntry.current
     // The full rect, not the part left visible by the list viewport: a card scrolled half off
     // the screen would otherwise hand the page a shorter frame than the card it grows from.
-    onGloballyPositioned {
+    return onGloballyPositioned {
         origin.bounds = Rect(
             it.positionInRoot(),
             Size(it.size.width.toFloat(), it.size.height.toFloat()),
@@ -116,11 +161,15 @@ fun Modifier.expandOrigin(origin: ExpandOrigin): Modifier =
     }
         .drawWithContent {
             // Reading the key makes a refresh request invalidate this draw, which re-records
-            // the snapshot with the card as it looks now.
+            // the snapshot with the card as it looks now. Even when hidden from the list below,
+            // keep recording so the expanding/shrinking frame holds an up-to-date card snapshot.
             origin.refreshKey
             origin.layer.record { this@drawWithContent.drawContent() }
-            drawLayer(origin.layer)
+            if (visibility?.isHidden(origin, currentEntry) != true) {
+                drawLayer(origin.layer)
+            }
         }
+}
 
 sealed interface Route {
     data object Main : Route
@@ -140,6 +189,7 @@ sealed interface Route {
     data object History : Route
     data object Accounts : Route
     data object Settings : Route
+    data object PredictiveBackSettings : Route
     data object About : Route
     data object Changelog : Route
     data object Nearby : Route
@@ -160,10 +210,20 @@ class NavEntry(
     val id = nextId++
     val progress = Animatable(initialProgress)
     val fade = Animatable(initialFade)
+    val offset = Animatable(Offset.Zero, Offset.VectorConverter)
     var exiting by mutableStateOf(false)
 
     /** True while a back gesture is pulling this entry away, before it is actually popped. */
     var previewing by mutableStateOf(false)
+
+    /** Bumped on each predictive-back attempt so an interrupted cancel ease-back won't clear a newer gesture. */
+    var previewGeneration = 0
+
+    /** Whether an image viewer entry has a thumbnail origin to return into when flinging back. */
+    var hasReturnTarget = true
+
+    /** True while predictive back is running with follow-finger trajectory enabled. */
+    var followFlingActive by mutableStateOf(false)
 
     val expand: Boolean get() = route is Route.Detail && origin?.bounds != null
 
@@ -243,7 +303,7 @@ class NavState {
         }
     }
 
-    fun pop() {
+    fun pop(initialVelocity: Offset = Offset.Zero) {
         if (stack.size <= 1) return
         val entry = stack.last()
         if (entry.exiting) return
@@ -265,7 +325,13 @@ class NavState {
                 else -> RouteSlideMillis
             }
             val remaining = entry.progress.value.coerceIn(0f, 1f)
-            val millis = (baseMillis * remaining).toInt().coerceAtLeast(1)
+            val hasFlingOffset = entry.offset.value != Offset.Zero || initialVelocity != Offset.Zero
+            val baseRemaining = (baseMillis * remaining).roundToInt().coerceAtLeast(1)
+            val millis = when {
+                expand && hasFlingOffset -> maxOf(baseRemaining, MinCardFlingExitMillis)
+                entry.growsFromImage && hasFlingOffset -> maxOf(baseRemaining, MinImageFlingExitMillis)
+                else -> baseRemaining
+            }
             coroutineScope {
                 launch {
                     entry.progress.animateTo(
@@ -282,6 +348,26 @@ class NavState {
                             targetValue = 0f,
                             animationSpec = tween(millis, easing = LinearEasing),
                         )
+                    }
+                }
+                if (hasFlingOffset) {
+                    launch {
+                        if (entry.growsFromImage && !entry.hasReturnTarget) {
+                            entry.offset.animateTo(
+                                targetValue = entry.offset.value + initialVelocity * 0.14f,
+                                animationSpec = tween(millis, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
+                            )
+                        } else {
+                            entry.offset.animateTo(
+                                targetValue = Offset.Zero,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = 700f,
+                                    visibilityThreshold = Offset(0.5f, 0.5f),
+                                ),
+                                initialVelocity = initialVelocity,
+                            )
+                        }
                     }
                 }
             }

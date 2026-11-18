@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import android.webkit.CookieManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +42,7 @@ import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.glassBarContentTop
@@ -85,7 +87,6 @@ fun SettingsScreen(nav: NavState) {
     var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
     var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
-    var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
     var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
@@ -186,15 +187,12 @@ fun SettingsScreen(nav: NavState) {
                         },
                     )
                     PreferenceDivider()
-                    SwitchPreference(
-                        checked = predictiveBack,
-                        onCheckedChange = {
-                            predictiveBack = it
-                            App.settings.applyPredictiveBack(it)
-                        },
-                        title = "预测性返回手势",
-                        modifier = Modifier.testTag("settings_predictive_back"),
+                    ArrowPreference(
+                        title = "预测性返回手势设置",
+                        summary = if (App.settings.predictiveBack) "已开启" else "已关闭",
+                        modifier = Modifier.testTag("settings_predictive_back_entry"),
                         cardListPosition = CardListPosition.Middle,
+                        onClick = { nav.push(Route.PredictiveBackSettings) },
                     )
                     PreferenceDivider()
                     SwitchPreference(
@@ -887,6 +885,133 @@ private fun OptionPicker(
                 negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
                 positive = null,
             )
+        }
+    }
+}
+
+@Composable
+fun PredictiveBackSettingsScreen(nav: NavState) {
+    var predictiveBack by remember { mutableStateOf(App.settings.predictiveBack) }
+    var predictiveBackCardFling by remember { mutableStateOf(App.settings.predictiveBackCardFling) }
+    var predictiveBackImageFling by remember { mutableStateOf(App.settings.predictiveBackImageFling) }
+    var predictiveBackBlur by remember { mutableStateOf(App.settings.predictiveBackBlur) }
+    val blurEffects = blurEffectsEnabled()
+
+    val pageColor = pageContainerColor()
+    val backdrop = rememberLayerBackdrop()
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+
+    Box(Modifier.fillMaxSize().background(pageColor)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    top = glassBarContentTop(topBarHeight, 10.dp),
+                    end = 12.dp,
+                    bottom = 24.dp + navBottomPadding(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    Text(
+                        text = "配置侧滑返回时的页面跟手预览、轨迹甩出与背景模糊效果。",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(0.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        SwitchPreference(
+                            checked = predictiveBack,
+                            onCheckedChange = {
+                                predictiveBack = it
+                                App.settings.applyPredictiveBack(it)
+                            },
+                            title = "预测性返回手势",
+                            summary = "开启后返回时页面跟随手指往回收；关闭后直接返回",
+                            modifier = Modifier.testTag("settings_predictive_back"),
+                            cardListPosition = CardListPosition.Full,
+                        )
+                    }
+                }
+
+                item {
+                    AnimatedVisibility(visible = predictiveBack) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadius = CardDefaults.GroupCornerRadius,
+                            insideMargin = PaddingValues(0.dp),
+                            weight = CardDefaults.GroupWeight,
+                        ) {
+                            SwitchPreference(
+                                checked = predictiveBackCardFling,
+                                onCheckedChange = {
+                                    predictiveBackCardFling = it
+                                    App.settings.applyPredictiveBackCardFling(it)
+                                },
+                                title = "返回跟手轨迹",
+                                summary = "卡片详情预测性返回时跟随手指偏移，并顺着甩出方向回缩",
+                                modifier = Modifier.testTag("settings_predictive_back_card_fling"),
+                                cardListPosition = CardListPosition.Head,
+                            )
+                            PreferenceDivider()
+                            SwitchPreference(
+                                checked = predictiveBackImageFling,
+                                onCheckedChange = {
+                                    predictiveBackImageFling = it
+                                    App.settings.applyPredictiveBackImageFling(it)
+                                },
+                                title = "图片返回跟手轨迹",
+                                summary = "看图页预测性返回时跟随手指偏移，并顺着甩出方向缩回原图",
+                                modifier = Modifier.testTag("settings_predictive_back_image_fling"),
+                                cardListPosition = CardListPosition.Middle,
+                            )
+                            PreferenceDivider()
+                            SwitchPreference(
+                                checked = predictiveBackBlur,
+                                onCheckedChange = {
+                                    predictiveBackBlur = it
+                                    App.settings.applyPredictiveBackBlur(it)
+                                },
+                                title = "返回跟手背景模糊",
+                                summary = if (blurEffects) {
+                                    "走跟手轨迹返回时模糊上一级页面，随归位逐渐变清晰"
+                                } else {
+                                    "需先在设置中开启「模糊效果」"
+                                },
+                                modifier = Modifier.testTag("settings_predictive_back_blur"),
+                                cardListPosition = CardListPosition.Tail,
+                                enabled = blurEffects,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blurEffects) backdrop else null,
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                SmallTopAppBar(
+                    title = "预测性返回手势设置",
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    color = pageColor,
+                    showDivider = false,
+                    gradientGlass = blurEffects,
+                    navigationIcon = { BackIconButton { nav.pop() } },
+                )
+            }
         }
     }
 }

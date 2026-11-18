@@ -213,6 +213,24 @@ class Settings(context: Context) {
         private set
 
     /**
+     * 动态卡片返回跟手轨迹：卡片详情预测性返回时跟随手指偏移，并顺着甩出方向回缩。默认关。
+     */
+    var predictiveBackCardFling by mutableStateOf(sp.getBoolean("predictive_back_card_fling", false))
+        private set
+
+    /**
+     * 图片返回跟手轨迹：看图页预测性返回时跟随手指偏移，并顺着甩出方向缩回原图。默认关。
+     */
+    var predictiveBackImageFling by mutableStateOf(sp.getBoolean("predictive_back_image_fling", false))
+        private set
+
+    /**
+     * 返回跟手背景模糊：走跟手轨迹返回时将上一级页面高斯模糊，随页面归位逐渐变清晰。默认关。
+     */
+    var predictiveBackBlur by mutableStateOf(sp.getBoolean("predictive_back_blur", false))
+        private set
+
+    /**
      * 模糊效果：顶栏的渐变玻璃和页面里的玻璃面都要每帧采样背后的内容。
      * 关掉之后改为纯色，页面也不再录制 backdrop。默认开，和以前的外观一致。
      */
@@ -426,6 +444,21 @@ class Settings(context: Context) {
     fun applyPredictiveBack(value: Boolean) {
         predictiveBack = value
         sp.edit().putBoolean("predictive_back", value).apply()
+    }
+
+    fun applyPredictiveBackCardFling(value: Boolean) {
+        predictiveBackCardFling = value
+        sp.edit().putBoolean("predictive_back_card_fling", value).apply()
+    }
+
+    fun applyPredictiveBackImageFling(value: Boolean) {
+        predictiveBackImageFling = value
+        sp.edit().putBoolean("predictive_back_image_fling", value).apply()
+    }
+
+    fun applyPredictiveBackBlur(value: Boolean) {
+        predictiveBackBlur = value
+        sp.edit().putBoolean("predictive_back_blur", value).apply()
     }
 
     fun applyBlurEffects(value: Boolean) {

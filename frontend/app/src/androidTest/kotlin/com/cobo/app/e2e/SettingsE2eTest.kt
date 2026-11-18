@@ -30,7 +30,7 @@ class SettingsE2eTest : UiE2eTest() {
         listOf(
             "settings_dark",
             "settings_font",
-            "settings_predictive_back",
+            "settings_predictive_back_entry",
             "settings_feed_left_tab",
             "settings_feed_center_tab",
             "settings_feed_right_tab",
@@ -87,6 +87,8 @@ class SettingsE2eTest : UiE2eTest() {
     @Test
     fun predictiveBack_togglesAndRestores() {
         openSettings()
+        tapTag("settings_predictive_back_entry")
+        waitText("预测性返回手势设置")
         val before = App.settings.predictiveBack
         try {
             tapTag("settings_predictive_back")
@@ -95,6 +97,45 @@ class SettingsE2eTest : UiE2eTest() {
             waitUntil("预测性返回开关没有切回") { App.settings.predictiveBack == before }
         } finally {
             App.settings.applyPredictiveBack(before)
+        }
+    }
+
+    @Test
+    fun predictiveBackFlingToggles_toggleAndRestore() {
+        openSettings()
+        tapTag("settings_predictive_back_entry")
+        waitText("预测性返回手势设置")
+        val beforeMaster = App.settings.predictiveBack
+        val beforeCard = App.settings.predictiveBackCardFling
+        val beforeImage = App.settings.predictiveBackImageFling
+        val beforeBlur = App.settings.predictiveBackBlur
+        try {
+            if (!App.settings.predictiveBack) {
+                tapTag("settings_predictive_back")
+                waitUntil("预测性返回主开关没有开启") { App.settings.predictiveBack }
+            }
+            waitTag("settings_predictive_back_card_fling")
+            tapTag("settings_predictive_back_card_fling")
+            waitUntil("返回跟手轨迹开关没有切换") { App.settings.predictiveBackCardFling != beforeCard }
+            tapTag("settings_predictive_back_card_fling")
+            waitUntil("返回跟手轨迹开关没有切回") { App.settings.predictiveBackCardFling == beforeCard }
+
+            tapTag("settings_predictive_back_image_fling")
+            waitUntil("图片返回跟手轨迹开关没有切换") { App.settings.predictiveBackImageFling != beforeImage }
+            tapTag("settings_predictive_back_image_fling")
+            waitUntil("图片返回跟手轨迹开关没有切回") { App.settings.predictiveBackImageFling == beforeImage }
+
+            if (App.settings.blurEffects) {
+                tapTag("settings_predictive_back_blur")
+                waitUntil("返回跟手背景模糊开关没有切换") { App.settings.predictiveBackBlur != beforeBlur }
+                tapTag("settings_predictive_back_blur")
+                waitUntil("返回跟手背景模糊开关没有切回") { App.settings.predictiveBackBlur == beforeBlur }
+            }
+        } finally {
+            App.settings.applyPredictiveBack(beforeMaster)
+            App.settings.applyPredictiveBackCardFling(beforeCard)
+            App.settings.applyPredictiveBackImageFling(beforeImage)
+            App.settings.applyPredictiveBackBlur(beforeBlur)
         }
     }
 

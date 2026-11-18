@@ -366,6 +366,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val frame = remember { ViewerFrame() }
     // 这条曲线只在宿主自己驱动进场时才有；没有它（比如直接渲染）就当作已经落定。
     val progress: () -> Float = remember(transition) { transition?.progress ?: { 1f } }
+    val transitionOffset: () -> Offset = remember(transition) { transition?.offset ?: { Offset.Zero } }
 
     var chrome by remember { mutableStateOf(true) }
     var original by remember { mutableStateOf(false) }
@@ -381,7 +382,24 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val currentPic = pics.getOrNull(pagerState.currentPage)
 
     // 记下正在看的是哪一张：被它盖住的那枚缩略图角标要等这一页撤走再淡回来，别的缩略图不动。
-    SideEffect { origins.viewing = current }
+    val transitionExiting = transition?.exiting?.invoke() == true
+    SideEffect {
+        val host = frame.host
+        val live = if (host != null && !frame.zoomed) {
+            origins.boundsOf(current, host, density)?.also { frame.thumbs[current] = it }
+        } else {
+            null
+        }
+        val thumb = live ?: current.takeIf { !frame.zoomed }?.let { frame.thumbs[it] }
+        val aspect = frame.aspects[current] ?: thumb?.aspect
+        val w = frame.dismiss.boxSize.width.toFloat()
+        val h = frame.dismiss.boxSize.height.toFloat()
+        val effectiveAspect = aspect ?: thumb?.rect?.let { if (it.height > 0f) it.width / it.height else null }
+        val rest = if (w > 0f && h > 0f && effectiveAspect != null) restSize(w, h, effectiveAspect) else null
+        val hasThumb = thumb != null && rest != null && rest.height <= h + 0.5f
+        transition?.onHasReturnTarget?.invoke(hasThumb)
+        origins.viewing = if (transitionExiting && !hasThumb) null else current
+    }
     DisposableEffect(Unit) { onDispose { origins.viewing = null } }
 
     // Kept across page turns so the chrome does not flicker while the next sample lands.
@@ -461,9 +479,12 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                     canPage = urls.size > 1,
                     isPagerScrolling = { abs(pagerState.currentPageOffsetFraction) > 0.01f },
                     canStartDismiss = {
-                        transition?.exiting?.invoke() != true && progress() >= 0.98f
+                        transition?.exiting?.invoke() != true &&
+                            progress() >= 0.98f &&
+                            transitionOffset() == Offset.Zero
                     },
                     progress = progress,
+                    transitionOffset = transitionOffset,
                     origins = origins,
                     frame = frame,
                     chromeVisible = chrome && !frame.dismiss.dragging && !frame.dismiss.exiting,
@@ -690,6 +711,7 @@ private fun ZoomableImage(
     isPagerScrolling: () -> Boolean,
     canStartDismiss: () -> Boolean,
     progress: () -> Float,
+    transitionOffset: () -> Offset,
     origins: ImageOrigins,
     frame: ViewerFrame,
     chromeVisible: Boolean,
@@ -953,17 +975,24 @@ private fun ZoomableImage(
                         d.active -> applyDismissDrag(d)
                         else -> {
                             val p = progress()
-                            if (p >= 1f) {
+                            val off = transitionOffset()
+                            if (p >= 1f && off == Offset.Zero) {
                                 settle()
                             } else {
-                                val host = frame.host
-                                val liveThumb = if (host != null && !frame.zoomed) {
-                                    origins.boundsOf(url, host, density.density)?.also { frame.thumbs[url] = it }
+                                if (p >= 1f) {
+                                    settle()
                                 } else {
-                                    null
+                                    val host = frame.host
+                                    val liveThumb = if (host != null && !frame.zoomed) {
+                                        origins.boundsOf(url, host, density.density)?.also { frame.thumbs[url] = it }
+                                    } else {
+                                        null
+                                    }
+                                    val thumb = liveThumb ?: url.takeIf { !frame.zoomed }?.let { frame.thumbs[it] }
+                                    openFrame(p, thumb, frame.aspects[url] ?: thumb?.aspect)
                                 }
-                                val thumb = liveThumb ?: url.takeIf { !frame.zoomed }?.let { frame.thumbs[it] }
-                                openFrame(p, thumb, frame.aspects[url] ?: thumb?.aspect)
+                                translationX += off.x
+                                translationY += off.y
                             }
                         }
                     }

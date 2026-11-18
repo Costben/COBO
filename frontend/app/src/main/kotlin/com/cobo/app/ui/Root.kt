@@ -1,7 +1,9 @@
 package com.cobo.app.ui
 
 import android.os.Build
+import android.os.SystemClock
 import android.view.RoundedCorner
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.LinearEasing
@@ -32,11 +34,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -73,6 +77,7 @@ import com.cobo.app.screen.HistoryScreen
 import com.cobo.app.screen.ImageViewerScreen
 import com.cobo.app.screen.LoginScreen
 import com.cobo.app.screen.NearbyScreen
+import com.cobo.app.screen.PredictiveBackSettingsScreen
 import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
@@ -104,12 +109,49 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * How far a back gesture must pull before the page sits back on its card. A release from there
  * returns for good: the frame is already home, so springing the page open again reads as a bug.
  */
 private const val LandedProgress = 0.2f
+private const val DragFollowFactor = 0.65f
+private const val MaxPredictiveFlingSpeedDp = 1600f
+private val BackPageMaxBlurRadius = 28.dp
+private val BackPageBlurOffsetSpan = 160.dp
+
+private class PredictiveDragTracker {
+    private data class Sample(val timeMs: Long, val pos: Offset)
+
+    private var startTouch: Offset? = null
+    private val samples = ArrayDeque<Sample>(8)
+
+    fun record(event: BackEventCompat): Offset {
+        val touch = Offset(event.touchX, event.touchY)
+        // 部分设备或无触控回退首帧可能传 (0, 0)，等到首个有效坐标再锁定起点，避免首帧跳变。
+        if (touch == Offset.Zero && startTouch == null) return Offset.Zero
+        val start = startTouch ?: touch.also { startTouch = it }
+        val timeMs = if (event.frameTimeMillis > 0L) event.frameTimeMillis else SystemClock.uptimeMillis()
+        if (samples.size >= 8) samples.removeFirst()
+        samples.addLast(Sample(timeMs, touch))
+        return touch - start
+    }
+
+    fun velocityPxPerSec(maxSpeed: Float): Offset {
+        val newest = samples.lastOrNull() ?: return Offset.Zero
+        val nowMs = SystemClock.uptimeMillis()
+        // 手指停顿超过 90ms 后再松手时不附带甩出惯性；先校验时钟同源再比较差值。
+        if (abs(nowMs - newest.timeMs) < 5_000L && nowMs - newest.timeMs > 90L) return Offset.Zero
+        val windowStart = newest.timeMs - 100L
+        val oldest = samples.firstOrNull { it.timeMs >= windowStart && it !== newest } ?: samples.firstOrNull() ?: return Offset.Zero
+        val dtSec = (newest.timeMs - oldest.timeMs) / 1000f
+        if (dtSec <= 0.004f) return Offset.Zero
+        val vel = (newest.pos - oldest.pos) / dtSec
+        val speed = vel.getDistance()
+        return if (speed > maxSpeed && speed > 0f) vel * (maxSpeed / speed) else vel
+    }
+}
 
 @Composable
 fun CoboRoot() {
@@ -211,6 +253,7 @@ fun CoboRoot() {
     val blur = blurEffectsEnabled()
     // 缩略图把自己的屏幕位置登记在这里，看图页才能从被点的那张长出来、再缩回去。
     val imageOrigins = remember { ImageOrigins() }
+    val expandOriginVisibility = remember(nav) { ExpandOriginVisibility(nav.stack) }
 
     // 顶栏和底栏在各自的节点里钉密度（见 [PinnedBarDensity]），页面内容跟随系统「显示大小」。
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
@@ -218,6 +261,7 @@ fun CoboRoot() {
         LocalLinkHandler provides linkHandler,
         LocalImageSaver provides imageSaver,
         LocalImageOrigins provides imageOrigins,
+        LocalExpandOriginVisibility provides expandOriginVisibility,
     ) {
         BoxWithConstraints(
             Modifier
@@ -360,6 +404,7 @@ fun CoboPredictiveBackHandler(nav: NavState) {
         }
         return
     }
+    val densityPx = LocalDensity.current.density
     PredictiveBackHandler(enabled = hasPage) { events ->
         val entry = nav.stack.lastOrNull()
         if (entry == null || nav.stack.size <= 1) {
@@ -372,9 +417,17 @@ fun CoboPredictiveBackHandler(nav: NavState) {
             return@PredictiveBackHandler
         }
 
+        val trackFinger = when {
+            entry.growsFromImage -> App.settings.predictiveBackImageFling
+            entry.expand -> App.settings.predictiveBackCardFling
+            else -> false
+        }
+        val dragTracker = if (trackFinger) PredictiveDragTracker() else null
         var lastProgress = 1f
         var moved = false
+        val token = ++entry.previewGeneration
         entry.previewing = true
+        entry.followFlingActive = trackFinger
         // The snapshot was recorded when the card was tapped; re-record it now so the page
         // hands back the card as it looks today, not as it looked under the finger.
         entry.origin?.let { it.refreshKey++ }
@@ -385,19 +438,36 @@ fun CoboPredictiveBackHandler(nav: NavState) {
                 lastProgress = value
                 entry.progress.snapTo(value)
                 if (entry.expand) entry.fade.snapTo(value)
+                if (dragTracker != null) {
+                    entry.offset.snapTo(dragTracker.record(event) * DragFollowFactor)
+                }
+            }
+            val commitVelocity = if (dragTracker != null) {
+                dragTracker.velocityPxPerSec(MaxPredictiveFlingSpeedDp * densityPx) * DragFollowFactor
+            } else {
+                Offset.Zero
             }
             // Released past the threshold: finish from wherever the finger left the page.
-            if (lastProgress <= 0.02f && moved) {
+            if (lastProgress <= 0.02f && moved && entry.offset.value == Offset.Zero && commitVelocity == Offset.Zero) {
                 nav.completePredictivePop(entry)
             } else {
-                nav.pop()
+                nav.pop(initialVelocity = commitVelocity)
             }
         } catch (cancelled: CancellationException) {
             // The page has already collapsed onto its card: the system calls that a cancelled
             // gesture, but there is nothing left to preview, so it goes instead of springing
             // back open under the finger.
             if (lastProgress <= LandedProgress && moved) {
-                nav.completePredictivePop(entry)
+                val cancelVelocity = if (dragTracker != null) {
+                    dragTracker.velocityPxPerSec(MaxPredictiveFlingSpeedDp * densityPx) * DragFollowFactor
+                } else {
+                    Offset.Zero
+                }
+                if (entry.offset.value == Offset.Zero && cancelVelocity == Offset.Zero) {
+                    nav.completePredictivePop(entry)
+                } else {
+                    nav.pop(initialVelocity = cancelVelocity)
+                }
                 return@PredictiveBackHandler
             }
             // Released early: ease the page back under the finger.
@@ -411,8 +481,16 @@ fun CoboPredictiveBackHandler(nav: NavState) {
                             entry.fade.animateTo(1f, tween(180, easing = LinearEasing))
                         }
                     }
+                    if (entry.offset.value != Offset.Zero) {
+                        launch {
+                            entry.offset.animateTo(Offset.Zero, tween(180, easing = ExpandEasing))
+                        }
+                    }
                 }
-                entry.previewing = false
+                if (entry.previewGeneration == token && !entry.exiting) {
+                    entry.previewing = false
+                    entry.followFlingActive = false
+                }
             }
             throw cancelled
         }
@@ -443,6 +521,12 @@ private fun RouteLayer(
     // 11px at this device's 150px corner — so the four corners showed a crescent of window
     // background. SquircleShape traces the same silhouette.
     val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
+    val backBlurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        blurEffectsEnabled() &&
+        App.settings.predictiveBackBlur
+    val density = LocalDensity.current
+    val maxBlurRadiusPx = with(density) { BackPageMaxBlurRadius.toPx() }
+    val blurOffsetSpanPx = with(density) { BackPageBlurOffsetSpan.toPx() }
 
     val layer = Modifier
         .fillMaxSize()
@@ -472,6 +556,27 @@ private fun RouteLayer(
                     clip = false
                 }
             }
+            val blurRadiusPx = if (belowTop && backBlurSupported && top != null && top.followFlingActive) {
+                val p = top.progress.value.coerceIn(0f, 1f)
+                val baseFraction = if (top.expand) {
+                    ((p - LandedProgress) / (1f - LandedProgress)).coerceIn(0f, 1f)
+                } else {
+                    p
+                }
+                val offsetFraction = if (top.expand || top.hasReturnTarget) {
+                    (top.offset.value.getDistance() / blurOffsetSpanPx).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                maxBlurRadiusPx * maxOf(baseFraction, offsetFraction)
+            } else {
+                0f
+            }
+            renderEffect = if (blurRadiusPx > 0.5f) {
+                BlurEffect(blurRadiusPx, blurRadiusPx, TileMode.Clamp)
+            } else {
+                null
+            }
         }
 
     // The viewer reads its own entrance curve through this; everything else is moved by the host.
@@ -479,13 +584,18 @@ private fun RouteLayer(
         RouteTransition(
             progress = progress,
             exiting = { entry.exiting || entry.previewing },
+            offset = { entry.offset.value },
+            onHasReturnTarget = { entry.hasReturnTarget = it },
         )
     }
 
-    CompositionLocalProvider(LocalRouteTransition provides transition) {
+    CompositionLocalProvider(
+        LocalRouteTransition provides transition,
+        LocalCurrentNavEntry provides entry,
+    ) {
         Box(layer) {
             if (entry.expand) {
-                ExpandLayer(entry, screenCorner, progress, { entry.fade.value }) {
+                ExpandLayer(entry, screenCorner, progress, { entry.fade.value }, { entry.offset.value }) {
                     RouteContent(entry.route, nav)
                 }
             } else {
@@ -501,6 +611,7 @@ private fun ExpandLayer(
     screenCorner: Dp,
     progress: () -> Float,
     fade: () -> Float,
+    offset: () -> Offset = { Offset.Zero },
     content: @Composable () -> Unit,
 ) {
     val origin = entry.origin ?: return
@@ -531,8 +642,9 @@ private fun ExpandLayer(
             }
             .graphicsLayer {
                 val p = frameProgress(progress())
-                val left = lerp(bounds.left, 0f, p)
-                val top = lerp(bounds.top, 0f, p)
+                val dragOffset = offset()
+                val left = lerp(bounds.left, 0f, p) + dragOffset.x
+                val top = lerp(bounds.top, 0f, p) + dragOffset.y
                 val width = lerp(bounds.width, size.width, p)
                 val height = lerp(bounds.height, size.height, p)
                 val scale = if (size.width > 0f && width > 0f) width / size.width else 1f
@@ -548,7 +660,7 @@ private fun ExpandLayer(
                 ) / scale
                 // 和 RouteLayer 一样：路径裁剪只在页面真的在缩放时才需要。铺满屏幕之后
                 // 这一页整屏不透明，四角落在物理屏幕的圆角之外，裁与不裁看不出区别。
-                if (p < 1f) {
+                if (p < 1f || dragOffset != Offset.Zero) {
                     shape = ExpandShape(height / scale, radius)
                     clip = true
                 } else {
@@ -644,6 +756,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.History -> HistoryScreen(nav)
         Route.Accounts -> AccountsScreen(nav)
         Route.Settings -> SettingsScreen(nav)
+        Route.PredictiveBackSettings -> PredictiveBackSettingsScreen(nav)
         Route.About -> AboutScreen(nav)
         Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)
