@@ -354,7 +354,7 @@ object CoboIcons {
     val ProfileOutline: ImageVector by lazy { outline("ProfileOutline", ProfileShape) }
     val ProfileFilled: ImageVector by lazy { solid("ProfileFilled", ProfileShape) }
 
-    /** 超话前缀：实心菱形钻石。 */
+    /** 超话前缀：微博官方双环螺旋钻石轮廓。 */
     val SuperTopic: ImageVector by lazy {
         ImageVector.Builder(
             name = "SuperTopic",
@@ -364,47 +364,59 @@ object CoboIcons {
             viewportHeight = 24f,
         ).apply {
             path(
-                fill = SolidColor(Color.Black),
-                fillAlpha = 1f,
-                pathFillType = PathFillType.NonZero,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.65f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
             ) {
-                moveTo(12f, 2.6f)
-                lineTo(21.2f, 9.6f)
-                lineTo(12f, 21.4f)
-                lineTo(2.8f, 9.6f)
-                close()
+                moveTo(12.0f, 15.1f)
+                lineTo(6.7f, 9.8f)
+                lineTo(8.3f, 7.5f)
+                lineTo(15.7f, 7.5f)
+                lineTo(17.3f, 9.8f)
+                lineTo(9.8f, 17.3f)
+                lineTo(2.5f, 9.8f)
+                lineTo(6.4f, 4.3f)
+                lineTo(17.6f, 4.3f)
+                lineTo(21.5f, 9.8f)
+                lineTo(12.0f, 19.7f)
             }
         }.build()
     }
 
-    /** 视频前缀：圆角矩形挖出一个播放三角。 */
-    val VideoBadge: ImageVector by lazy {
+    /** 视频前缀：线性摄影机图标（圆角机身 + 右侧镜头锥）。 */
+    val VideoCamera: ImageVector by lazy {
         ImageVector.Builder(
-            name = "VideoBadge",
+            name = "VideoCamera",
             defaultWidth = 24.dp,
             defaultHeight = 24.dp,
             viewportWidth = 24f,
             viewportHeight = 24f,
         ).apply {
             path(
-                fill = SolidColor(Color.Black),
-                fillAlpha = 1f,
-                pathFillType = PathFillType.EvenOdd,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.65f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
             ) {
-                moveTo(8.4f, 5.2f)
-                horizontalLineTo(15.6f)
-                curveTo(17.9f, 5.2f, 19.6f, 6.9f, 19.6f, 9.2f)
-                verticalLineTo(14.8f)
-                curveTo(19.6f, 17.1f, 17.9f, 18.8f, 15.6f, 18.8f)
-                horizontalLineTo(8.4f)
-                curveTo(6.1f, 18.8f, 4.4f, 17.1f, 4.4f, 14.8f)
-                verticalLineTo(9.2f)
-                curveTo(4.4f, 6.9f, 6.1f, 5.2f, 8.4f, 5.2f)
+                // 机身圆角矩形 (2.5..15.0, 6.2..17.8, r=2.3)
+                moveTo(4.8f, 6.2f)
+                horizontalLineTo(12.7f)
+                curveTo(13.97f, 6.2f, 15.0f, 7.23f, 15.0f, 8.5f)
+                verticalLineTo(15.5f)
+                curveTo(15.0f, 16.77f, 13.97f, 17.8f, 12.7f, 17.8f)
+                horizontalLineTo(4.8f)
+                curveTo(3.53f, 17.8f, 2.5f, 16.77f, 2.5f, 15.5f)
+                verticalLineTo(8.5f)
+                curveTo(2.5f, 7.23f, 3.53f, 6.2f, 4.8f, 6.2f)
                 close()
-                moveTo(10.5f, 9.1f)
-                lineTo(15.3f, 12f)
-                lineTo(10.5f, 14.9f)
-                close()
+                // 右侧镜头梯形锥（接机身右边，不重复画竖线）
+                moveTo(15.0f, 10.2f)
+                lineTo(20.4f, 7.1f)
+                curveTo(21.05f, 6.72f, 21.5f, 7.12f, 21.5f, 7.9f)
+                verticalLineTo(16.1f)
+                curveTo(21.5f, 16.88f, 21.05f, 17.28f, 20.4f, 16.9f)
+                lineTo(15.0f, 13.8f)
             }
         }.build()
     }
