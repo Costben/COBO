@@ -450,17 +450,50 @@ data class Status(
             // type=11 + object_type=video，只认 type 会把视频当成纯文字。
             if (page != null && (page.str("type") == "video" || page.str("object_type") == "video")) {
                 val media = page.optJSONObject("media_info")
-                val url = media?.str("stream_url_hd")?.ifBlank { media.str("stream_url") }
+                val urlsObj = page.optJSONObject("urls")
+                val directUrl = media?.str("stream_url_hd")
+                    ?.ifBlank { media.str("stream_url") }
                     ?.ifBlank { media.str("mp4_720p_mp4") }
                     ?.ifBlank { media.str("mp4_hd_url") }
                     ?.ifBlank { media.str("mp4_sd_url") }
-                    ?: ""
+                    .orEmpty()
+                    .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
+                    .ifBlank { urlsObj?.str("mp4_720p_mp4").orEmpty() }
+                    .ifBlank { urlsObj?.str("mp4_hd_mp4").orEmpty() }
+                    .ifBlank { urlsObj?.str("mp4_ld_mp4").orEmpty() }
+                    .ifBlank { urlsObj?.str("hevc_mp4_hd").orEmpty() }
+                    .ifBlank { urlsObj?.str("stream_url_hd").orEmpty() }
+                    .ifBlank { urlsObj?.str("stream_url").orEmpty() }
+                val fallbackPageUrl = media?.str("h5_url").orEmpty()
+                    .ifBlank { page.str("page_url") }
+                    .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
+                    .ifBlank {
+                        page.str("object_id").takeIf { it.isNotBlank() }
+                            ?.let { "https://video.weibo.com/show?fid=$it" }
+                            .orEmpty()
+                    }
+                val resolvedUrl = directUrl.ifBlank {
+                    com.cobo.app.ui.unwrapSinaUrl(fallbackPageUrl) ?: fallbackPageUrl
+                }
                 val cover = page.optJSONObject("page_pic")?.str("url") ?: ""
                 video = VideoInfo(
-                    title = page.str("page_title"),
+                    title = page.str("page_title").ifBlank { page.str("content1") },
                     cover = cover.ifBlank { pics.firstOrNull()?.thumb ?: "" },
-                    url = url,
+                    url = resolvedUrl,
                 )
+            } else if (page != null && pics.isEmpty()) {
+                val pageUrlRaw = page.str("page_url")
+                    .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
+                val pageUrl = com.cobo.app.ui.unwrapSinaUrl(pageUrlRaw) ?: pageUrlRaw
+                val resolvedTarget = com.cobo.app.ui.resolveWeiboLink(pageUrl) ?: pageUrl
+                if (com.cobo.app.ui.isVideoLink(resolvedTarget)) {
+                    val cover = page.optJSONObject("page_pic")?.str("url") ?: ""
+                    video = VideoInfo(
+                        title = page.str("page_title").ifBlank { page.str("content1") },
+                        cover = cover,
+                        url = resolvedTarget,
+                    )
+                }
             }
 
             var bigPic: BigPicInfo? = null
@@ -518,6 +551,22 @@ data class Status(
             )
         }
     }
+}
+
+private fun firstPlaybackUrl(arr: JSONArray?): String {
+    if (arr == null) return ""
+    var fallback = ""
+    for (i in 0 until arr.length()) {
+        val play = arr.optJSONObject(i)?.optJSONObject("play_info") ?: continue
+        val url = play.str("url")
+        if (url.isBlank()) continue
+        if (fallback.isBlank()) fallback = url
+        val mime = play.str("mime")
+        if (mime.contains("mp4", ignoreCase = true) || url.contains(".mp4", ignoreCase = true)) {
+            return url
+        }
+    }
+    return fallback
 }
 
 data class EditVersion(

@@ -514,11 +514,13 @@ private fun BigPicCard(
                 onLongClick = { saver?.show(listOf(bigPic.url), 0, precise) },
             ),
     ) {
+        val origins = LocalImageOrigins.current
         AsyncImage(
             model = bigPic.url,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             onSuccess = { state ->
+                origins.putCacheKey(bigPic.url, state.result.memoryCacheKey)
                 val size = state.painter.intrinsicSize
                 if (size.width > 0f && size.height > 0f) {
                     ratio = (size.width / size.height).coerceIn(0.62f, 2.2f)
@@ -538,6 +540,7 @@ fun ImageGrid(
     val urls = pics.map { it.large }
     // 长按任意一张缩略图就能弹出「保存原图 / 一键保存原图」，菜单由根节点统一承载。
     val saver = LocalImageSaver.current
+    val origins = LocalImageOrigins.current
     if (pics.size == 1) {
         val pic = pics.first()
         val ratio = if (pic.width > 0 && pic.height > 0) {
@@ -565,6 +568,7 @@ fun ImageGrid(
                 model = pic.large,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onSuccess = { state -> origins.putCacheKey(urls[0], state.result.memoryCacheKey) },
                 modifier = Modifier.fillMaxSize(),
             )
             if (pic.isLive) LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
@@ -605,6 +609,7 @@ fun ImageGrid(
                                 model = shown,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
+                                onSuccess = { state -> origins.putCacheKey(urls[index], state.result.memoryCacheKey) },
                                 modifier = Modifier.fillMaxSize(),
                             )
                             if (pic.isLive) LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))

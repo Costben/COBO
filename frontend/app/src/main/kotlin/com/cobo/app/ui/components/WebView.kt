@@ -2,6 +2,8 @@ package com.cobo.app.ui.components
 
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -43,9 +45,11 @@ fun WeiboWebView(
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.mediaPlaybackRequiresUserGesture = false
             settings.userAgentString = Api.WEB_UA
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            webChromeClient = WebChromeClient()
             if (useSessionCookie) {
                 val cookies = App.repo.session?.cookies
                 if (!cookies.isNullOrEmpty()) {
@@ -60,6 +64,19 @@ fun WeiboWebView(
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): Boolean {
+                    val target = request.url?.toString().orEmpty()
+                    if (target.startsWith("http://", true) || target.startsWith("https://", true)) {
+                        return false
+                    }
+                    // 拦截跳端 scheme（intent://、iqiyi://、sinaweibo:// 等），防止 WebView 报 ERR_UNKNOWN_URL_SCHEME。
+                    extractIntentFallbackUrl(target)?.let { view.loadUrl(it) }
+                    return true
+                }
+
                 override fun onPageFinished(view: WebView, url: String?) {
                     currentOnBackAvailable(view.canGoBack())
                     currentOnPageFinished(url.orEmpty())
@@ -84,4 +101,14 @@ fun WeiboWebView(
             if (view.url != url) view.loadUrl(url)
         },
     )
+}
+
+internal fun extractIntentFallbackUrl(raw: String): String? {
+    if (!raw.startsWith("intent://", ignoreCase = true)) return null
+    val marker = "S.browser_fallback_url="
+    val at = raw.indexOf(marker)
+    if (at < 0) return null
+    val encoded = raw.substring(at + marker.length).substringBefore(';')
+    val decoded = runCatching { java.net.URLDecoder.decode(encoded, "UTF-8") }.getOrDefault(encoded)
+    return decoded.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
 }

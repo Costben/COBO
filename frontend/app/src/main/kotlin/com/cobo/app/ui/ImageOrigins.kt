@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.memory.MemoryCache
 
 /**
  * A thumbnail as the viewer sees it: where it sits in the viewer's own coordinates, how round its
@@ -35,6 +36,7 @@ internal class ThumbSlot {
     var cornerRadius: Dp = 0.dp
     var aspect: Float? = null
     var model: String? = null
+    var cacheKey: MemoryCache.Key? = null
 }
 
 /** 缩略图左下角实况标记的直径。 */
@@ -48,6 +50,8 @@ internal val LiveBadgeSize = 17.dp
 @Stable
 class ImageOrigins {
     private val slots = HashMap<String, ThumbSlot>()
+    private val cacheKeys = HashMap<String, MemoryCache.Key>()
+    private var viewingOwner: Any? = null
 
     /**
      * 看图页此刻正在显示的那张图，没有打开看图页时为空。
@@ -57,8 +61,28 @@ class ImageOrigins {
      */
     var viewing by mutableStateOf<String?>(null)
 
+    fun beginViewing(owner: Any, url: String?) {
+        viewingOwner = owner
+        viewing = url
+    }
+
+    fun endViewing(owner: Any) {
+        if (viewingOwner === owner) {
+            viewingOwner = null
+            viewing = null
+        }
+    }
+
     internal fun put(url: String, slot: ThumbSlot) {
         slots[url] = slot
+        cacheKeys[url]?.let { if (slot.cacheKey == null) slot.cacheKey = it }
+    }
+
+    internal fun putCacheKey(url: String, key: MemoryCache.Key?) {
+        if (key != null) {
+            cacheKeys[url] = key
+            slots[url]?.cacheKey = key
+        }
     }
 
     internal fun remove(url: String, slot: ThumbSlot) {
@@ -67,6 +91,9 @@ class ImageOrigins {
 
     /** The address the feed drew for [url], so the viewer can reuse that decoded image. */
     internal fun modelOf(url: String): String? = slots[url]?.model
+
+    /** Memory cache key of the decoded thumbnail for [url], for synchronous first-frame painting. */
+    internal fun cacheKeyOf(url: String): MemoryCache.Key? = slots[url]?.cacheKey ?: cacheKeys[url]
 
     /** Read live, so a closing viewer shrinks into where the thumbnail is now. */
     internal fun boundsOf(url: String, host: LayoutCoordinates, density: Float): ThumbBounds? {

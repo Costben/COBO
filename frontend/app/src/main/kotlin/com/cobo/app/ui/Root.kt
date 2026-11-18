@@ -159,6 +159,7 @@ fun CoboRoot() {
                     Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
                 } else Route.Vote(voteId))
                 isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
+                isVideoLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "视频"))
                 statusId != null -> nav.push(Route.Detail(statusId, "", readOnly))
                 uid != null -> nav.push(Route.Profile(uid))
                 // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
@@ -171,7 +172,8 @@ fun CoboRoot() {
                     }
                 }
                 isWeiboShortLink(url) -> scope.launch {
-                    val resolved = App.repo.resolveShortUrl(url)
+                    val rawResolved = App.repo.resolveShortUrl(url)
+                    val resolved = unwrapSinaUrl(rawResolved) ?: rawResolved
                     val vid = weiboVoteId(resolved)
                     val resolvedTopicId = superTopicId(resolved)
                     if (resolvedTopicId != null) {
@@ -188,6 +190,8 @@ fun CoboRoot() {
                             nav.push(Route.Detail(sid, "", readOnly))
                         } else if (resolvedTopicQuery != null) {
                             nav.push(Route.TopicFeed(resolvedTopicQuery))
+                        } else if (isVideoLink(resolved)) {
+                            nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "视频"))
                         } else {
                             resolveWeiboLink(resolved)?.let { nav.push(Route.Web(it, "网页")) }
                         }

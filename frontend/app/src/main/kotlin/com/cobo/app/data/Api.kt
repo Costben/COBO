@@ -185,15 +185,42 @@ object Api {
 
     suspend fun resolveRedirect(url: String, cookie: String?): String = withContext(Dispatchers.IO) {
         val noRedirectClient = client.newBuilder().followRedirects(false).build()
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", WEB_UA)
-            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
-            .get()
-            .build()
-        noRedirectClient.newCall(request).execute().use { response ->
-            response.header("Location") ?: url
+        var current = com.cobo.app.ui.unwrapSinaUrl(url) ?: url
+        repeat(6) {
+            if (!current.startsWith("http://", ignoreCase = true) &&
+                !current.startsWith("https://", ignoreCase = true)
+            ) {
+                return@withContext current
+            }
+            val next = runCatching {
+                val request = Request.Builder()
+                    .url(current)
+                    .header("User-Agent", WEB_UA)
+                    .apply {
+                        if (!cookie.isNullOrBlank() && CookieVault.isWeibo(current.toHttpUrl().host)) {
+                            header("Cookie", cookie)
+                        }
+                    }
+                    .get()
+                    .build()
+                noRedirectClient.newCall(request).execute().use { response ->
+                    val location = response.header("Location")?.trim().orEmpty()
+                    if (location.isEmpty()) return@use null
+                    val resolvedLocation = if (location.startsWith("http://", true) ||
+                        location.startsWith("https://", true) ||
+                        location.contains("://")
+                    ) {
+                        location
+                    } else {
+                        response.request.url.resolve(location)?.toString() ?: location
+                    }
+                    com.cobo.app.ui.unwrapSinaUrl(resolvedLocation) ?: resolvedLocation
+                }
+            }.getOrNull() ?: return@withContext current
+            if (next == current) return@withContext current
+            current = next
         }
+        current
     }
 
     suspend fun postVote(

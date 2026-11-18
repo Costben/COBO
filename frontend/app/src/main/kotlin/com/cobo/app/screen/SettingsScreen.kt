@@ -38,6 +38,7 @@ import com.cobo.app.data.BottomLeftAction
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
+import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
@@ -107,6 +108,7 @@ fun SettingsScreen(nav: NavState) {
     var pickFeedRight by remember { mutableStateOf(false) }
     var pickSearchPanelAnimation by remember { mutableStateOf(false) }
     var pickBottomLeftAction by remember { mutableStateOf(false) }
+    var pickImageBrowseQuality by remember { mutableStateOf(false) }
     var pickHotBoards by remember { mutableStateOf(false) }
 
     // 关注分组是账号里的数据：只在真的要选栏位内容时才去网页版拉一次，拉不到就只列内置流。
@@ -221,6 +223,14 @@ fun SettingsScreen(nav: NavState) {
                         summary = App.settings.bottomLeftAction.label,
                         cardListPosition = CardListPosition.Middle,
                         onClick = { pickBottomLeftAction = true },
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "浏览图片",
+                        modifier = Modifier.testTag("settings_image_browse_quality"),
+                        summary = App.settings.imageBrowseQuality.label,
+                        cardListPosition = CardListPosition.Middle,
+                        onClick = { pickImageBrowseQuality = true },
                     )
                     PreferenceDivider()
                     SwitchPreference(
@@ -647,6 +657,22 @@ fun SettingsScreen(nav: NavState) {
                 val picked = BottomLeftAction.fromKey(key)
                 App.settings.applyBottomLeftAction(picked)
                 pickBottomLeftAction = false
+            },
+        )
+    }
+
+    if (pickImageBrowseQuality) {
+        OptionPicker(
+            title = "浏览图片",
+            options = ImageBrowseQuality.entries.map { it.key to it.label },
+            selectedKey = App.settings.imageBrowseQuality.key,
+            tagPrefix = "image_browse_quality",
+            groupKey = "image-browse-quality",
+            onDismiss = { pickImageBrowseQuality = false },
+            onPick = { key ->
+                val picked = ImageBrowseQuality.fromKey(key)
+                App.settings.applyImageBrowseQuality(picked)
+                pickImageBrowseQuality = false
             },
         )
     }

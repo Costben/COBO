@@ -95,6 +95,19 @@ enum class SearchPanelAnimation(val key: String, val label: String) {
     }
 }
 
+/** 看图页默认加载画质。 */
+enum class ImageBrowseQuality(val key: String, val label: String) {
+    Default("default", "默认"),
+    Original("original", "原图"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): ImageBrowseQuality {
+            return entries.firstOrNull { it.key == key } ?: Default
+        }
+    }
+}
+
 /** 底栏左下角融合球按钮的功能。 */
 enum class BottomLeftAction(val key: String, val label: String) {
     Refresh("refresh", "回到顶部刷新"),
@@ -262,6 +275,12 @@ class Settings(context: Context) {
     /** 底栏左下角融合球按钮的作用：回到顶部刷新 / 搜索 / 打开收藏夹。 */
     var bottomLeftAction by mutableStateOf(
         BottomLeftAction.fromKey(sp.getString("bottom_left_action", null))
+    )
+        private set
+
+    /** 看图页默认加载画质：默认（适配屏幕尺寸） / 原图。 */
+    var imageBrowseQuality by mutableStateOf(
+        ImageBrowseQuality.fromKey(sp.getString("image_browse_quality", null))
     )
         private set
 
@@ -494,6 +513,11 @@ class Settings(context: Context) {
     fun applyBottomLeftAction(value: BottomLeftAction) {
         bottomLeftAction = value
         sp.edit().putString("bottom_left_action", value.key).apply()
+    }
+
+    fun applyImageBrowseQuality(value: ImageBrowseQuality) {
+        imageBrowseQuality = value
+        sp.edit().putString("image_browse_quality", value.key).apply()
     }
 
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */

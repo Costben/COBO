@@ -158,6 +158,45 @@ fun isImageLink(raw: String): Boolean {
         path.endsWith(".gif") || path.endsWith(".webp")
 }
 
+private val ExternalVideoHosts = listOf(
+    "iqiyi.com",
+    "v.qq.com",
+    "bilibili.com",
+    "b23.tv",
+    "youku.com",
+    "mgtv.com",
+    "ixigua.com",
+    "miaopai.com",
+    "pearvideo.com",
+    "acfun.cn",
+    "le.com",
+    "tv.sohu.com",
+)
+
+/**
+ * 判断链接是否为视频直链、微博视频页或主流第三方视频官链（爱奇艺、B站、腾讯视频、优酷等）。
+ * 命中后交给内置视频解析/播放页处理，避免在普通 WebView 里跳端失败或无法下载。
+ */
+fun isVideoLink(raw: String): Boolean {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return false
+    val lower = trimmed.lowercase()
+    if (lower.startsWith("sinaweibo://video") || lower.startsWith("intent://gotovideo")) return true
+    val path = lower.substringBefore('?').substringBefore('#')
+    if (path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") ||
+        path.endsWith(".webm") || path.endsWith(".m3u8")
+    ) {
+        return true
+    }
+    val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return false
+    val host = uri.host?.lowercase() ?: return false
+    val uriPath = uri.rawPath.orEmpty().lowercase()
+    if (host == "video.weibo.com" || host == "h5.video.weibo.com") return true
+    if ((host == "weibo.com" || host == "www.weibo.com") && uriPath.startsWith("/tv/")) return true
+    if (host == "m.weibo.cn" && (uriPath.startsWith("/s/video/") || uriPath.startsWith("/z/video/"))) return true
+    return ExternalVideoHosts.any { domain -> host == domain || host.endsWith(".$domain") }
+}
+
 /**
  * Extracts the status id from a link that points at a single 微博, so "全文" and
  * shared status links open the in-app detail page instead of a WebView.

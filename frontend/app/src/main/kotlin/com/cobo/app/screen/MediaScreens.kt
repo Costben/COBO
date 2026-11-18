@@ -1,12 +1,13 @@
 package com.cobo.app.screen
 
 import android.Manifest
-import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect as AndroidRect
 import android.media.AudioManager
 import android.os.Build
 import android.os.Environment
@@ -14,11 +15,22 @@ import java.io.File
 import java.security.MessageDigest
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
+import android.view.View
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -27,8 +39,10 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,11 +60,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.CubicBezierEasing
@@ -63,6 +79,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -72,6 +90,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,7 +113,10 @@ import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
@@ -110,7 +132,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
@@ -125,14 +153,27 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.cobo.app.ui.findActivity
+import com.cobo.app.ui.isDarkTheme
 import coil3.BitmapImage
 import coil3.compose.AsyncImage
+import coil3.decode.DataSource
 import coil3.imageLoader
+import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
+import coil3.request.maxBitmapSize
 import coil3.size.Size
+import com.cobo.app.App
+import com.cobo.app.data.Api
+import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.Pic
 import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.ExpandEasing
@@ -144,10 +185,17 @@ import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.ThumbBounds
 import com.cobo.app.ui.components.SaveImagesMenu
+import com.cobo.app.ui.components.extractIntentFallbackUrl
 import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
+import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
+import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.GlassContainer
+import io.github.suqi8.coui.kmp.basic.ListPopupColumn
+import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
+import io.github.suqi8.coui.kmp.basic.Slider
 import io.github.suqi8.coui.kmp.basic.couiGlassSurface
 import io.github.suqi8.coui.kmp.basic.rememberGlassHighlight
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -158,22 +206,30 @@ import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
+import io.github.suqi8.coui.kmp.theme.LocalContentColor
+import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.CouiHapticEffect
 import io.github.suqi8.coui.kmp.utils.rememberCouiHaptic
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Download
+import io.github.suqi8.coui.kmp.icon.extended.Pause
+import io.github.suqi8.coui.kmp.icon.extended.Play
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 private const val MaxZoom = 5f
 private const val DoubleTapZoom = 2.5f
@@ -282,7 +338,7 @@ private suspend fun topBandIsLight(
 @Composable
 private fun ViewerSystemBars(visible: Boolean) {
     val context = LocalContext.current
-    val systemDark = isSystemInDarkTheme()
+    val darkTheme = isDarkTheme()
     val window = remember(context) { context.findActivity()?.window }
     val controller = remember(window) {
         window?.let { WindowCompat.getInsetsController(it, it.decorView) }
@@ -300,11 +356,11 @@ private fun ViewerSystemBars(visible: Boolean) {
             controller.hide(WindowInsetsCompat.Type.statusBars())
         }
     }
-    DisposableEffect(controller, systemDark) {
+    DisposableEffect(controller, darkTheme) {
         onDispose {
             // Hand the bar back exactly as the activity's edge-to-edge style would have it.
             controller?.let {
-                it.isAppearanceLightStatusBars = !systemDark
+                it.isAppearanceLightStatusBars = !darkTheme
                 it.show(WindowInsetsCompat.Type.statusBars())
             }
         }
@@ -364,12 +420,20 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val origins = LocalImageOrigins.current
     val density = LocalDensity.current.density
     val frame = remember { ViewerFrame() }
+    remember(pics) {
+        pics.forEach { pic ->
+            if (pic.width > 0 && pic.height > 0 && pic.large !in frame.aspects) {
+                frame.aspects[pic.large] = pic.width.toFloat() / pic.height
+            }
+        }
+        true
+    }
     // 这条曲线只在宿主自己驱动进场时才有；没有它（比如直接渲染）就当作已经落定。
     val progress: () -> Float = remember(transition) { transition?.progress ?: { 1f } }
     val transitionOffset: () -> Offset = remember(transition) { transition?.offset ?: { Offset.Zero } }
 
     var chrome by remember { mutableStateOf(true) }
-    var original by remember { mutableStateOf(false) }
+    var original by remember { mutableStateOf(App.settings.imageBrowseQuality == ImageBrowseQuality.Original) }
     var menu by remember { mutableStateOf(false) }
     val precise = rememberPreciseClickState()
     // 保存原图 / 一键保存原图与信息流共用同一套队列，HUD 和权限也一起管。
@@ -380,6 +444,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val current = urls.getOrNull(pagerState.currentPage).orEmpty()
 
     val currentPic = pics.getOrNull(pagerState.currentPage)
+    val viewerOwner = remember { Any() }
 
     // 记下正在看的是哪一张：被它盖住的那枚缩略图角标要等这一页撤走再淡回来，别的缩略图不动。
     val transitionExiting = transition?.exiting?.invoke() == true
@@ -398,9 +463,9 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
         val rest = if (w > 0f && h > 0f && effectiveAspect != null) restSize(w, h, effectiveAspect) else null
         val hasThumb = thumb != null && rest != null && rest.height <= h + 0.5f
         transition?.onHasReturnTarget?.invoke(hasThumb)
-        origins.viewing = if (transitionExiting && !hasThumb) null else current
+        origins.beginViewing(viewerOwner, if (transitionExiting && !hasThumb) null else current)
     }
-    DisposableEffect(Unit) { onDispose { origins.viewing = null } }
+    DisposableEffect(viewerOwner) { onDispose { origins.endViewing(viewerOwner) } }
 
     // Kept across page turns so the chrome does not flicker while the next sample lands.
     var light by remember { mutableStateOf(false) }
@@ -473,7 +538,8 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                     url = urls[page],
                     live = pics[page].live,
                     thumbModel = origins.modelOf(urls[page]),
-                    original = original && page == pagerState.currentPage,
+                    thumbCacheKey = origins.cacheKeyOf(urls[page]),
+                    original = original,
                     isCurrent = pagerState.currentPage == page,
                     isSettledElsewhere = pagerState.settledPage != page,
                     canPage = urls.size > 1,
@@ -699,11 +765,33 @@ private suspend fun cacheMedia(context: Context, url: String, dest: File): File?
         }.getOrNull()
     }
 
+private suspend fun cacheImageFile(context: Context, url: String): File? = withContext(Dispatchers.IO) {
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        return@withContext File(url).takeIf { it.exists() && it.length() > 0L }
+    }
+    val dest = mediaCacheFile(context, url, "img")
+    if (dest.length() > 0L) return@withContext dest
+    val fromDiskCache = runCatching {
+        context.imageLoader.diskCache?.openSnapshot(url)?.use { snapshot ->
+            val src = snapshot.data.toFile()
+            if (src.length() > 0L) {
+                val tmp = File(dest.parentFile, dest.name + ".part")
+                src.copyTo(tmp, overwrite = true)
+                if (!tmp.renameTo(dest)) tmp.copyTo(dest, overwrite = true).also { tmp.delete() }
+                dest
+            } else null
+        }
+    }.getOrNull()
+    if (fromDiskCache != null) return@withContext fromDiskCache
+    cacheMedia(context, url, dest)
+}
+
 @Composable
 private fun ZoomableImage(
     url: String,
     live: String,
     thumbModel: String?,
+    thumbCacheKey: MemoryCache.Key?,
     original: Boolean,
     isCurrent: Boolean,
     isSettledElsewhere: Boolean,
@@ -736,7 +824,23 @@ private fun ZoomableImage(
     // that went under the resting size.
     val glide = remember { mutableStateOf<Job?>(null) }
     val remote = url.startsWith("http://") || url.startsWith("https://")
+    val targetUrl = if (original) originalSize(url) else url
     var loaded by remember(url) { mutableStateOf(false) }
+    // 保留上一张已解码的 Painter 与缓存键，切原图或重解码时垫在下面，不出现空白闪烁。
+    var settledPainter by remember(url) { mutableStateOf<Painter?>(null) }
+    var lastCacheKey by remember(url) { mutableStateOf<MemoryCache.Key?>(null) }
+    // 首帧同步从 Coil 内存缓存取缩略图 Bitmap，避免 AsyncImage 等布局测量导致 1~2 帧白/黑闪。
+    val syncThumbPainter = remember(url, thumbCacheKey, context) {
+        thumbCacheKey?.let { key ->
+            val image = context.imageLoader.memoryCache?.get(key)?.image
+            if (image is BitmapImage) BitmapPainter(image.bitmap.asImageBitmap()) else null
+        }
+    }
+    var localImageFile by remember(url, targetUrl) {
+        val pre = if (!remote) File(targetUrl).takeIf { it.exists() && it.length() > 0L }
+        else mediaCacheFile(context, targetUrl, "img").takeIf { it.length() > 0L }
+        mutableStateOf<File?>(pre)
+    }
     // 实况只在手指按住时播，松手回到静图。放大之后手势归缩放层，不再触发播放。
     var holding by remember { mutableStateOf(false) }
     // 第一帧出来之前不盖静图：PlayerView 默认是黑底，地址播不出来时整页会变成黑屏。
@@ -744,10 +848,10 @@ private fun ZoomableImage(
     var liveFailed by remember(live) { mutableStateOf(false) }
     // 打开这一页就把静图和实况视频一起下进缓存；播的时候优先用本地文件。
     var liveFile by remember(live) { mutableStateOf<File?>(null) }
-    LaunchedEffect(url, live, isCurrent) {
+    LaunchedEffect(url, targetUrl, live, isCurrent) {
         if (!isCurrent) return@LaunchedEffect
-        if (remote) {
-            launch { cacheMedia(context, url, mediaCacheFile(context, url, "img")) }
+        launch {
+            localImageFile = cacheImageFile(context, targetUrl)
         }
         if (live.isNotBlank()) {
             liveFile = cacheMedia(context, live, mediaCacheFile(context, live, "mov"))
@@ -798,7 +902,8 @@ private fun ZoomableImage(
         }
     }
     // 整图自己的不透明度，让它盖着缩略图淡进来，而不是硬切一下。
-    var reveal by remember(url) { mutableFloatStateOf(0f) }
+    var reveal by remember(url) { mutableFloatStateOf(if (syncThumbPainter != null) 0f else 1f) }
+    var skipNextFade by remember(url) { mutableStateOf(false) }
 
     // A long strip is decoded at the screen's width rather than fitted to it, so zooming in shows
     // detail instead of a stretched handful of pixels.
@@ -809,15 +914,17 @@ private fun ZoomableImage(
         coil3.size.Size(width, minOf(height, (MaxDecodePixels / width).coerceAtLeast(1)))
     }
 
-    val model: Any = remember(url, original, context, decodeSize) {
-        val targetUrl = if (original) originalSize(url) else url
+    val model: Any = remember(url, targetUrl, original, context, decodeSize) {
         ImageRequest.Builder(context)
             .data(targetUrl.takeIf { remote } ?: targetUrl)
             .apply {
+                (lastCacheKey ?: thumbCacheKey)?.let { placeholderMemoryCacheKey(it) }
                 if (original) {
                     size(coil3.size.Size.ORIGINAL)
+                    maxBitmapSize(coil3.size.Size(8192, 8192))
                 } else if (decodeSize != null) {
                     size(decodeSize)
+                    maxBitmapSize(coil3.size.Size(decodeSize.width, 8192))
                 }
             }
             .build()
@@ -951,8 +1058,13 @@ private fun ZoomableImage(
     LaunchedEffect(isCurrent) {
         if (isCurrent) snapshotFlow { scale > 1f + ZoomEpsilon }.collect { frame.zoomed = it }
     }
-    LaunchedEffect(loaded) {
-        if (loaded) animate(0f, 1f, animationSpec = tween(LoadFadeMillis)) { value, _ -> reveal = value }
+    LaunchedEffect(loaded, skipNextFade) {
+        if (!loaded) return@LaunchedEffect
+        if (skipNextFade || reveal >= 1f) {
+            reveal = 1f
+        } else {
+            animate(0f, 1f, animationSpec = tween(LoadFadeMillis)) { value, _ -> reveal = value }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -1022,11 +1134,28 @@ private fun ZoomableImage(
                     Modifier.fillMaxSize()
                 }
                 Box(Modifier.align(Alignment.Center).then(resting)) {
-                    // 信息流里那张图先顶上：从缩略图长出来的那几帧里，看到的必须是这张照片本身，
-                    // 而不是一块空框。整图到了再盖上去淡入，缩略图就一直垫在下面。
-                    if (thumbModel != null && (!loaded || reveal < 1f)) {
-                        AsyncImage(
-                            model = thumbModel,
+                    // 信息流里那张图先顶上：优先同步画出内存缓存里的缩略图，首帧零空白；
+                    // 整图到了再盖上去，切原图时也用 settledPainter 垫底，不出现闪烁。
+                    if (!loaded || reveal < 1f) {
+                        if (syncThumbPainter != null) {
+                            Image(
+                                painter = syncThumbPainter,
+                                contentDescription = null,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else if (thumbModel != null) {
+                            AsyncImage(
+                                model = thumbModel,
+                                contentDescription = null,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    settledPainter?.let { prev ->
+                        Image(
+                            painter = prev,
                             contentDescription = null,
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize(),
@@ -1038,13 +1167,34 @@ private fun ZoomableImage(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize().graphicsLayer { alpha = reveal },
                         onSuccess = { state ->
+                            if (!loaded && (state.result.dataSource == DataSource.MEMORY_CACHE ||
+                                    state.result.dataSource == DataSource.MEMORY)) {
+                                skipNextFade = true
+                            }
+                            settledPainter = state.painter
+                            lastCacheKey = state.result.memoryCacheKey
                             loaded = true
                             val picture = state.painter.intrinsicSize
-                            if (picture.width > 0f && picture.height > 0f) {
+                            if (picture.width > 0f && picture.height > 0f && url !in frame.aspects) {
                                 frame.aspects[url] = picture.width / picture.height
                             }
                         },
                     )
+                    val file = localImageFile
+                    if (file != null && box != IntSize.Zero) {
+                        TiledLongImageOverlay(
+                            file = file,
+                            original = original,
+                            screenWidthPx = screenWidthPx,
+                            box = box,
+                            scale = scale,
+                            offset = offset,
+                            rest = rest,
+                            onAspect = { aspect ->
+                                if (url !in frame.aspects) frame.aspects[url] = aspect
+                            },
+                        )
+                    }
                 }
             }
 
@@ -1256,6 +1406,176 @@ private fun ZoomableImage(
                     }
                 },
         )
+    }
+}
+
+private const val RegionTilePx = 2048
+private const val MaxCachedRegionTiles = 16
+
+private data class TileKey(val col: Int, val row: Int, val sampleSize: Int)
+
+/**
+ * 超过 GPU 单张纹理上限（4096px）的超长图 / 超大图分块渲染层：
+ * 用 [BitmapRegionDecoder] 只把当前可视区域附近的 2048px 切片按原图或屏幕宽度解码出来，
+ * 既不会受 Coil 默认 4096 上限压缩变糊，也不会爆硬件加速纹理尺寸或内存。
+ */
+@Composable
+private fun TiledLongImageOverlay(
+    file: File,
+    original: Boolean,
+    screenWidthPx: Int,
+    box: IntSize,
+    scale: Float,
+    offset: Offset,
+    rest: ComposeSize,
+    onAspect: (Float) -> Unit,
+) {
+    var bounds by remember(file) { mutableStateOf<Pair<Int, Int>?>(null) }
+    LaunchedEffect(file) {
+        val measured = withContext(Dispatchers.IO) {
+            runCatching {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+                if (opts.outWidth > 0 && opts.outHeight > 0) opts.outWidth to opts.outHeight else null
+            }.getOrNull()
+        }
+        bounds = measured
+        if (measured != null) {
+            onAspect(measured.first.toFloat() / measured.second.toFloat())
+        }
+    }
+
+    val (imgW, imgH) = bounds ?: return
+    val isLong = imgW.toFloat() / imgH < LongImageAspect
+    val needsTiling = (imgH > 4096 || imgW > 4096) && (original || isLong)
+    if (!needsTiling) return
+
+    val sampleSize = remember(imgW, original, screenWidthPx) {
+        if (original) {
+            1
+        } else {
+            var s = 1
+            val targetW = screenWidthPx.coerceAtLeast(1)
+            while (imgW / (s * 2) >= targetW) s *= 2
+            s
+        }
+    }
+
+    val decoderHolder = remember(file) { arrayOfNulls<BitmapRegionDecoder>(1) }
+    var decoderReady by remember(file) { mutableStateOf(false) }
+    val decoderMutex = remember(file) { Mutex() }
+    val tiles = remember(file, sampleSize) { mutableStateMapOf<TileKey, androidx.compose.ui.graphics.ImageBitmap>() }
+    val lruOrder = remember(file, sampleSize) { ArrayList<TileKey>() }
+
+    DisposableEffect(file) {
+        onDispose {
+            decoderHolder[0]?.recycle()
+            decoderHolder[0] = null
+        }
+    }
+
+    LaunchedEffect(file) {
+        val dec = withContext(Dispatchers.IO) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    file.inputStream().use { BitmapRegionDecoder.newInstance(it) }
+                } else {
+                    @Suppress("DEPRECATION")
+                    file.inputStream().use { BitmapRegionDecoder.newInstance(it, false) }
+                }
+            }.getOrNull()
+        }
+        decoderHolder[0] = dec
+        decoderReady = dec != null
+    }
+
+    if (!decoderReady || rest.width <= 0f || rest.height <= 0f) return
+
+    val cols = (imgW + RegionTilePx - 1) / RegionTilePx
+    val rows = (imgH + RegionTilePx - 1) / RegionTilePx
+    val visLeft = (0f - box.width / 2f - offset.x) / scale + rest.width / 2f
+    val visRight = (box.width - box.width / 2f - offset.x) / scale + rest.width / 2f
+    val visTop = (0f - box.height / 2f - offset.y) / scale + rest.height / 2f
+    val visBottom = (box.height - box.height / 2f - offset.y) / scale + rest.height / 2f
+
+    val srcLeft = (visLeft / rest.width * imgW).toInt().coerceIn(0, imgW)
+    val srcRight = (visRight / rest.width * imgW).toInt().coerceIn(0, imgW)
+    val srcTop = (visTop / rest.height * imgH).toInt().coerceIn(0, imgH)
+    val srcBottom = (visBottom / rest.height * imgH).toInt().coerceIn(0, imgH)
+
+    val minCol = (srcLeft / RegionTilePx - 1).coerceIn(0, cols - 1)
+    val maxCol = (srcRight / RegionTilePx + 1).coerceIn(0, cols - 1)
+    val minRow = (srcTop / RegionTilePx - 1).coerceIn(0, rows - 1)
+    val maxRow = (srcBottom / RegionTilePx + 1).coerceIn(0, rows - 1)
+
+    val needed = remember(minCol, maxCol, minRow, maxRow, sampleSize) {
+        buildList {
+            for (r in minRow..maxRow) {
+                for (c in minCol..maxCol) {
+                    add(TileKey(c, r, sampleSize))
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(decoderReady, needed, sampleSize) {
+        val decoder = decoderHolder[0] ?: return@LaunchedEffect
+        for (key in needed) {
+            if (key in tiles) {
+                lruOrder.remove(key)
+                lruOrder.add(key)
+                continue
+            }
+            val decoded = withContext(Dispatchers.IO) {
+                decoderMutex.withLock {
+                    if (decoder.isRecycled) return@withLock null
+                    runCatching {
+                        val sx0 = key.col * RegionTilePx
+                        val sy0 = key.row * RegionTilePx
+                        val sx1 = minOf(imgW, sx0 + RegionTilePx)
+                        val sy1 = minOf(imgH, sy0 + RegionTilePx)
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = key.sampleSize
+                            inPreferredConfig = Bitmap.Config.ARGB_8888
+                        }
+                        decoder.decodeRegion(AndroidRect(sx0, sy0, sx1, sy1), opts)?.asImageBitmap()
+                    }.getOrNull()
+                }
+            }
+            if (decoded != null) {
+                tiles[key] = decoded
+                lruOrder.remove(key)
+                lruOrder.add(key)
+                while (lruOrder.size > MaxCachedRegionTiles) {
+                    val oldest = lruOrder.removeAt(0)
+                    if (oldest !in needed) tiles.remove(oldest)
+                }
+            }
+        }
+    }
+
+    Canvas(Modifier.fillMaxSize()) {
+        val fitted = fitSize(size.width, size.height, imgW.toFloat() / imgH.toFloat())
+        val left0 = (size.width - fitted.width) / 2f
+        val top0 = (size.height - fitted.height) / 2f
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val bmp = tiles[TileKey(c, r, sampleSize)] ?: continue
+                val sx0 = c * RegionTilePx
+                val sy0 = r * RegionTilePx
+                val sx1 = minOf(imgW, sx0 + RegionTilePx)
+                val sy1 = minOf(imgH, sy0 + RegionTilePx)
+                val dx0 = (left0 + sx0.toFloat() / imgW * fitted.width).roundToInt()
+                val dy0 = (top0 + sy0.toFloat() / imgH * fitted.height).roundToInt()
+                val dx1 = (left0 + sx1.toFloat() / imgW * fitted.width).roundToInt()
+                val dy1 = (top0 + sy1.toFloat() / imgH * fitted.height).roundToInt()
+                drawImage(
+                    image = bmp,
+                    dstOffset = IntOffset(dx0, dy0),
+                    dstSize = IntSize((dx1 - dx0).coerceAtLeast(1), (dy1 - dy0).coerceAtLeast(1)),
+                )
+            }
+        }
     }
 }
 
@@ -1783,10 +2103,31 @@ private fun playerView(context: Context, player: ExoPlayer, controls: Boolean): 
         }
     }
 
-/** The control bar PlayerView draws at the bottom; gestures must not cover it. */
-private val ControllerStrip = 84.dp
+private val VideoTopBarButtonHeight = 36.dp
+
+private const val SeekStepMs = 5_000L
 
 private val Speeds = listOf(1f, 1.25f, 1.5f, 2f, 3f)
+
+internal fun formatVideoTime(ms: Long): String {
+    val totalSec = ms.coerceAtLeast(0L) / 1000L
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return if (h > 0L) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+}
+
+internal fun calculateHorizontalScrubTargetMs(
+    startPosMs: Long,
+    durationMs: Long,
+    draggedPx: Float,
+    containerWidthPx: Float,
+): Long {
+    if (durationMs <= 0L || containerWidthPx <= 0f) return startPosMs.coerceAtLeast(0L)
+    val spanMs = minOf(durationMs, 90_000L)
+    val deltaMs = (draggedPx / containerWidthPx * spanMs).roundToLong()
+    return (startPosMs + deltaMs).coerceIn(0L, durationMs)
+}
 
 private val SpeedPanel = Color(0xFF2A2A2A).copy(alpha = 0.94f)
 
@@ -1798,33 +2139,19 @@ private fun speedLabel(value: Float): String = when (value) {
     else -> "3.0×"
 }
 
-private fun Context.findActivity(): Activity? {
-    var ctx: Context? = this
-    while (ctx is ContextWrapper) {
-        if (ctx is Activity) return ctx
-        ctx = ctx.baseContext
-    }
-    return ctx as? Activity
-}
-
 @Composable
 fun VideoScreen(nav: NavState, url: String, title: String) {
     val context = LocalContext.current
-    val activity = remember(context) { context.findActivity() }
-    val audio = remember(context) {
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    val scope = rememberCoroutineScope()
+    var resolved by remember(url) {
+        mutableStateOf<ResolvedVideo?>(
+            if (isDirectVideoStream(url)) {
+                ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url))
+            } else null,
+        )
     }
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-            playWhenReady = true
-        }
-    }
-
-    var playerView by remember { mutableStateOf<PlayerView?>(null) }
-    var speed by remember { mutableFloatStateOf(1f) }
-    var speedMenu by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    var pendingDownloadAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var hud by remember { mutableStateOf("") }
     var hudTick by remember { mutableIntStateOf(0) }
 
@@ -1833,12 +2160,236 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
         hudTick++
     }
 
-    // Every brightness/volume step restarts the timer, so the readout follows the finger and
-    // clears shortly after it stops.
-    LaunchedEffect(hudTick) {
-        if (hud.isNotEmpty()) {
-            delay(900)
+    LaunchedEffect(hudTick, downloading) {
+        if (hud.isNotEmpty() && !downloading) {
+            delay(1400)
             hud = ""
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val action = pendingDownloadAction
+        pendingDownloadAction = null
+        if (granted) action?.invoke() else flash("没有存储权限")
+    }
+
+    fun runWithStoragePermission(action: () -> Unit) {
+        val needsLegacyGrant = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsLegacyGrant) {
+            pendingDownloadAction = action
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            action()
+        }
+    }
+
+    fun startVideoDownload(videoUrl: String, referer: String?) {
+        if (downloading) return
+        if (videoUrl.isBlank()) {
+            flash("未检测到可下载的视频流，请先点击播放后再试")
+            return
+        }
+        runWithStoragePermission {
+            scope.launch {
+                downloading = true
+                val result = downloadVideoToGallery(context, videoUrl, referer) { statusText ->
+                    hud = statusText
+                }
+                downloading = false
+                result.onSuccess { flash("已保存视频到相册") }
+                    .onFailure {
+                        Log.e("CoboVideo", "download failed url=$videoUrl", it)
+                        flash(it.message ?: "视频下载失败")
+                    }
+            }
+        }
+    }
+
+    LaunchedEffect(url) {
+        if (resolved == null) {
+            resolved = resolvePlayableVideo(url, context.cacheDir)
+        }
+    }
+
+    when (val current = resolved) {
+        null -> {
+            CoboPredictiveBackHandler(nav)
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在解析视频…", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HighlightedIconButton(onClick = { nav.pop() }, size = VideoTopBarButtonHeight) {
+                        Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        title.ifBlank { "视频" },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        is ResolvedVideo.DirectStream -> {
+            val effectiveTitle = current.title?.takeIf { it.isNotBlank() } ?: title
+            DirectVideoPlayer(
+                nav = nav,
+                streamUrl = current.url,
+                referer = current.referer,
+                title = effectiveTitle,
+                hud = hud,
+                flash = ::flash,
+                onDownload = { startVideoDownload(current.url, current.referer) },
+            )
+        }
+
+        is ResolvedVideo.WebPage -> {
+            WebVideoPlayer(
+                nav = nav,
+                pageUrl = current.url,
+                title = current.title?.takeIf { it.isNotBlank() } ?: title.ifBlank { "视频" },
+                hud = hud,
+                flash = ::flash,
+                onDownload = { detectedUrl -> startVideoDownload(detectedUrl, current.url) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DirectVideoPlayer(
+    nav: NavState,
+    streamUrl: String,
+    referer: String?,
+    title: String,
+    hud: String,
+    flash: (String) -> Unit,
+    onDownload: () -> Unit,
+) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val audio = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+    val player = remember(streamUrl, referer) {
+        val effectiveReferer = referer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(streamUrl)
+        val httpFactory = DefaultHttpDataSource.Factory().apply {
+            setUserAgent(Api.WEB_UA)
+            setAllowCrossProtocolRedirects(true)
+            if (!effectiveReferer.isNullOrBlank()) {
+                setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
+            }
+        }
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .build()
+            .apply {
+                addListener(
+                    object : Player.Listener {
+                        override fun onPlayerError(error: PlaybackException) {
+                            Log.e("CoboVideo", "ExoPlayer error for $streamUrl: ${error.errorCodeName}", error)
+                            flash("视频播放失败（${error.errorCodeName}）")
+                        }
+                    },
+                )
+                setMediaItem(MediaItem.fromUri(streamUrl))
+                prepare()
+                playWhenReady = true
+            }
+    }
+
+    var controlsVisible by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(true) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPositionMs by remember { mutableLongStateOf(0L) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    var speedMenu by remember { mutableStateOf(false) }
+
+    fun syncPlayerState() {
+        isPlaying = player.isPlaying
+        durationMs = player.duration.coerceAtLeast(0L)
+        if (!isScrubbing) {
+            positionMs = player.currentPosition.coerceAtLeast(0L)
+        }
+    }
+
+    fun seekBy(deltaMs: Long) {
+        val raw = (player.currentPosition + deltaMs).coerceAtLeast(0L)
+        val dur = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        val target = raw.coerceAtMost(dur)
+        player.seekTo(target)
+        positionMs = target
+        flash(if (deltaMs < 0L) "快退 5 秒" else "快进 5 秒")
+    }
+
+    fun togglePlayPause() {
+        if (player.isPlaying) {
+            player.pause()
+            flash("已暂停")
+        } else {
+            if (player.playbackState == Player.STATE_ENDED) {
+                player.seekTo(0L)
+            }
+            player.play()
+            flash("继续播放")
+        }
+        syncPlayerState()
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                syncPlayerState()
+            }
+        }
+        player.addListener(listener)
+        syncPlayerState()
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+
+    LaunchedEffect(player, controlsVisible, isScrubbing) {
+        if (!controlsVisible) return@LaunchedEffect
+        while (true) {
+            syncPlayerState()
+            delay(250)
+        }
+    }
+
+    LaunchedEffect(controlsVisible, isPlaying, speedMenu, isScrubbing) {
+        if (controlsVisible && isPlaying && !speedMenu && !isScrubbing) {
+            delay(5000)
+            controlsVisible = false
         }
     }
 
@@ -1857,26 +2408,71 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
         window.attributes = params
     }
 
-    DisposableEffect(player) {
-        onDispose { player.release() }
-    }
-
     CoboPredictiveBackHandler(nav)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
-                playerView(ctx, player, controls = true).also { playerView = it }
+                PlayerView(ctx).apply {
+                    useController = false
+                    controllerAutoShow = false
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    this.player = player
+                }
             },
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Gesture surface: left half drags brightness, right half volume, a still finger at 3×,
-        // a tap toggles the control bar. The bottom strip stays clear so the bar stays usable.
+        // 手势层铺在底部与顶部控件下面：单点切换整套控件显隐，左/中/右双击快退5秒/暂停播放/快进5秒，
+        // 左右拖动联动底部进度条快进/快退，左半上下划调亮度、右半上下划调音量，长按临时 3× 倍速。
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = ControllerStrip)
+                .pointerInput(Unit) {
+                    var startPos = 0L
+                    var dur = 0L
+                    var draggedX = 0f
+                    var active = false
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            if (speedMenu) speedMenu = false
+                            dur = player.duration.takeIf { it > 0L } ?: 0L
+                            active = dur > 0L
+                            if (active) {
+                                startPos = player.currentPosition.coerceIn(0L, dur)
+                                draggedX = 0f
+                                isScrubbing = true
+                                scrubPositionMs = startPos
+                                controlsVisible = true
+                            }
+                        },
+                        onHorizontalDrag = { change, dx ->
+                            if (!active) return@detectHorizontalDragGestures
+                            change.consume()
+                            draggedX += dx
+                            val target = calculateHorizontalScrubTargetMs(
+                                startPosMs = startPos,
+                                durationMs = dur,
+                                draggedPx = draggedX,
+                                containerWidthPx = size.width.toFloat(),
+                            )
+                            scrubPositionMs = target
+                            flash("${formatVideoTime(target)} / ${formatVideoTime(dur)}")
+                        },
+                        onDragEnd = {
+                            if (!active) return@detectHorizontalDragGestures
+                            player.seekTo(scrubPositionMs)
+                            positionMs = scrubPositionMs
+                            isScrubbing = false
+                            active = false
+                        },
+                        onDragCancel = {
+                            if (!active) return@detectHorizontalDragGestures
+                            isScrubbing = false
+                            active = false
+                        },
+                    )
+                }
                 .pointerInput(Unit) {
                     var left = true
                     var startBrightness = 0.5f
@@ -1914,24 +2510,30 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                         },
                     )
                 }
-                .pointerInput(speed, speedMenu) {
+                .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
                             if (speedMenu) {
                                 speedMenu = false
                             } else {
-                                val view = playerView
-                                if (view != null) {
-                                    if (view.isControllerFullyVisible) view.hideController()
-                                    else view.showController()
-                                }
+                                controlsVisible = !controlsVisible
                             }
                         },
+                        onDoubleTap = { offset ->
+                            if (speedMenu) {
+                                speedMenu = false
+                                return@detectTapGestures
+                            }
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            when {
+                                offset.x < w / 3f -> seekBy(-SeekStepMs)
+                                offset.x > w * 2f / 3f -> seekBy(SeekStepMs)
+                                else -> togglePlayPause()
+                            }
+                        },
+                        onLongPress = { /* 长按 3× 倍速由下方 awaitEachGesture 接管 */ },
                     )
                 }
-                // Long press is timed by hand: the detector above loses the press as soon as the
-                // drag gesture in the same node claims movement, and a still finger produces no
-                // pointer events at all, so a timeout is the only reliable trigger.
                 .pointerInput(speed) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -1969,69 +2571,185 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                 },
         )
 
-        Row(
+        AnimatedVisibility(
+            visible = controlsVisible || speedMenu,
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(150)),
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .fillMaxWidth()
+                .align(Alignment.TopCenter),
         ) {
-            HighlightedIconButton(onClick = { nav.pop() }) {
-                Icon(COUIIcons.Close, "关闭", Modifier, tint = Color.White)
-            }
-            Text(title, color = Color.White, fontSize = 14.sp, maxLines = 1)
-        }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(8.dp),
-            horizontalAlignment = Alignment.End,
-        ) {
-            // Black-on-black is invisible when the video is dark, so both the button and the
-            // menu use a solid ink panel instead of a translucent black.
-            Box(
+            Row(
                 modifier = Modifier
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(SpeedPanel)
-                    .clickable { speedMenu = !speedMenu }
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                        ),
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {}
+                    .statusBarsPadding()
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = speedLabel(speed), color = Color.White, fontSize = 13.sp)
-            }
-            if (speedMenu) {
-                Spacer(Modifier.height(6.dp))
-                Column(
-                    modifier = Modifier
-                        .width(108.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SpeedPanel)
-                        .padding(vertical = 4.dp),
-                ) {
-                    Speeds.forEach { value ->
-                        val selected = speed == value
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    speed = value
-                                    player.setPlaybackSpeed(value)
-                                    speedMenu = false
-                                    flash("${speedLabel(value)} 倍速")
-                                }
-                                .padding(vertical = 9.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = speedLabel(value),
-                                color = if (selected) Color(0xFF1A8CFF) else Color.White,
-                                fontSize = 14.sp,
-                            )
+                HighlightedIconButton(onClick = { nav.pop() }, size = VideoTopBarButtonHeight) {
+                    Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    title,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                )
+                HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
+                    Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .height(VideoTopBarButtonHeight)
+                            .clip(RoundedCornerShape(VideoTopBarButtonHeight / 2))
+                            .background(SpeedPanel)
+                            .clickable { speedMenu = !speedMenu }
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = speedLabel(speed), color = Color.White, fontSize = 13.sp)
+                    }
+                    OverlayListPopup(
+                        show = speedMenu,
+                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                        onDismissRequest = { speedMenu = false },
+                    ) {
+                        val dismiss = LocalDismissState.current
+                        ListPopupColumn {
+                            Speeds.forEachIndexed { index, value ->
+                                DropdownImpl(
+                                    item = DropdownItem(text = speedLabel(value)),
+                                    optionSize = Speeds.size,
+                                    isSelected = speed == value,
+                                    index = index,
+                                    groupKey = "video_speed",
+                                    onSelectedIndexChange = {
+                                        speed = value
+                                        player.setPlaybackSpeed(value)
+                                        flash("${speedLabel(value)} 倍速")
+                                        dismiss?.invoke()
+                                    },
+                                )
+                            }
                         }
                     }
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible || speedMenu,
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(150)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                        ),
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {}
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HighlightedIconButton(
+                        onClick = { seekBy(-SeekStepMs) },
+                        size = VideoTopBarButtonHeight,
+                        modifier = Modifier.semantics { contentDescription = "快退 5 秒" },
+                    ) {
+                        Text(
+                            text = "-5s",
+                            color = LocalContentColor.current,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    HighlightedIconButton(
+                        onClick = ::togglePlayPause,
+                        size = VideoTopBarButtonHeight,
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) COUIIcons.Pause else COUIIcons.Play,
+                            contentDescription = if (isPlaying) "暂停" else "播放",
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    HighlightedIconButton(
+                        onClick = { seekBy(SeekStepMs) },
+                        size = VideoTopBarButtonHeight,
+                        modifier = Modifier.semantics { contentDescription = "快进 5 秒" },
+                    ) {
+                        Text(
+                            text = "+5s",
+                            color = LocalContentColor.current,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val displayPos = if (isScrubbing) scrubPositionMs else positionMs
+                    val effectiveDur = durationMs.coerceAtLeast(1L)
+                    Text(
+                        text = formatVideoTime(displayPos),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.widthIn(min = 44.dp),
+                    )
+                    Slider(
+                        value = displayPos.coerceIn(0L, effectiveDur).toFloat(),
+                        onValueChange = { next ->
+                            isScrubbing = true
+                            scrubPositionMs = next.roundToLong()
+                        },
+                        onValueChangeFinished = {
+                            player.seekTo(scrubPositionMs)
+                            positionMs = scrubPositionMs
+                            isScrubbing = false
+                        },
+                        valueRange = 0f..effectiveDur.toFloat(),
+                        enabled = durationMs > 0L,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Text(
+                        text = formatVideoTime(durationMs),
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        modifier = Modifier.widthIn(min = 44.dp),
+                        textAlign = TextAlign.End,
+                    )
                 }
             }
         }
@@ -2045,6 +2763,235 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                     .align(Alignment.Center)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+private const val VideoSnifferJs = """
+(function() {
+  if (window.__coboSnifferInstalled) return;
+  window.__coboSnifferInstalled = true;
+  function report(u) {
+    if (u && typeof u === 'string' && !u.startsWith('blob:')) {
+      try { CoboVideoSniffer.onMediaUrl(u); } catch (e) {}
+    }
+  }
+  function scanVideos() {
+    var vids = document.querySelectorAll('video, source');
+    for (var i = 0; i < vids.length; i++) {
+      report(vids[i].currentSrc || vids[i].src || vids[i].getAttribute('src'));
+    }
+  }
+  var origFetch = window.fetch;
+  if (origFetch) {
+    window.fetch = function(input) {
+      try { report(typeof input === 'string' ? input : input.url); } catch (e) {}
+      return origFetch.apply(this, arguments);
+    };
+  }
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    try { report(url); } catch (e) {}
+    return origOpen.apply(this, arguments);
+  };
+  scanVideos();
+  setInterval(scanVideos, 1500);
+})();
+"""
+
+@android.annotation.SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+@Composable
+private fun WebVideoPlayer(
+    nav: NavState,
+    pageUrl: String,
+    title: String,
+    hud: String,
+    flash: (String) -> Unit,
+    onDownload: (String) -> Unit,
+) {
+    var sniffedMp4 by remember(pageUrl) { mutableStateOf<String?>(null) }
+    var sniffedM3u8 by remember(pageUrl) { mutableStateOf<String?>(null) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var canGoBack by remember { mutableStateOf(false) }
+    var pageTitle by remember(pageUrl) { mutableStateOf(title) }
+    var customView by remember { mutableStateOf<View?>(null) }
+    var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+
+    fun recordMedia(candidate: String) {
+        if (!isSniffableMediaUrl(candidate)) return
+        if (isM3u8Stream(candidate)) {
+            if (sniffedM3u8 == null) sniffedM3u8 = candidate
+        } else {
+            sniffedMp4 = candidate
+        }
+    }
+
+    BackHandler {
+        when {
+            customView != null -> customCallback?.onCustomViewHidden()
+            canGoBack -> webView?.goBack()
+            else -> nav.pop()
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF141414))
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HighlightedIconButton(onClick = { nav.pop() }, size = VideoTopBarButtonHeight) {
+                    Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    pageTitle,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(end = 10.dp),
+                )
+                HighlightedIconButton(
+                    size = VideoTopBarButtonHeight,
+                    onClick = {
+                        val direct = sniffedMp4 ?: sniffedM3u8
+                        if (direct != null) {
+                            onDownload(direct)
+                        } else {
+                            val view = webView
+                            if (view == null) {
+                                flash("未检测到可下载的视频流")
+                            } else {
+                                view.evaluateJavascript(
+                                    "(() => { const v = document.querySelector('video'); return v ? (v.currentSrc || v.src || '') : ''; })()",
+                                ) { raw ->
+                                    val cleaned = raw.trim('"').replace("\\/", "/")
+                                    if (cleaned.startsWith("http://", true) || cleaned.startsWith("https://", true)) {
+                                        onDownload(cleaned)
+                                    } else {
+                                        flash("未检测到可下载的视频流，请先点击播放后再试")
+                                    }
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                }
+            }
+
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        val wv = this
+                        CookieManager.getInstance().apply {
+                            setAcceptCookie(true)
+                            setAcceptThirdPartyCookies(wv, true)
+                        }
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.mediaPlaybackRequiresUserGesture = false
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.userAgentString = Api.WEB_UA
+                        addJavascriptInterface(
+                            object {
+                                @JavascriptInterface
+                                fun onMediaUrl(url: String) {
+                                    post { recordMedia(url) }
+                                }
+                            },
+                            "CoboVideoSniffer",
+                        )
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onReceivedTitle(view: WebView?, t: String?) {
+                                if (!t.isNullOrBlank()) pageTitle = t
+                            }
+
+                            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                                if (customView != null) {
+                                    callback?.onCustomViewHidden()
+                                    return
+                                }
+                                customView = view
+                                customCallback = callback
+                            }
+
+                            override fun onHideCustomView() {
+                                customView = null
+                                customCallback = null
+                            }
+                        }
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): Boolean {
+                                val target = request.url?.toString().orEmpty()
+                                val host = request.url?.host?.lowercase().orEmpty()
+                                if (host == "app.iqiyi.com" || host == "d.iqiyi.com" || host == "mbdapp.iqiyi.com") {
+                                    return true
+                                }
+                                if (target.startsWith("http://", true) || target.startsWith("https://", true)) {
+                                    return false
+                                }
+                                extractIntentFallbackUrl(target)?.let { view.loadUrl(it) }
+                                return true
+                            }
+
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                            ): WebResourceResponse? {
+                                val reqUrl = request?.url?.toString().orEmpty()
+                                if (isSniffableMediaUrl(reqUrl)) {
+                                    post { recordMedia(reqUrl) }
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                canGoBack = view.canGoBack()
+                                view.evaluateJavascript(VideoSnifferJs, null)
+                            }
+                        }
+                        loadUrl(pageUrl)
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize().weight(1f),
+                onRelease = { view ->
+                    view.stopLoading()
+                    view.destroy()
+                },
+            )
+        }
+
+        customView?.let { fsView ->
+            AndroidView(
+                factory = { fsView },
+                modifier = Modifier.fillMaxSize().background(Color.Black),
+            )
+        }
+
+        if (hud.isNotEmpty()) {
+            Text(
+                text = hud,
+                color = Color.White,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.65f))
                     .padding(horizontal = 14.dp, vertical = 8.dp),
             )
         }

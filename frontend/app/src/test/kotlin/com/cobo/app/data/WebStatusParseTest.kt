@@ -103,4 +103,53 @@ class WebStatusParseTest {
         assertEquals("https://mu1.sinaimg.cn/original/test.png", bigPic!!.url)
         assertEquals("https://m.weibo.cn/c/wbox?id=c0p9sg9tw9", bigPic.scheme)
     }
+
+    @Test
+    fun parsesVideoFromUrlsMapAndExternalWebpagePageInfo() {
+        val urlsStatus = JSONObject(
+            """
+            {
+              "id": "1001",
+              "text": "视频",
+              "page_info": {
+                "type": "video",
+                "page_title": "高清视频",
+                "urls": {
+                  "mp4_720p_mp4": "https://f.video.weibocdn.com/hd720.mp4"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedUrls = Status.from(urlsStatus)!!
+        assertEquals("https://f.video.weibocdn.com/hd720.mp4", parsedUrls.video?.url)
+
+        val externalStatus = JSONObject(
+            """
+            {
+              "id": "1002",
+              "text": "爱奇艺官链",
+              "page_info": {
+                "type": "webpage",
+                "page_title": "爱奇艺视频",
+                "page_url": "https://www.iqiyi.com/v_19rr7abcde.html",
+                "page_pic": { "url": "https://wx1.sinaimg.cn/large/iqiyi_cover.jpg" }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedExternal = Status.from(externalStatus)!!
+        val externalVideo = parsedExternal.video
+        assertNotNull(externalVideo)
+        assertEquals("爱奇艺视频", externalVideo!!.title)
+        assertEquals("https://www.iqiyi.com/v_19rr7abcde.html", externalVideo.url)
+        assertEquals("https://wx1.sinaimg.cn/large/iqiyi_cover.jpg", externalVideo.cover)
+    }
+
+    @Test
+    fun imageBrowseQualityParsesDefaultAndOriginal() {
+        assertEquals(ImageBrowseQuality.Default, ImageBrowseQuality.fromKey(null))
+        assertEquals(ImageBrowseQuality.Default, ImageBrowseQuality.fromKey("default"))
+        assertEquals(ImageBrowseQuality.Original, ImageBrowseQuality.fromKey("original"))
+    }
 }
