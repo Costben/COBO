@@ -73,11 +73,13 @@ import com.cobo.app.screen.HistoryScreen
 import com.cobo.app.screen.ImageViewerScreen
 import com.cobo.app.screen.LoginScreen
 import com.cobo.app.screen.NearbyScreen
+import com.cobo.app.screen.NotificationsScreen
 import com.cobo.app.screen.PredictiveBackSettingsScreen
 import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SettingsScreen
+import com.cobo.app.screen.SmsLoginScreen
 import com.cobo.app.screen.TopicFeedScreen
 import com.cobo.app.screen.TopicScreen
 import com.cobo.app.screen.SuperTopicScreen
@@ -139,7 +141,8 @@ fun CoboRoot() {
 
     CoboPredictiveBackHandler(nav)
 
-    val linkHandler = remember(nav, scope) {
+    val context = LocalContext.current
+    val linkHandler = remember(nav, scope, context) {
         { raw: String ->
             // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，流体云深链会包一层 sinaweibo://browser?url=<真实地址>，
             // 先拆出真实地址再决定去哪。
@@ -153,6 +156,13 @@ fun CoboRoot() {
             val topicQuery = weiboTopicQuery(url)
             val current = nav.stack.lastOrNull()?.route
             val readOnly = current is Route.SuperTopic || (current is Route.Detail && current.readOnly)
+            fun openWebPage(target: String) {
+                if (!App.settings.inAppBrowser && isExternalWebLink(target)) {
+                    openExternalUrl(context, target)
+                } else {
+                    nav.push(Route.Web(target, "网页"))
+                }
+            }
             when {
                 topicId != null -> nav.push(Route.SuperTopic(topicId, resolveWeiboLink(url)
                     ?: "https://m.weibo.cn/p/index?containerid=$topicId"))
@@ -195,11 +205,11 @@ fun CoboRoot() {
                         } else if (isVideoLink(resolved)) {
                             nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "视频"))
                         } else {
-                            resolveWeiboLink(resolved)?.let { nav.push(Route.Web(it, "网页")) }
+                            resolveWeiboLink(resolved)?.let(::openWebPage)
                         }
                     }
                 }
-                else -> resolveWeiboLink(url)?.let { nav.push(Route.Web(it, "网页")) }
+                else -> resolveWeiboLink(url)?.let(::openWebPage)
             }
             Unit
         }
@@ -710,12 +720,14 @@ private fun RouteContent(route: Route, nav: NavState) {
     when (route) {
         Route.Main -> MainShell(nav)
         is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh, route.relogin)
+        is Route.SmsLogin -> SmsLoginScreen(nav, route.addAccount, route.relogin)
         is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
         is Route.Publish -> PublishScreen(nav, route.draft)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
+        Route.Notifications -> NotificationsScreen(nav)
         is Route.Web -> WebScreen(nav, route.url, route.title)
         is Route.Container -> ContainerScreen(nav, route.cid, route.title)
         is Route.SuperTopic -> SuperTopicScreen(nav, route.containerId, route.fallbackUrl)

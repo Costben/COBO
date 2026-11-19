@@ -500,4 +500,52 @@ object CoboIcons {
             }
         }.build()
     }
+
+    /** 列表排序用：竖直箭头。线宽与 [Check] 对齐，缩到 18dp 也不会糊成一块。 */
+    val ArrowUp: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ArrowUp",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(12f, 19.5f)
+                lineTo(12f, 4.8f)
+                moveTo(5.8f, 11f)
+                lineTo(12f, 4.8f)
+                lineTo(18.2f, 11f)
+            }
+        }.build()
+    }
+
+    /** [ArrowUp] 的镜像，指向下方。 */
+    val ArrowDown: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ArrowDown",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(12f, 4.5f)
+                lineTo(12f, 19.2f)
+                moveTo(5.8f, 13f)
+                lineTo(12f, 19.2f)
+                lineTo(18.2f, 13f)
+            }
+        }.build()
+    }
 }

@@ -25,7 +25,8 @@ object CookieVault {
     fun isWeibo(host: String): Boolean =
         host == "weibo.cn" || host.endsWith(".weibo.cn") ||
             host == "weibo.com" || host.endsWith(".weibo.com") ||
-            host == "sina.cn" || host.endsWith(".sina.cn")
+            host == "sina.cn" || host.endsWith(".sina.cn") ||
+            host == "sina.com.cn" || host.endsWith(".sina.com.cn")
 
     /** 把 `Cookie` 头拆成「一行一条」，也就是表里每个域名的值。 */
     fun parseHeader(header: String): List<String> =
@@ -203,14 +204,7 @@ object CookieVault {
             return
         }
         manager.removeAllCookies(null)
-        for ((domain, value) in cookies) {
-            val lines = value.split('\n').filter { it.isNotBlank() }
-            if (lines.isEmpty()) {
-                manager.setCookie(domain, value)
-            } else {
-                for (line in lines) manager.setCookie(domain, line)
-            }
-        }
+        for ((domain, value) in cookies) setDomainCookies(manager, domain, value)
         manager.flush()
     }
 
@@ -222,15 +216,28 @@ object CookieVault {
         if (cookies.isEmpty()) return
         val manager = CookieManager.getInstance()
         manager.setAcceptCookie(true)
-        for ((domain, value) in cookies) {
-            val lines = value.split('\n').filter { it.isNotBlank() }
-            if (lines.isEmpty()) {
-                manager.setCookie(domain, value)
-            } else {
-                for (line in lines) manager.setCookie(domain, line)
-            }
-        }
+        for ((domain, value) in cookies) setDomainCookies(manager, domain, value)
         manager.flush()
+    }
+
+    private fun setDomainCookies(manager: CookieManager, domain: String, value: String) {
+        val cleanHost = domain.trim()
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .substringBefore('/')
+            .trimStart('.')
+        if (cleanHost.isBlank()) return
+        val targetUrl = "https://$cleanHost/"
+        val attrDomain = ".$cleanHost"
+        val lines = value.split('\n').filter { it.isNotBlank() }.ifEmpty { listOf(value) }
+        for (line in lines) {
+            val cookieLine = if (line.contains("Domain=", ignoreCase = true)) {
+                line
+            } else {
+                "$line; Domain=$attrDomain; Path=/; Secure"
+            }
+            manager.setCookie(targetUrl, cookieLine)
+        }
     }
 
     /**

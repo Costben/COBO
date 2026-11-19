@@ -77,21 +77,30 @@ internal fun superTopicTabKind(containerId: String, channelId: String = ""): Sup
 fun superTopicId(raw: String): String? {
     val value = raw.trim()
     if (superTopicContainer.matches(value)) return value.lowercase()
-    val uri = runCatching { URI(value) }.getOrNull() ?: return null
+    val uriInput = if (value.startsWith("//")) "https:$value" else value
+    val uri = runCatching { URI(uriInput) }.getOrNull() ?: return null
     if (uri.rawUserInfo != null || uri.port != -1) return null
     val scheme = uri.scheme?.lowercase() ?: return null
     val host = uri.host?.lowercase() ?: return null
     val path = uri.rawPath.orEmpty()
-    val desktopPage = (scheme == "https" || scheme == "http") &&
-        (host == "weibo.com" || host == "www.weibo.com")
-    val desktopId = if (desktopPage) {
-        if (!path.startsWith("/page/")) return null
-        normalizedSuperTopicId(path.removePrefix("/page/")) ?: return null
+    val isWeiboPageHost = host == "weibo.com" || host == "www.weibo.com" || host == "m.weibo.cn" || host == "weibo.cn"
+    val desktopId = if ((scheme == "https" || scheme == "http") && isWeiboPageHost) {
+        when {
+            path.startsWith("/page/") -> normalizedSuperTopicId(path.removePrefix("/page/")) ?: return null
+            path.startsWith("/p/") && path != "/p/index" -> {
+                val tail = path.removePrefix("/p/")
+                val idSeg = tail.substringBefore('/')
+                val rest = tail.substringAfter('/', "").trimEnd('/')
+                if (rest.isNotEmpty() && rest != "super_index" && rest != "home") return null
+                normalizedSuperTopicId(idSeg) ?: return null
+            }
+            else -> null
+        }
     } else null
     when (scheme) {
         "https", "http" -> {
             if (uri.rawFragment != null) return null
-            if (!desktopPage && (host != "m.weibo.cn" || path != "/p/index")) return null
+            if (desktopId == null && (!isWeiboPageHost || path != "/p/index")) return null
         }
         "sinaweibo" -> {
             if (host != "pageinfo" || path.isNotEmpty() || uri.rawFragment != null) return null
@@ -113,7 +122,7 @@ fun superTopicId(raw: String): String? {
                 URLDecoder.decode(pair.getOrElse(1) { "" }, "UTF-8")
         }
     }.getOrNull() ?: return null
-    val ids = params.filter { it.first == "containerid" }
+    val ids = params.filter { it.first == "containerid" || (scheme == "sinaweibo" && it.first == "pageid") }
     if (desktopId != null) {
         if (ids.size > 1) return null
         if (ids.isNotEmpty() && normalizedSuperTopicId(ids.single().second) != desktopId) return null
@@ -363,5 +372,136 @@ private fun collectSuperTopicSearchCards(cards: JSONArray?, topics: MutableMap<S
         }
         collectSuperTopicSearchCards(card.optJSONArray("card_group"), topics)
         collectSuperTopicSearchCards(card.optJSONArray("group"), topics)
+    }
+}
+
+/**
+ * 解析桌面端超话页（`weibo.com/ajax_proxy/chaohua/page`）的响应。
+ *
+ * 供 `LOGIN_TYPE_CLIENT` 下读取超话首页与切换频道使用，保持与 [parseSuperTopic] 一致的输出结构。
+ */
+fun parseDesktopSuperTopic(
+    root: JSONObject,
+    expectedContainerId: String,
+    tabContainerId: String? = null,
+): SuperTopicPage {
+    val expected = normalizedSuperTopicId(expectedContainerId)
+        ?: throw ApiException("无效的超话地址")
+    val headerData = root.optJSONObject("header")?.optJSONObject("data")
+    val itemsArr = root.optJSONArray("items")
+    if (headerData == null && itemsArr == null) {
+        val code = root.int("code")
+        val msg = root.str("msg").ifBlank { "超话加载失败" }
+        if (code == -100) throw ApiException("超话需要登录后查看", "-100")
+        throw ApiException(msg)
+    }
+    val oid = headerData?.str("oid").orEmpty()
+    if (oid.isNotBlank()) {
+        val actualId = normalizedSuperTopicId(oid.removePrefix("1022:"))
+        if (actualId != null && actualId != expected) {
+            throw ApiException("超话身份校验失败")
+        }
+    }
+    val title = headerData?.str("nick").orEmpty()
+        .ifBlank { headerData?.str("page_title").orEmpty() }
+        .ifBlank { if (tabContainerId != null) "超话" else "" }
+        .trim()
+    if (title.isBlank()) throw ApiException("超话名称缺失")
+
+    var description = headerData?.str("desc").orEmpty()
+    if (description.isBlank()) {
+        val descList = headerData?.optJSONArray("desc_list")
+        if (descList != null) {
+            for (i in 0 until descList.length()) {
+                val entry = descList.optJSONObject(i) ?: continue
+                val text = entry.str("text")
+                if (text.startsWith("简介：")) {
+                    description = text.removePrefix("简介：").trim()
+                    break
+                }
+            }
+        }
+    }
+
+    var postCount = ""
+    var fanCount = ""
+    val descMore = headerData?.optJSONArray("desc_more")
+    if (descMore != null) {
+        for (i in 0 until descMore.length()) {
+            val entry = descMore.optJSONObject(i) ?: continue
+            val label = entry.str("desc").trim()
+            val num = entry.str("desc_num").trim()
+            if (num.isBlank() || label.isBlank()) continue
+            when {
+                label.contains("帖") -> if (postCount.isBlank()) postCount = num
+                else -> if (fanCount.isBlank()) fanCount = num
+            }
+        }
+    }
+
+    val statuses = LinkedHashMap<String, Status>()
+    collectDesktopChaohuaItems(itemsArr, statuses)
+
+    val tabs = LinkedHashMap<String, SuperTopicTab>()
+    val channels = root.optJSONObject("channelInfo")?.optJSONArray("channels")
+    if (channels != null) {
+        for (i in 0 until channels.length()) {
+            val ch = channels.optJSONObject(i) ?: continue
+            val flowId = ch.str("flowId").trim()
+            val label = ch.str("title").trim()
+            val chId = ch.str("channelId").trim()
+            if (flowId.isBlank() || label.isBlank()) continue
+            val lower = flowId.lowercase()
+            if (!lower.startsWith(expected)) continue
+            tabs.putIfAbsent(
+                lower,
+                SuperTopicTab(
+                    id = chId.ifBlank { flowId },
+                    label = label,
+                    containerId = flowId,
+                    kind = superTopicTabKind(lower, chId),
+                ),
+            )
+        }
+    }
+    if (tabs.isEmpty()) {
+        for (tab in defaultSuperTopicTabs(expected)) {
+            tabs.putIfAbsent(tab.containerId.lowercase(), tab)
+        }
+    }
+
+    val moreParams = root.optJSONObject("moreInfo")?.optJSONObject("params")
+    val nextCursor = if (statuses.isNotEmpty() && moreParams != null && moreParams.length() > 0) {
+        "ch:$moreParams"
+    } else {
+        null
+    }
+
+    return SuperTopicPage(
+        info = SuperTopicInfo(
+            containerId = expected,
+            title = title,
+            description = description,
+            avatar = headerData?.str("portrait_hd").orEmpty().ifBlank { headerData?.str("portrait").orEmpty() },
+            readCount = "",
+            postCount = postCount,
+            fanCount = fanCount,
+        ),
+        items = statuses.values.toList(),
+        nextCursor = nextCursor,
+        tabs = tabs.values.toList(),
+    )
+}
+
+private fun collectDesktopChaohuaItems(arr: JSONArray?, out: MutableMap<String, Status>) {
+    if (arr == null) return
+    for (i in 0 until arr.length()) {
+        val node = arr.optJSONObject(i) ?: continue
+        if (node.str("category") == "feed") {
+            node.optJSONObject("data")?.takeUnless { it.isPromotedStatus() }?.let { data ->
+                Status.from(data)?.let { out.putIfAbsent(it.id, it) }
+            }
+        }
+        collectDesktopChaohuaItems(node.optJSONArray("items"), out)
     }
 }

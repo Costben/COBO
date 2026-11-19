@@ -2,6 +2,7 @@ package com.cobo.app.data
 
 import com.cobo.app.screen.FeedFilter
 import com.cobo.app.ui.FeedTabSpec
+import com.cobo.app.ui.buildCenterMenuEntries
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -217,5 +218,76 @@ class FeedTabCustomizationTest {
                 add(FeedTabSpec.Custom(right, "right", guest))
             }
         }
+    }
+
+    @Test
+    fun centerMenuEntries_collapsedPutsGroupsInSubmenu() {
+        val g1 = FollowGroup("101", "科技")
+        val g2 = FollowGroup("102", "摄影")
+        val options = feedTabOptions(listOf(g1, g2), allowNone = false)
+        val selected = FeedTabSelection(FeedTabItem.Group, g2)
+
+        val entries = buildCenterMenuEntries(
+            centerOptions = options,
+            centerTab = selected,
+            collapseFollowGroups = true,
+            onCenterSelected = {},
+        )
+
+        assertEquals(3, entries.size)
+        val groupItems = entries[2].items
+        assertEquals(1, groupItems.size)
+        val parent = groupItems.single()
+        assertEquals(FeedTabItem.Group.label, parent.text)
+        assertTrue(parent.selected)
+        assertEquals("摄影", parent.summary)
+        val children = parent.children.orEmpty()
+        assertEquals(2, children.size)
+        assertFalse(children[0].selected)
+        assertTrue(children[1].selected)
+    }
+
+    @Test
+    fun centerMenuEntries_expandedFlattensGroupsIntoPrimaryList() {
+        val g1 = FollowGroup("101", "科技")
+        val g2 = FollowGroup("102", "摄影")
+        val options = feedTabOptions(listOf(g1, g2), allowNone = false)
+        val selected = FeedTabSelection(FeedTabItem.Group, g1)
+        var picked: FeedTabSelection? = null
+
+        val entries = buildCenterMenuEntries(
+            centerOptions = options,
+            centerTab = selected,
+            collapseFollowGroups = false,
+            onCenterSelected = { picked = it },
+        )
+
+        assertEquals(3, entries.size)
+        val flatGroups = entries[2].items
+        assertEquals(2, flatGroups.size)
+        assertEquals("科技", flatGroups[0].text)
+        assertEquals(FeedTabItem.Group.label, flatGroups[0].summary)
+        assertTrue(flatGroups[0].selected)
+        assertTrue(flatGroups[0].children.isNullOrEmpty())
+
+        assertEquals("摄影", flatGroups[1].text)
+        assertEquals(FeedTabItem.Group.label, flatGroups[1].summary)
+        assertFalse(flatGroups[1].selected)
+        assertTrue(flatGroups[1].children.isNullOrEmpty())
+
+        flatGroups[1].onClick?.invoke()
+        assertEquals("group_102", picked?.key)
+    }
+
+    @Test
+    fun centerMenuEntries_noGroupsOmitsThirdSection() {
+        val options = feedTabOptions(emptyList(), allowNone = false)
+        val entries = buildCenterMenuEntries(
+            centerOptions = options,
+            centerTab = FeedTabSelection(FeedTabItem.Follow),
+            collapseFollowGroups = false,
+            onCenterSelected = {},
+        )
+        assertEquals(2, entries.size)
     }
 }

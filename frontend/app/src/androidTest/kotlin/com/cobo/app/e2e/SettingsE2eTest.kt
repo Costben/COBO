@@ -34,6 +34,8 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_feed_left_tab",
             "settings_feed_center_tab",
             "settings_feed_right_tab",
+            "settings_collapse_follow_groups",
+            "settings_in_app_browser",
             "settings_confirm_like",
             "settings_accounts",
             "settings_drafts",
@@ -151,6 +153,36 @@ class SettingsE2eTest : UiE2eTest() {
             waitUntil("点赞前确认开关没有切回") { App.settings.confirmLike == before }
         } finally {
             App.settings.applyConfirmLike(before)
+        }
+    }
+
+    @Test
+    fun inAppBrowser_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.inAppBrowser
+        try {
+            scrollToTag("settings_in_app_browser")
+            tapTag("settings_in_app_browser")
+            waitUntil("内置浏览器开关没有切换") { App.settings.inAppBrowser != before }
+            tapTag("settings_in_app_browser")
+            waitUntil("内置浏览器开关没有切回") { App.settings.inAppBrowser == before }
+        } finally {
+            App.settings.applyInAppBrowser(before)
+        }
+    }
+
+    @Test
+    fun collapseFollowGroups_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.collapseFollowGroups
+        try {
+            scrollToTag("settings_collapse_follow_groups")
+            tapTag("settings_collapse_follow_groups")
+            waitUntil("收纳关注分组开关没有切换") { App.settings.collapseFollowGroups != before }
+            tapTag("settings_collapse_follow_groups")
+            waitUntil("收纳关注分组开关没有切回") { App.settings.collapseFollowGroups == before }
+        } finally {
+            App.settings.applyCollapseFollowGroups(before)
         }
     }
 

@@ -1,5 +1,8 @@
 package com.cobo.app.screen
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -7,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,28 +19,42 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.CookieVault
+import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
-import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.WeiboWebView
+import com.cobo.app.ui.openExternalUrl
+import com.cobo.app.ui.pageContainerColor
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
+import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Copy
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import kotlinx.coroutines.launch
 
 @Composable
 fun WebScreen(nav: NavState, url: String, title: String) {
+    val context = LocalContext.current
     var canGoBack by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+
+    fun currentPageUrl(): String =
+        webView?.url
+            ?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+            ?: url
 
     BackHandler {
         if (canGoBack) webView?.goBack() else nav.pop()
@@ -54,13 +72,41 @@ fun WebScreen(nav: NavState, url: String, title: String) {
                             if (canGoBack) webView?.goBack() else nav.pop()
                         }
                     },
+                    actions = {
+                        HighlightedIconButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("url", currentPageUrl()))
+                                App.toast("已复制链接")
+                            },
+                            modifier = Modifier.couiTopAppBarActionItem().testTag("web_copy_url"),
+                        ) {
+                            Icon(COUIIcons.Copy, "复制链接", Modifier.size(22.dp))
+                        }
+                        HighlightedIconButton(
+                            onClick = { openExternalUrl(context, currentPageUrl()) },
+                            modifier = Modifier.couiTopAppBarActionItem().testTag("web_open_external"),
+                        ) {
+                            Icon(CoboIcons.Globe, "在浏览器中打开", Modifier.size(24.dp))
+                        }
+                    },
                 )
             }
         },
     ) { padding ->
+        val webUserAgent = remember(url, App.repo.session?.loginType) {
+            val host = android.net.Uri.parse(url).host?.lowercase().orEmpty()
+            val isDesktopWeibo = host == "weibo.com" || host == "www.weibo.com"
+            if (App.repo.session?.loginType == com.cobo.app.data.LOGIN_TYPE_CLIENT && isDesktopWeibo) {
+                com.cobo.app.data.Api.DESKTOP_UA
+            } else {
+                com.cobo.app.data.Api.WEB_UA
+            }
+        }
         WeiboWebView(
             url = url,
             modifier = Modifier.fillMaxSize().padding(padding),
+            userAgent = webUserAgent,
             onCreated = { webView = it },
             onBackAvailable = { canGoBack = it },
         )
@@ -146,6 +192,11 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                     text = hint,
                     fontSize = 12.sp,
                     color = COUITheme.colorScheme.onSurfaceSecondary,
+                )
+                TextButton(
+                    text = "用账号密码登录（长期续签）",
+                    onClick = { nav.push(Route.SmsLogin(addAccount, relogin)) },
+                    modifier = Modifier.testTag("login_sms"),
                 )
                 // 只在启动就落到登录页时给：从纯本地模式点进来登录的，返回键就能回去。
                 if (!addAccount && nav.stack.size == 1) {

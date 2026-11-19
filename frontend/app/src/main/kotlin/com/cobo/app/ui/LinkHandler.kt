@@ -1,6 +1,11 @@
 package com.cobo.app.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.cobo.app.data.CookieVault
 
 /**
  * Handles link taps inside Weibo rich text. The root provides an in-app WebView
@@ -380,5 +385,28 @@ fun isWeiboWboxLink(raw: String): Boolean {
                 host == "wbox.h5.weibo.cn"
         "sinaweibo" -> host == "wbox" || host == "mpdialog"
         else -> false
+    }
+}
+
+/**
+ * 判断解析后的链接是否为外部网页（非微博域的 http/https 链接）。
+ * 微博站内页面（如头条文章、投票、超话网页）依赖内置 WebView 的登录态与 Cookie，仍保留在应用内打开。
+ */
+fun isExternalWebLink(raw: String): Boolean {
+    val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return false
+    val scheme = uri.scheme?.lowercase() ?: return false
+    if (scheme != "http" && scheme != "https") return false
+    val host = uri.host?.lowercase()?.takeIf { it.isNotEmpty() } ?: return false
+    return !CookieVault.isWeibo(host)
+}
+
+/** 调用系统浏览器或外部应用打开链接。 */
+fun openExternalUrl(context: Context, url: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }.onFailure {
+        Toast.makeText(context, "没有可用的浏览器", Toast.LENGTH_SHORT).show()
     }
 }

@@ -66,6 +66,8 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+    // 主页「二维码」在本地生成，不依赖第三方图片接口。
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
     // 单元测试跑在 JVM 上，android.jar 里的 org.json 是空壳，换真实现才能验解析。

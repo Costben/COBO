@@ -114,11 +114,13 @@ data class User(
             if (id.isBlank()) return null
             return User(
                 id = id,
-                name = o.str("screen_name"),
+                name = o.str("screen_name").ifBlank { o.str("name") },
                 avatar = o.str("avatar_hd")
                     .ifBlank { o.str("avatar_large") }
                     .ifBlank { o.str("profile_image_url") }
-                    .ifBlank { o.str("avatar") },
+                    .ifBlank { o.str("avatar") }
+                    .ifBlank { o.str("round_avatar_large") }
+                    .ifBlank { o.str("round_profile_image_url") },
                 verified = o.optBoolean("verified", false),
                 following = o.optBoolean("following", false),
                 description = o.str("description"),
@@ -439,7 +441,7 @@ data class Status(
 
         private fun parse(o: JSONObject?, depth: Int): Status? {
             if (o == null) return null
-            val id = o.str("id")
+            val id = o.str("idstr").ifBlank { o.str("id") }.ifBlank { o.str("mid") }
             if (id.isBlank()) return null
 
             val pics = picsOf(o)
@@ -475,10 +477,9 @@ data class Status(
                 val resolvedUrl = directUrl.ifBlank {
                     com.cobo.app.ui.unwrapSinaUrl(fallbackPageUrl) ?: fallbackPageUrl
                 }
-                val cover = page.optJSONObject("page_pic")?.str("url") ?: ""
                 video = VideoInfo(
                     title = page.str("page_title").ifBlank { page.str("content1") },
-                    cover = cover.ifBlank { pics.firstOrNull()?.thumb ?: "" },
+                    cover = videoCoverUrl(page, media, pics),
                     url = resolvedUrl,
                 )
             } else if (page != null && pics.isEmpty()) {
@@ -487,10 +488,9 @@ data class Status(
                 val pageUrl = com.cobo.app.ui.unwrapSinaUrl(pageUrlRaw) ?: pageUrlRaw
                 val resolvedTarget = com.cobo.app.ui.resolveWeiboLink(pageUrl) ?: pageUrl
                 if (com.cobo.app.ui.isVideoLink(resolvedTarget)) {
-                    val cover = page.optJSONObject("page_pic")?.str("url") ?: ""
                     video = VideoInfo(
                         title = page.str("page_title").ifBlank { page.str("content1") },
-                        cover = cover,
+                        cover = videoCoverUrl(page, page.optJSONObject("media_info"), emptyList()),
                         url = resolvedTarget,
                     )
                 }
@@ -530,7 +530,7 @@ data class Status(
             return Status(
                 id = id,
                 mid = o.str("mid").ifBlank { id },
-                textHtml = o.str("text"),
+                textHtml = enrichSuperTopicLinks(o.str("text"), o.optJSONArray("url_struct")),
                 createdAt = o.str("created_at"),
                 source = stripHtml(o.str("source")),
                 user = User.from(o.optJSONObject("user")),
@@ -550,6 +550,46 @@ data class Status(
                 visibility = parseStatusVisibility(o),
             )
         }
+    }
+}
+
+private fun enrichSuperTopicLinks(textHtml: String, urlStruct: JSONArray?): String {
+    if (textHtml.isBlank() || urlStruct == null || urlStruct.length() == 0) return textHtml
+    var out = textHtml
+    for (i in 0 until urlStruct.length()) {
+        val entry = urlStruct.optJSONObject(i) ?: continue
+        val pageId = entry.str("page_id")
+        if (!pageId.startsWith("100808", ignoreCase = true)) continue
+        val target = "https://weibo.com/p/${pageId.lowercase()}"
+        val shortUrl = entry.str("short_url")
+        if (shortUrl.isNotBlank() && out.contains(shortUrl)) {
+            out = out.replace("href=\"$shortUrl\"", "href=\"$target\"")
+                .replace("href='$shortUrl'", "href='$target'")
+        }
+    }
+    return out
+}
+
+private fun videoCoverUrl(page: JSONObject, media: JSONObject?, pics: List<Pic>): String {
+    val pagePicObj = page.optJSONObject("page_pic")
+    val picInfo = media?.optJSONObject("pic_info")
+    val raw = pagePicObj?.str("url").orEmpty()
+        .ifBlank { (page.opt("page_pic") as? String).orEmpty() }
+        .ifBlank { picInfo?.optJSONObject("pic_big")?.str("url").orEmpty() }
+        .ifBlank { picInfo?.optJSONObject("pic_middle")?.str("url").orEmpty() }
+        .ifBlank { picInfo?.optJSONObject("pic_small")?.str("url").orEmpty() }
+        .ifBlank { page.str("pic") }
+        .ifBlank { page.str("thumb_pic") }
+        .ifBlank { pics.firstOrNull()?.thumb.orEmpty() }
+        .trim()
+    if (raw.isBlank()) return ""
+    val absolute = if (raw.startsWith("//")) "https:$raw" else raw
+    return if (absolute.startsWith("http://") &&
+        (absolute.contains("sinaimg.") || absolute.contains("weibocdn.com"))
+    ) {
+        "https://" + absolute.removePrefix("http://")
+    } else {
+        absolute
     }
 }
 
@@ -764,6 +804,45 @@ data class ChatMessage(
                 height = original?.int("height") ?: 0,
             )
         }
+
+        /** 解析开放/客户端接口（`api.weibo.cn/2/direct_messages/...`）的单条私信。 */
+        fun fromClient(o: JSONObject?, gsid: String = ""): ChatMessage? {
+            if (o == null) return null
+            val id = o.str("idstr").ifBlank { o.str("id") }
+            if (id.isBlank()) return null
+            val sender = o.optJSONObject("sender")
+            val recipient = o.optJSONObject("recipient")
+            val senderId = o.str("sender_id").ifBlank { sender?.str("idstr").orEmpty() }.ifBlank { sender?.str("id").orEmpty() }
+            val recipientId = o.str("recipient_id").ifBlank { recipient?.str("idstr").orEmpty() }.ifBlank { recipient?.str("id").orEmpty() }
+            val attachArr = o.optJSONArray("attachinfo")
+            val firstAttach = attachArr?.optJSONObject(0)
+            val fid = firstAttach?.str("fid").orEmpty()
+            val s3Url = firstAttach?.str("s3_url").orEmpty()
+            val rawThumb = firstAttach?.str("thumbnail_240").orEmpty()
+                .ifBlank { firstAttach?.str("thumbnail").orEmpty() }
+            val imageUrl = when {
+                s3Url.isNotBlank() -> s3Url
+                fid.isNotBlank() -> "https://upload.api.weibo.com/2/mss/msget?source=209678993&fid=$fid"
+                else -> ""
+            }
+            val thumbUrl = when {
+                rawThumb.isNotBlank() -> rawThumb
+                fid.isNotBlank() -> "https://upload.api.weibo.com/2/mss/msget_thumbnail?source=209678993&fid=$fid&high=240&width=240"
+                else -> imageUrl
+            }
+            val mediaType = o.int("media_type").let { if (it == 0 && (imageUrl.isNotBlank() || thumbUrl.isNotBlank())) 1 else it }
+            return ChatMessage(
+                id = id,
+                text = o.str("text"),
+                senderId = senderId,
+                recipientId = recipientId,
+                createdAt = o.str("created_at"),
+                mediaType = mediaType,
+                dmType = o.int("dm_type"),
+                imageUrl = imageUrl,
+                thumbUrl = thumbUrl,
+            )
+        }
     }
 }
 
@@ -804,6 +883,37 @@ internal fun parseChatPage(data: JSONObject, isGroup: Boolean): ChatPage {
 
 /** 微博「关注分组」：gid 是分组 id，title 是分组名。分组属于账号，换账号就是另一套。 */
 data class FollowGroup(val gid: String, val title: String)
+
+/** 主页「添加到关注分组」里的一行：分组本身 + 当前用户是否已经在里面。 */
+data class ProfileGroup(
+    val gid: String,
+    val name: String,
+    val memberCount: Int = 0,
+    val joined: Boolean = false,
+)
+
+/**
+ * `getGroupList` 和 `allGroups` 一起给出来的结果：
+ * [groups] 是能勾选的自建分组，[assigned] 是他当前已在的分组，提交时原样当 `origin_list_ids`。
+ */
+data class ProfileGroupSelection(
+    val groups: List<ProfileGroup>,
+    val assigned: List<String>,
+)
+
+/** 主页「基本资料」从网页版 `ajax/profile/detail` 里抽出来的几项，缺什么就留空。 */
+data class ProfileDetail(
+    val gender: String = "",
+    val birthday: String = "",
+    val location: String = "",
+    val ipLocation: String = "",
+    val createdAt: String = "",
+    val education: String = "",
+    val company: String = "",
+    val credit: String = "",
+    val labels: List<String> = emptyList(),
+    val description: String = "",
+)
 
 data class Account(
     val uid: String,

@@ -44,6 +44,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -71,6 +74,8 @@ import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
 import com.cobo.app.data.Pic
+import com.cobo.app.data.ProfileDetail
+import com.cobo.app.data.ProfileGroupSelection
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.User
@@ -90,30 +95,32 @@ import com.cobo.app.ui.Route
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
+import com.cobo.app.ui.components.ProfileGroupDialog
+import com.cobo.app.ui.components.ProfileInfoDialog
+import com.cobo.app.ui.components.ProfileQrDialog
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
-import io.github.suqi8.coui.kmp.basic.DropdownImpl
+import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
-import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
-import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
+import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
-import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
@@ -141,6 +148,7 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import java.net.URLEncoder
 import kotlin.math.roundToInt
 
 internal data class CoverContrast(
@@ -276,6 +284,9 @@ internal fun rememberCoverContrast(
 fun ProfileScreen(nav: NavState, uid: String?) {
     val key = uid.orEmpty()
     val tag = FollowTags[key]
+    // 顶栏的「更多」菜单要用到头像和昵称（二维码弹窗），而资料本身在内容区里加载，
+    // 这里只收一份镜像，不参与页面布局。
+    var profileUser by remember(uid) { mutableStateOf<User?>(null) }
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     val listState = rememberLazyListState()
@@ -310,6 +321,7 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                     topInset = topBarHeight,
                     listState = listState,
                     onActiveCover = { activeCoverUrl = it },
+                    onUser = { profileUser = it },
                 )
             }
         }
@@ -331,7 +343,13 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                         gradientGlass = false,
                         navigationIcon = { BackIconButton { nav.pop() } },
                         actions = {
-                            ProfileMoreAction(tag = tag, onSelect = { picked -> FollowTags.set(key, picked) })
+                            ProfileMoreAction(
+                                tag = tag,
+                                uid = uid.orEmpty().ifBlank { App.repo.session?.uid.orEmpty() },
+                                user = profileUser,
+                                nav = nav,
+                                onSelect = { picked -> FollowTags.set(key, picked) },
+                            )
                         },
                     )
                 }
@@ -344,9 +362,49 @@ fun ProfileScreen(nav: NavState, uid: String?) {
  * 主页右上角的三点菜单：给这个人挂一个关注标记，三种互斥，再点一次已选中的那项就取消。
  * 用 COUI 的 ListPopup 而不是 Material 的 DropdownMenu，和首页筛选菜单同一套观感。
  */
+/**
+ * 主页右上角的三点菜单。
+ *
+ * 第一段是三种互斥的关注标记（再点一次取消）；后面依次是关注分组、只读资料、举报与拉黑。
+ * 自己的主页上不出现分组 / 举报 / 拉黑这三项，纯本地模式也藏起来（没有账号可写）。
+ */
 @Composable
-private fun ProfileMoreAction(tag: FollowTag?, onSelect: (FollowTag?) -> Unit) {
+private fun ProfileMoreAction(
+    tag: FollowTag?,
+    uid: String,
+    user: User?,
+    nav: NavState,
+    onSelect: (FollowTag?) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
+    var groupSelection by remember(uid) { mutableStateOf<ProfileGroupSelection?>(null) }
+    var loadingGroups by remember(uid) { mutableStateOf(false) }
+    var infoOpen by remember(uid) { mutableStateOf(false) }
+    var info by remember(uid) { mutableStateOf<ProfileDetail?>(null) }
+    var infoLoading by remember(uid) { mutableStateOf(false) }
+    var qrOpen by remember(uid) { mutableStateOf(false) }
+    var blockOpen by remember(uid) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val guest = App.repo.guest
+    val self = uid.isNotBlank() && uid == App.repo.session?.uid
+    val canManage = uid.isNotBlank() && !self && !guest
+    val profileUrl = "https://weibo.com/u/$uid"
+
+    fun copyLink() {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("url", profileUrl))
+        App.toast("已复制链接")
+    }
+
+    LaunchedEffect(infoOpen, uid) {
+        if (!infoOpen) return@LaunchedEffect
+        info = null
+        infoLoading = true
+        info = runCatching { App.repo.profileDetail(uid) }.getOrNull()
+        infoLoading = false
+    }
+
     Box {
         HighlightedIconButton(
             onClick = { expanded = true },
@@ -367,29 +425,144 @@ private fun ProfileMoreAction(tag: FollowTag?, onSelect: (FollowTag?) -> Unit) {
                 }
             }
         }
-        OverlayListPopup(
+        OverlayCascadingListPopup(
             show = expanded,
-            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-            onDismissRequest = { expanded = false },
-        ) {
-            val dismiss = LocalDismissState.current
-            ListPopupColumn {
-                FollowTag.entries.forEachIndexed { index, item ->
-                    DropdownImpl(
-                        item = DropdownItem(text = item.menuLabel),
-                        optionSize = FollowTag.entries.size,
-                        isSelected = item == tag,
-                        index = index,
-                        groupKey = "tags",
-                        onSelectedIndexChange = {
-                            onSelect(if (item == tag) null else item)
-                            dismiss?.invoke()
+            entries = buildList {
+                add(
+                    DropdownEntry(
+                        items = buildList {
+                            FollowTag.entries.forEach { item ->
+                                add(
+                                    DropdownItem(
+                                        text = item.menuLabel,
+                                        selected = item == tag,
+                                        onClick = { onSelect(if (item == tag) null else item) },
+                                    )
+                                )
+                            }
+                            if (canManage) {
+                                add(
+                                    DropdownItem(
+                                        text = "编辑关注分组",
+                                        enabled = !loadingGroups,
+                                        onClick = {
+                                            if (!loadingGroups) {
+                                                if (user?.following == false) {
+                                                    // 服务端对未关注的人只会静默吞掉，先在本地拦下来。
+                                                    App.toast("先关注对方才能设置关注分组")
+                                                } else {
+                                                    scope.launch {
+                                                        loadingGroups = true
+                                                        runCatching { App.repo.profileGroups(uid) }
+                                                            .onSuccess { groupSelection = it }
+                                                            .onFailure { App.toast(it.message ?: "分组加载失败") }
+                                                        loadingGroups = false
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    )
+                                )
+                            }
                         },
                     )
+                )
+                add(
+                    DropdownEntry(
+                        items = listOf(
+                            DropdownItem(text = "基本资料", onClick = { infoOpen = true }),
+                            DropdownItem(text = "复制链接", onClick = { copyLink() }),
+                            DropdownItem(text = "二维码", onClick = { qrOpen = true }),
+                        ),
+                    )
+                )
+                if (canManage) {
+                    add(
+                        DropdownEntry(
+                            items = listOf(
+                                DropdownItem(
+                                    text = "举报",
+                                    onClick = {
+                                        nav.push(Route.Web(reportUrl(uid), "举报"))
+                                    },
+                                ),
+                                DropdownItem(
+                                    text = "加入黑名单",
+                                    alert = true,
+                                    onClick = { blockOpen = true },
+                                ),
+                            ),
+                        )
+                    )
                 }
-            }
-        }
+            },
+            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+            onDismissRequest = { expanded = false },
+        )
     }
+
+    groupSelection?.let { selection ->
+        ProfileGroupDialog(
+            selection = selection,
+            onCreate = { App.repo.createProfileGroup(it) },
+            onRename = { group, name -> App.repo.renameProfileGroup(group.gid, name) },
+            onDelete = { App.repo.deleteProfileGroup(it.gid) },
+            onReorder = { App.repo.reorderProfileGroups(it) },
+            onDismiss = { groupSelection = null },
+            onConfirm = { selected ->
+                groupSelection = null
+                if (selected.toSet() != selection.assigned.toSet()) {
+                    scope.launch {
+                        runCatching {
+                            App.repo.setProfileGroups(uid, selected.toList(), selection.assigned)
+                        }
+                            .onSuccess { App.toast("已更新关注分组") }
+                            .onFailure { App.toast(it.message ?: "设置分组失败") }
+                    }
+                }
+            },
+        )
+    }
+
+    if (infoOpen) {
+        ProfileInfoDialog(
+            user = user,
+            detail = info,
+            loading = infoLoading,
+            onDismiss = { infoOpen = false },
+        )
+    }
+
+    if (qrOpen) {
+        ProfileQrDialog(user = user, url = profileUrl, onDismiss = { qrOpen = false })
+    }
+
+    if (blockOpen) {
+        ConfirmDialog(
+            title = "加入黑名单",
+            message = "加入后，对方将无法查看你的微博、与你互动或关注你。",
+            confirmText = "加入黑名单",
+            onDismiss = { blockOpen = false },
+            onConfirm = {
+                blockOpen = false
+                scope.launch {
+                    runCatching { App.repo.blockUser(uid) }
+                        .onSuccess {
+                            App.toast("已加入黑名单")
+                            App.notifyFollowChanged()
+                        }
+                        .onFailure { App.toast(it.message ?: "操作失败") }
+                }
+            },
+        )
+    }
+}
+
+/** 网页版举报入口：`type=3` 是举报用户，`url` 指向他的主页。 */
+private fun reportUrl(uid: String): String {
+    val target = URLEncoder.encode("/u/$uid", "UTF-8")
+    return "https://service.account.weibo.com/reportspam" +
+        "?rid=$uid&from=10106&type=3&url=$target&bottomnav=1&wvr=5"
 }
 
 @Composable
@@ -401,6 +574,7 @@ fun ProfileContent(
     extraBottom: Dp = 0.dp,
     listState: LazyListState = rememberLazyListState(),
     onActiveCover: (String?) -> Unit = {},
+    onUser: (User?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var user by remember(uid) { mutableStateOf<User?>(null) }
@@ -446,6 +620,9 @@ fun ProfileContent(
         user = runCatching { App.repo.profile(target) }.getOrNull()
         loadStatuses(true, force = false)
     }
+
+    // 顶栏菜单要用头像和昵称，资料加载完就往上同步一份。
+    LaunchedEffect(user) { onUser(user) }
 
     // 服务端说这个人被设了特别关注、本机又没记过标记，就补一次初值；之后一律以本机为准。
     LaunchedEffect(user?.id, user?.specialFollow) {

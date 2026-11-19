@@ -24,13 +24,25 @@ public class WeiboApplication extends Application {
         System.loadLibrary("wbutil");
     }
 
-    /** 我们不是把 Cobo 的 Application 换成这个类，所以要手动喂一个 context 进来。 */
+    /** 我们不是把 Cobo 的 Application 换成这个类，所以要手动喂一个伪装后的 context 进来。 */
     public static void attach(Context context) {
-        sContext = context.getApplicationContext();
+        sContext = context;
+    }
+
+    public static WeiboApplication create(Context context) {
+        sContext = context;
+        WeiboApplication app = new WeiboApplication();
+        app.attachBaseContext(context);
+        return app;
     }
 
     public static Context getContext() {
         return sContext;
+    }
+
+    @Override
+    public Context getApplicationContext() {
+        return sContext != null ? sContext : super.getApplicationContext();
     }
 
     public native String calculateS(String str);

@@ -57,4 +57,17 @@ class LinkHandlerTest {
         )
         assertNull(unwrapWeiboBrowserUrl("https://weibo.com/1669879400"))
     }
+
+    @Test
+    fun detectsExternalWebLinks() {
+        assertTrue(isExternalWebLink("https://pan.quark.cn/s/abcdef123456"))
+        assertTrue(isExternalWebLink("https://github.com/Costben/COBO"))
+        assertTrue(isExternalWebLink("http://example.com/path?a=1"))
+        assertFalse(isExternalWebLink("https://m.weibo.cn/status/123456"))
+        assertFalse(isExternalWebLink("https://weibo.com/ttarticle/p/show?id=1"))
+        assertFalse(isExternalWebLink("https://card.weibo.com/article/m/show/id/1"))
+        assertFalse(isExternalWebLink("https://vote.weibo.com/h5/index/index?vote_id=1"))
+        assertFalse(isExternalWebLink("sinaweibo://detail?id=1"))
+        assertFalse(isExternalWebLink(""))
+    }
 }

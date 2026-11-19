@@ -1,15 +1,16 @@
 package com.cobo.app.data
 
+import android.content.Context
 import com.cobo.app.App
 import com.sina.weibo.WeiboApplication
+import com.sina.weibo.WeiboSpoofContext
 import com.sina.weibo.utils.NetCheckUtils
 
 /**
- * 打包进来的 `libwbutil.so` 的 Kotlin 包装，负责 `s` / `i` / `cum` 三个参数。
+ * 打包进来的原版 `libwbutil.so` 的 Kotlin 包装，负责 `s` / `i` / `cum` 三个参数。
  *
- * 三个值都来自 native，但只有 `init()` 之后才有意义；没有 `init` 时 `s` 会退化成
- * `00000000` 这类重复字符，看起来「算出了东西」其实是废值，所以这里把初始化放进
- * 单例构造，失败就把 [available] 置 false，调用方自己退回 Web 路由。
+ * 通过 [WeiboSpoofContext] 向未改动的 `libwbutil.so` 提供 `com.sina.weibo` 包名与官方签名摘要，
+ * 确保 `init()` / `newCalculateS()` / `getIValue()` / `getParam()` 算出的密钥与原版完全一致。
  */
 object WeiboNative {
 
@@ -19,11 +20,13 @@ object WeiboNative {
     /** `getIValue` 的固定输入，原版客户端也是这个 15 个 0。 */
     private const val I_INPUT = "000000000000000"
 
+    private val spoofContext: Context? = runCatching {
+        WeiboSpoofContext(App.context)
+    }.getOrNull()
+
     private val app: WeiboApplication? = runCatching {
-        // 先碰一下类：这一步会触发 System.loadLibrary("wbutil") 与 JNI_OnLoad，
-        // 之后再把手里的 context 递给 native 侧回调。
-        WeiboApplication.attach(App.context)
-        WeiboApplication().also { it.init(FROM) }
+        val ctx = spoofContext ?: return@runCatching null
+        WeiboApplication.create(ctx).also { it.init(FROM) }
     }.getOrNull()
 
     val available: Boolean get() = app != null
@@ -39,5 +42,5 @@ object WeiboNative {
 
     /** [unsigned] 是含 query 的完整路径（`/2/xxx?a=b`）。容器接口按这个口径算。 */
     fun cumFrom(unsigned: String): String? =
-        runCatching { NetCheckUtils.getParam(App.context, unsigned) }.getOrNull()?.ifBlank { null }
+        runCatching { NetCheckUtils.getParam(spoofContext ?: App.context, unsigned) }.getOrNull()?.ifBlank { null }
 }

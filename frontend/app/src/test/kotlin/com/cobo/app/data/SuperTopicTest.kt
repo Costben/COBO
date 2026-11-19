@@ -129,8 +129,14 @@ class SuperTopicTest {
             "https://m.weibo.cn/p/index?containerid=%31${id.drop(1)}",
             "https://m.weibo.cn/p/index?containerid=${id}_-_feed",
             "sinaweibo://pageinfo?containerid=$id&extparam=abc",
+            "sinaweibo://pageinfo?pageid=$id&extparam=abc",
             "intent://pageinfo?containerid=$id#Intent;scheme=sinaweibo;package=com.sina.weibo;end",
             "https://weibo.com/page/$id",
+            "https://weibo.com/p/$id",
+            "https://weibo.com/p/$id/super_index",
+            "https://www.weibo.com/p/$id/super_index?from=page_100808",
+            "https://weibo.com/p/index?containerid=$id",
+            "//weibo.com/p/$id/super_index",
         )
         for (url in urls) assertEquals(url, id, superTopicId(url))
     }
@@ -292,6 +298,47 @@ class SuperTopicTest {
         assertEquals(listOf("999888"), videoPage.items.map { it.id })
         assertEquals("超话视频标题", videoPage.items.first().textHtml)
         assertEquals("01:05", videoPage.items.first().createdAt)
+    }
+
+    @Test
+    fun parsesDesktopChaohuaPageResponse() {
+        val root = JSONObject(
+            """{
+              "header": {
+                "type": "sgPage",
+                "data": {
+                  "nick": "崩坏星穹铁道",
+                  "oid": "1022:$id",
+                  "portrait_hd": "https://example.com/hd.jpg",
+                  "desc_list": [{"text": "简介：愿此行，终抵群星！"}],
+                  "desc_more": [
+                    {"desc_num": "390万", "desc": "帖子"},
+                    {"desc_num": "506万", "desc": "开拓者"}
+                  ]
+                }
+              },
+              "channelInfo": {
+                "channels": [
+                  {"flowId": "${id}_-_recommend", "title": "热门", "channelId": "recommend"},
+                  {"flowId": "${id}_-_feed", "title": "最新", "channelId": "feed"}
+                ]
+              },
+              "items": [
+                {"category": "cell", "type": "span"},
+                {"category": "feed", "data": {"id": "1001", "text": "超话帖", "user": {"id": "42", "screen_name": "开拓者"}}}
+              ],
+              "moreInfo": {"params": {"page": 2, "since_id": "123"}}
+            }"""
+        )
+        val parsed = parseDesktopSuperTopic(root, id)
+        assertEquals("崩坏星穹铁道", parsed.info.title)
+        assertEquals("愿此行，终抵群星！", parsed.info.description)
+        assertEquals("https://example.com/hd.jpg", parsed.info.avatar)
+        assertEquals("390万", parsed.info.postCount)
+        assertEquals("506万", parsed.info.fanCount)
+        assertEquals(listOf("1001"), parsed.items.map { it.id })
+        assertEquals(listOf("热门", "最新"), parsed.tabs.map { it.label })
+        assertTrue(parsed.nextCursor?.startsWith("ch:") == true)
     }
 
     private fun assertFailure(root: JSONObject) {

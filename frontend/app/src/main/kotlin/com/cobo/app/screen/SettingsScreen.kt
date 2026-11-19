@@ -124,9 +124,11 @@ fun SettingsScreen(nav: NavState) {
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
     var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
+    var inAppBrowser by remember { mutableStateOf(App.settings.inAppBrowser) }
     var quickSwitchAccount by remember { mutableStateOf(App.settings.quickSwitchAccount) }
     var profileTabAvatar by remember { mutableStateOf(App.settings.profileTabAvatar) }
     var reverseBrowse by remember { mutableStateOf(App.settings.reverseBrowse) }
+    var collapseFollowGroups by remember { mutableStateOf(App.settings.collapseFollowGroups) }
     var message by remember { mutableStateOf("") }
     var logout by remember { mutableStateOf(false) }
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
@@ -286,6 +288,18 @@ fun SettingsScreen(nav: NavState) {
                     )
                     PreferenceDivider()
                     SwitchPreference(
+                        checked = inAppBrowser,
+                        onCheckedChange = {
+                            inAppBrowser = it
+                            App.settings.applyInAppBrowser(it)
+                        },
+                        title = "使用内置浏览器打开外部网页",
+                        summary = "关闭后点击外部链接将直接调用系统浏览器打开",
+                        modifier = Modifier.testTag("settings_in_app_browser"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
                         checked = confirmLike,
                         onCheckedChange = {
                             confirmLike = it
@@ -329,6 +343,18 @@ fun SettingsScreen(nav: NavState) {
                         summary = feedRightTab.label,
                         cardListPosition = CardListPosition.Middle,
                         onClick = { pickFeedRight = true },
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = collapseFollowGroups,
+                        onCheckedChange = {
+                            collapseFollowGroups = it
+                            App.settings.applyCollapseFollowGroups(it)
+                        },
+                        title = "收纳关注分组",
+                        summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
+                        modifier = Modifier.testTag("settings_collapse_follow_groups"),
+                        cardListPosition = CardListPosition.Middle,
                     )
                     PreferenceDivider()
                     ArrowPreference(
@@ -1435,4 +1461,3 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
         }
     }
 }
-

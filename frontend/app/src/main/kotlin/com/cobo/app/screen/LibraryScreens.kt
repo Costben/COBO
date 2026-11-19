@@ -400,6 +400,8 @@ fun AccountsScreen(nav: NavState) {
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
     // 同一时间只展开一行，和通知栏一样：拉开新的一行，上一行自己收回去。
     var openUid by remember { mutableStateOf<String?>(null) }
+    var renewing by remember { mutableStateOf(false) }
+    val screenScope = rememberCoroutineScope()
 
     Scaffold(
         containerColor = pageContainerColor(),
@@ -410,9 +412,43 @@ fun AccountsScreen(nav: NavState) {
                     title = "账号管理",
                     navigationIcon = { BackIconButton { nav.pop() } },
                     actions = {
-                        HighlightedIconButton(onClick = {
-                            nav.push(Route.Login(addAccount = true, fresh = true))
-                        }) {
+                        HighlightedIconButton(
+                            onClick = {
+                                val active = App.repo.session
+                                val hasGsid = active?.loginType == com.cobo.app.data.LOGIN_TYPE_CLIENT &&
+                                    active.gsid.isNotBlank()
+                                if (hasGsid) {
+                                    renewing = true
+                                    App.toast("正在用 gsid 续签…")
+                                    screenScope.launch {
+                                        try {
+                                            val err = App.repo.refreshClientSessionNow()
+                                            if (err == null) {
+                                                accounts = App.store.accounts()
+                                                currentCookie = App.repo.cookie()
+                                            }
+                                            App.toast(
+                                                err?.let { "续签失败：$it" }
+                                                    ?: "续签成功，已刷新四域 Cookie",
+                                            )
+                                        } finally {
+                                            renewing = false
+                                        }
+                                    }
+                                } else {
+                                    val currentName = accounts.firstOrNull { it.uid == active?.uid }?.name
+                                    nav.push(Route.SmsLogin(addAccount = true, relogin = currentName))
+                                }
+                            },
+                            enabled = !renewing,
+                            modifier = Modifier.couiTopAppBarActionItem().testTag("accounts_renew"),
+                        ) {
+                            Icon(COUIIcons.Refresh, "长期续签", Modifier.size(24.dp))
+                        }
+                        HighlightedIconButton(
+                            onClick = { nav.push(Route.Login(addAccount = true, fresh = true)) },
+                            modifier = Modifier.couiTopAppBarActionItem(),
+                        ) {
                             Icon(COUIIcons.Add, "添加账号", Modifier.size(24.dp))
                         }
                     },
@@ -503,7 +539,10 @@ fun AccountsScreen(nav: NavState) {
                                 }
                             }
                             Text(
-                                "UID ${account.uid}",
+                                buildString {
+                                    append("UID ${account.uid}")
+                                    if (account.gsid.isNotBlank()) append(" · 长期续签")
+                                },
                                 fontSize = 11.sp,
                                 color = COUITheme.colorScheme.onSurfaceSecondary,
                             )

@@ -33,20 +33,21 @@ class Store(private val context: Context) {
         return runCatching {
             val o = JSONObject(f.readText())
             val cookies = o.optJSONObject("cookies").toStringMap()
-            val cookie = o.str("cookie").ifBlank { CookieVault.header(cookies, "m.weibo.cn") }
-            // 只有 SUB 在才算登录：服务端删掉 SUB 以后剩下的都是没用的空壳，
-            // 留着它会让 App 以为还登录着，实际每个请求都回 -100。
-            if (!cookie.contains("SUB=")) null
+            val cookie = o.str("cookie").ifBlank { CookieVault.authHeader(cookies, "m.weibo.cn") }
+            val gsid = o.optString("gsid")
+            val loginType = o.optInt("loginType", if (gsid.isNotBlank()) 4 else 1)
+            // 网页会话只有 SUB 在才算登录；客户端会话只要 gsid 还在，就可以靠续签换回新 SUB。
+            if (!cookie.contains("SUB=") && !(loginType == 4 && gsid.isNotBlank())) null
             else Session(
                 cookie = cookie,
                 uid = o.str("uid"),
                 savedAt = o.optLong("savedAt"),
-                gsid = o.optString("gsid"),
+                gsid = gsid,
                 gsidAt = o.optLong("gsidAt"),
                 accessToken = o.optString("accessToken"),
                 expires = o.optLong("expires"),
                 source = o.optString("source", "web"),
-                loginType = o.optInt("loginType", if (o.optString("gsid").isNotBlank()) 4 else 1),
+                loginType = loginType,
                 cookies = cookies,
             )
         }.getOrNull()
@@ -140,15 +141,51 @@ class Store(private val context: Context) {
      */
     fun deviceId(): String {
         val f = file("device.json")
-        val saved = if (f.exists()) {
-            runCatching { JSONObject(f.readText()).optString("i") }.getOrNull()
+        val obj = if (f.exists()) {
+            runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
         } else {
-            null
+            JSONObject()
         }
-        if (!saved.isNullOrBlank()) return saved
+        val saved = obj.optString("i")
+        if (saved.isNotBlank()) return saved
         val id = "86" + (1_000_000_000_000L + (Math.random() * 8_999_999_999_999L).toLong())
-        write("device.json", JSONObject().put("i", id))
+        write("device.json", obj.put("i", id))
         return id
+    }
+
+    /** 持久化 Share 客户端通路的 `aid` 与 `did`，避免每次请求重领 `guest/login`。 */
+    fun clientAid(): String {
+        val f = file("device.json")
+        if (!f.exists()) return ""
+        return runCatching {
+            val obj = JSONObject(f.readText())
+            if (obj.optInt("aidV", 1) < 2) "" else obj.optString("aid")
+        }.getOrDefault("")
+    }
+
+    fun saveClientAid(aid: String) {
+        if (aid.isBlank()) return
+        val f = file("device.json")
+        val obj = if (f.exists()) {
+            runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+        } else {
+            JSONObject()
+        }
+        write("device.json", obj.put("aid", aid).put("aidV", 2))
+    }
+
+    fun clientDid(): String {
+        val f = file("device.json")
+        val obj = if (f.exists()) {
+            runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+        } else {
+            JSONObject()
+        }
+        val saved = obj.optString("did")
+        if (saved.isNotBlank()) return saved
+        val did = java.util.UUID.randomUUID().toString().replace("-", "")
+        write("device.json", obj.put("did", did))
+        return did
     }
 
     fun clearSession() = file("session.json").delete()

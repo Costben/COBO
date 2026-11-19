@@ -55,23 +55,39 @@ object App {
 
     fun isRepoReady(): Boolean = ::repo.isInitialized
 
-    /** Coil 专用客户端：微博附件域名要带登录 cookie。 */
+    /** Coil 专用客户端：微博图床与附件域名补全 Referer/UA 及登录 cookie。 */
     val imageClient: OkHttpClient by lazy {
         OkHttpClient.Builder().addInterceptor { chain ->
             val req = chain.request()
-            val cookie = runCatching { repo.cookie() }.getOrNull()
-            if (cookie.isNullOrBlank() || !req.url.host.endsWith("weibo.com")) {
+            val host = req.url.host.lowercase()
+            val isWeiboHost = IMAGE_REFERER_HOSTS.any { host == it || host.endsWith(".$it") }
+            if (!isWeiboHost) {
                 chain.proceed(req)
             } else {
-                chain.proceed(
-                    req.newBuilder()
-                        .header("Cookie", cookie)
-                        .header("User-Agent", com.cobo.app.data.Api.WEB_UA)
-                        .build(),
-                )
+                val referer = if (host == "upload.api.weibo.com" || host == "attachment.api.weibo.com") {
+                    "https://api.weibo.com/chat/"
+                } else {
+                    "https://weibo.com/"
+                }
+                val builder = req.newBuilder()
+                    .header("User-Agent", com.cobo.app.data.Api.WEB_UA)
+                    .header("Referer", referer)
+                if (host == "weibo.com" || host.endsWith(".weibo.com")) {
+                    val cookie = runCatching { repo.desktopCookieOrNull() ?: repo.cookie() }.getOrNull()
+                    if (!cookie.isNullOrBlank()) builder.header("Cookie", cookie)
+                }
+                chain.proceed(builder.build())
             }
         }.build()
     }
+
+    private val IMAGE_REFERER_HOSTS = listOf(
+        "sinaimg.cn",
+        "sinaimg.com",
+        "weibocdn.com",
+        "weibo.com",
+        "weibo.cn",
+    )
 
     var feedVersion by mutableIntStateOf(0)
         private set

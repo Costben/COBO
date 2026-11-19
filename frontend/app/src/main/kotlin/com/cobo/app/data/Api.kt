@@ -157,6 +157,99 @@ object Api {
         execute(request)
     }
 
+    /**
+     * 桌面端表单 POST：`/ajax/profile/setGroup` 这类接口只收 urlencoded，XSRF 令牌放在头里，
+     * 和 [post] 那份 m.weibo.cn 的 `st` 不是同一套。
+     */
+    suspend fun postDesktopForm(
+        url: String,
+        form: Map<String, String>,
+        cookie: String?,
+        xsrfToken: String?,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val body = FormBody.Builder().apply {
+            form.forEach { (key, value) -> add(key, value) }
+        }.build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", DESKTOP_UA)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "https://weibo.com/")
+            .header("Origin", "https://weibo.com")
+            .header("X-Requested-With", "XMLHttpRequest")
+            .apply {
+                if (!cookie.isNullOrBlank()) header("Cookie", cookie)
+                if (!xsrfToken.isNullOrBlank()) header("X-XSRF-TOKEN", xsrfToken)
+            }
+            .post(body)
+            .build()
+        execute(request)
+    }
+
+    /** 网页版私信（`api.weibo.com/webim/...`）：走 `.weibo.com` Cookie 与 `api.weibo.com/chat/` Referer。 */
+    suspend fun getWebIm(url: String, cookie: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", DESKTOP_UA)
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Referer", "https://api.weibo.com/chat/")
+                .header("Origin", "https://api.weibo.com")
+                .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+                .get()
+                .build()
+            execute(request)
+        }
+
+    suspend fun postWebIm(url: String, form: Map<String, String>, cookie: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body = FormBody.Builder().apply {
+                form.forEach { (key, value) -> add(key, value) }
+            }.build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", DESKTOP_UA)
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Referer", "https://api.weibo.com/chat/")
+                .header("Origin", "https://api.weibo.com")
+                .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+                .post(body)
+                .build()
+            execute(request)
+        }
+
+    /** 桌面端发博配图上传（`picupload.weibo.com`）。 */
+    suspend fun uploadDesktopPic(
+        bytes: ByteArray,
+        uid: String,
+        rawMd5: String,
+        mime: String,
+        cookie: String,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val target = url(
+            "https://picupload.weibo.com/interface/upload.php",
+            linkedMapOf(
+                "file_source" to "1",
+                "cs" to java.util.zip.CRC32().apply { update(bytes) }.value.toString(),
+                "ent" to "miniblog",
+                "appid" to "339644097",
+                "uid" to uid,
+                "raw_md5" to rawMd5,
+                "ori" to "1",
+                "data" to "1",
+            ),
+        )
+        val request = Request.Builder()
+            .url(target)
+            .header("User-Agent", DESKTOP_UA)
+            .header("Referer", "https://weibo.com/")
+            .header("Origin", "https://weibo.com")
+            .header("Cookie", cookie)
+            .post(bytes.toRequestBody(mime.toMediaType()))
+            .build()
+        execute(request)
+    }
+
     suspend fun post(
         url: String,
         form: Map<String, String>,
@@ -192,6 +285,7 @@ object Api {
             ) {
                 return@withContext current
             }
+            if (superTopicId(current) != null) return@withContext current
             val next = runCatching {
                 val request = Request.Builder()
                     .url(current)
@@ -213,6 +307,11 @@ object Api {
                         location
                     } else {
                         response.request.url.resolve(location)?.toString() ?: location
+                    }
+                    if (resolvedLocation.contains("passport.weibo.com/visitor/", ignoreCase = true) ||
+                        resolvedLocation.contains("visitor.passport.weibo.cn/", ignoreCase = true)
+                    ) {
+                        return@withContext current
                     }
                     com.cobo.app.ui.unwrapSinaUrl(resolvedLocation) ?: resolvedLocation
                 }
@@ -302,6 +401,12 @@ object Api {
     fun clientUa(): String =
         "${Build.MANUFACTURER}-${Build.MODEL}__weibo__11.6.3__android__android${Build.VERSION.RELEASE}"
 
+    /** 容器接口 HTTP `User-Agent` 头，对应 Share `PB.O00000Oo`。 */
+    fun clientHeaderUa(): String =
+        "${Build.MODEL}_${Build.VERSION.RELEASE}_weibo_11.6.3_android"
+
+    fun deviceName(): String = "${Build.MANUFACTURER}-${Build.MODEL}"
+
     fun oldWm(): String = when (Build.MANUFACTURER.uppercase()) {
         "ONEPLUS" -> "14038_0004"
         "MEIZU" -> "9848_0009"
@@ -357,6 +462,52 @@ object Api {
             .post(body)
             .build()
         executeFull(request)
+    }
+
+    data class ContainerResponse(
+        val json: JSONObject,
+        val setCookie: List<String>,
+        val xValidator: String? = null,
+    )
+
+    /**
+     * 按 Share OkHttp 拦截器口径向 `api.weibo.cn/2/` 发 POST：
+     * 不伪造网页 `Referer`、透传 `User-Agent` / `X-Validator`，并在服务端用 HTTP 4xx
+     * 返回 `-1005` / `-1007` 等 JSON 错误体时仍将其解成 [JSONObject]。
+     */
+    suspend fun containerPostShare(
+        path: String,
+        query: Map<String, String?>,
+        form: Map<String, String>,
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): ContainerResponse = withContext(Dispatchers.IO) {
+        val target = url("https://api.weibo.cn/2/$path", query)
+        val body = FormBody.Builder().apply {
+            form.forEach { (key, value) -> add(key, value) }
+        }.build()
+        val request = Request.Builder()
+            .url(target)
+            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
+            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
+            .post(body)
+            .build()
+        executeContainerShare(request)
+    }
+
+    private fun executeContainerShare(request: Request): ContainerResponse {
+        return client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            val setCookie = response.headers.values("Set-Cookie")
+            val xValidator = response.header("X-Validator")?.takeIf { it.isNotBlank() }
+            if (text.trimStart().startsWith("{")) {
+                val json = runCatching { JSONObject(text) }.getOrNull()
+                if (json != null) return@use ContainerResponse(json, setCookie, xValidator)
+            }
+            if (!response.isSuccessful) throw ApiHttpException(response.code, text)
+            if (text.isBlank()) throw ApiException("空响应")
+            throw ApiException("响应不是 JSON")
+        }
     }
 
     @Suppress("unused")

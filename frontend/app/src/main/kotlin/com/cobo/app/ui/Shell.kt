@@ -1274,7 +1274,7 @@ private fun MainTitleRow(
                     if (!guest) {
                         SearchBarActionButton(
                             text = "通知",
-                            onClick = { nav.push(Route.Web("https://m.weibo.cn/message/", "通知")) },
+                            onClick = { nav.push(Route.Notifications) },
                             modifier = Modifier.testTag("top_notice"),
                         )
                     }
@@ -1627,62 +1627,16 @@ private fun FeedTabs(
                     }
                 }
                 if (menu) {
-                    // 内置流是一级菜单；关注分组是账号里的数据、组数不可控，收进二级菜单，
-                    // 不让它把一级菜单撑成一长条。当前选中的分组挂在「关注分组」这一行的
-                    // 第二行小字上，进了二级也能看出选中在哪一组。
-                    val builtinOptions = centerOptions.filterNot { it.isGroup }
-                    val groupOptions = centerOptions.filter { it.isGroup }
-                    val currentGroupTitle = centerTab.group
-                        ?.takeIf { centerTab.isGroup }
-                        ?.title
-                        ?.takeIf { it.isNotBlank() }
+                    // 内置流留在一级菜单；关注分组根据设置选择「收纳进二级菜单」或「直接平铺展开在一级菜单」。
+                    val collapseFollowGroups = App.settings.collapseFollowGroups
                     OverlayCascadingListPopup(
                         show = filterMenuExpanded,
-                        entries = buildList {
-                            builtinOptions.firstOrNull { it.item == FeedTabItem.Follow }?.let { follow ->
-                                add(
-                                    DropdownEntry(
-                                        items = listOf(
-                                            DropdownItem(
-                                                text = "全部",
-                                                selected = follow.key == centerTab.key,
-                                                onClick = { onCenterSelected(follow) },
-                                            )
-                                        )
-                                    )
-                                )
-                            }
-                            val filters = builtinOptions
-                                .filterNot { it.item == FeedTabItem.Follow }
-                                .map { option ->
-                                    DropdownItem(
-                                        text = option.label,
-                                        selected = option.key == centerTab.key,
-                                        onClick = { onCenterSelected(option) },
-                                    )
-                                }
-                            if (filters.isNotEmpty()) add(DropdownEntry(items = filters))
-                            if (groupOptions.isNotEmpty()) {
-                                add(
-                                    DropdownEntry(
-                                        items = listOf(
-                                            DropdownItem(
-                                                text = FeedTabItem.Group.label,
-                                                selected = centerTab.isGroup,
-                                                summary = currentGroupTitle,
-                                                children = groupOptions.map { option ->
-                                                    DropdownItem(
-                                                        text = option.label,
-                                                        selected = option.key == centerTab.key,
-                                                        onClick = { onCenterSelected(option) },
-                                                    )
-                                                },
-                                            )
-                                        )
-                                    )
-                                )
-                            }
-                        },
+                        entries = buildCenterMenuEntries(
+                            centerOptions = centerOptions,
+                            centerTab = centerTab,
+                            collapseFollowGroups = collapseFollowGroups,
+                            onCenterSelected = onCenterSelected,
+                        ),
                         popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
                         onDismissRequest = onFilterMenuDismiss,
                     )
@@ -1690,6 +1644,84 @@ private fun FeedTabs(
             }
         },
     )
+}
+
+/**
+ * 构建首页中间栏下拉菜单分段：第一段为「全部」，第二段为其余内置流，
+ * 第三段按 [collapseFollowGroups] 将关注分组收进二级子菜单或直接全部平铺展开。
+ */
+internal fun buildCenterMenuEntries(
+    centerOptions: List<FeedTabSelection>,
+    centerTab: FeedTabSelection,
+    collapseFollowGroups: Boolean,
+    onCenterSelected: (FeedTabSelection) -> Unit,
+): List<DropdownEntry> {
+    val builtinOptions = centerOptions.filterNot { it.isGroup }
+    val groupOptions = centerOptions.filter { it.isGroup }
+    val currentGroupTitle = centerTab.group
+        ?.takeIf { centerTab.isGroup }
+        ?.title
+        ?.takeIf { it.isNotBlank() }
+    return buildList {
+        builtinOptions.firstOrNull { it.item == FeedTabItem.Follow }?.let { follow ->
+            add(
+                DropdownEntry(
+                    items = listOf(
+                        DropdownItem(
+                            text = "全部",
+                            selected = follow.key == centerTab.key,
+                            onClick = { onCenterSelected(follow) },
+                        )
+                    )
+                )
+            )
+        }
+        val filters = builtinOptions
+            .filterNot { it.item == FeedTabItem.Follow }
+            .map { option ->
+                DropdownItem(
+                    text = option.label,
+                    selected = option.key == centerTab.key,
+                    onClick = { onCenterSelected(option) },
+                )
+            }
+        if (filters.isNotEmpty()) add(DropdownEntry(items = filters))
+        if (groupOptions.isNotEmpty()) {
+            if (collapseFollowGroups) {
+                add(
+                    DropdownEntry(
+                        items = listOf(
+                            DropdownItem(
+                                text = FeedTabItem.Group.label,
+                                selected = centerTab.isGroup,
+                                summary = currentGroupTitle,
+                                children = groupOptions.map { option ->
+                                    DropdownItem(
+                                        text = option.label,
+                                        selected = option.key == centerTab.key,
+                                        onClick = { onCenterSelected(option) },
+                                    )
+                                },
+                            )
+                        )
+                    )
+                )
+            } else {
+                add(
+                    DropdownEntry(
+                        items = groupOptions.map { option ->
+                            DropdownItem(
+                                text = option.label,
+                                summary = FeedTabItem.Group.label,
+                                selected = option.key == centerTab.key,
+                                onClick = { onCenterSelected(option) },
+                            )
+                        }
+                    )
+                )
+            }
+        }
+    }
 }
 
 @Composable

@@ -178,12 +178,15 @@ sealed interface Route {
     data object Main : Route
     /** [relogin] 是要重新登录的那个已保存账号的名字，用来提示该登哪个号。 */
     data class Login(val addAccount: Boolean = false, val fresh: Boolean = false, val relogin: String? = null) : Route
+    /** 手机号 + 短信验证码登录（Share 方案）：拿到 gsid 后可长期自动换取新 Cookie。 */
+    data class SmsLogin(val addAccount: Boolean = false, val relogin: String? = null) : Route
     data class Detail(val id: String, val mid: String, val readOnly: Boolean = false) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
     data class Relations(val uid: String, val kind: RelationKind) : Route
     data class Publish(val draft: String = "") : Route
     data class Chat(val uid: String = "", val name: String, val gid: String = "") : Route
+    data object Notifications : Route
     data class Web(val url: String, val title: String) : Route
     data class Container(val cid: String, val title: String) : Route
     data class SuperTopic(val containerId: String, val fallbackUrl: String) : Route

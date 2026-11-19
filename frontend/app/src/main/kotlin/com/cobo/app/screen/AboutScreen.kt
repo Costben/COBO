@@ -3,11 +3,9 @@ package com.cobo.app.screen
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -43,6 +41,7 @@ import com.cobo.app.ui.components.SectionTitle
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.openExternalUrl
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import io.github.suqi8.coui.kmp.basic.Card
@@ -331,13 +330,3 @@ private fun currentVersionCode(context: Context): Long = runCatching {
         info.versionCode.toLong()
     }
 }.getOrDefault(0L)
-
-private fun openExternalUrl(context: Context, url: String) {
-    runCatching {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-    }.onFailure {
-        Toast.makeText(context, "没有可用的浏览器", Toast.LENGTH_SHORT).show()
-    }
-}

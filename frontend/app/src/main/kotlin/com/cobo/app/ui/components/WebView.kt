@@ -1,17 +1,22 @@
 package com.cobo.app.ui.components
 
 import android.annotation.SuppressLint
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cobo.app.App
@@ -24,13 +29,23 @@ fun WeiboWebView(
     modifier: Modifier = Modifier,
     useSessionCookie: Boolean = true,
     clearCookies: Boolean = false,
+    userAgent: String = Api.WEB_UA,
+    onConfigure: (WebView) -> Unit = {},
     onCreated: (WebView) -> Unit = {},
     onBackAvailable: (Boolean) -> Unit = {},
+    onCustomScheme: (String) -> Boolean = { false },
+    onProgressChanged: (WebView, Int) -> Unit = { _, _ -> },
     onPageFinished: (String) -> Unit = {},
+    onConsoleMessage: (String) -> Unit = {},
+    onReceivedError: (String, Int, String) -> Unit = { _, _, _ -> },
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val currentOnPageFinished by rememberUpdatedState(onPageFinished)
     val currentOnBackAvailable by rememberUpdatedState(onBackAvailable)
+    val currentOnProgressChanged by rememberUpdatedState(onProgressChanged)
+    val currentOnConsoleMessage by rememberUpdatedState(onConsoleMessage)
+    val currentOnReceivedError by rememberUpdatedState(onReceivedError)
+    var loadedUrl by remember { mutableStateOf(url) }
     val webView = remember {
         if (clearCookies) {
             CookieManager.getInstance().removeAllCookies(null)
@@ -39,17 +54,28 @@ fun WeiboWebView(
         WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.databaseEnabled = true
             settings.useWideViewPort = true
-            settings.loadWithOverviewMode = false
+            settings.loadWithOverviewMode = true
+            settings.textZoom = 100
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             settings.mediaPlaybackRequiresUserGesture = false
-            settings.userAgentString = Api.WEB_UA
+            settings.userAgentString = userAgent
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView, newProgress: Int) {
+                    currentOnProgressChanged(view, newProgress)
+                }
+
+                override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                    currentOnConsoleMessage("${consoleMessage.messageLevel()}: ${consoleMessage.message()}")
+                    return false
+                }
+            }
             if (useSessionCookie) {
                 val cookies = App.repo.session?.cookies
                 if (!cookies.isNullOrEmpty()) {
@@ -72,6 +98,7 @@ fun WeiboWebView(
                     if (target.startsWith("http://", true) || target.startsWith("https://", true)) {
                         return false
                     }
+                    if (onCustomScheme(target)) return true
                     // 拦截跳端 scheme（intent://、iqiyi://、sinaweibo:// 等），防止 WebView 报 ERR_UNKNOWN_URL_SCHEME。
                     extractIntentFallbackUrl(target)?.let { view.loadUrl(it) }
                     return true
@@ -81,7 +108,36 @@ fun WeiboWebView(
                     currentOnBackAvailable(view.canGoBack())
                     currentOnPageFinished(url.orEmpty())
                 }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    error: WebResourceError,
+                ) {
+                    if (request.isForMainFrame) {
+                        currentOnReceivedError(
+                            request.url?.toString().orEmpty(),
+                            error.errorCode,
+                            error.description?.toString().orEmpty(),
+                        )
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    errorResponse: WebResourceResponse,
+                ) {
+                    if (request.isForMainFrame) {
+                        currentOnReceivedError(
+                            request.url?.toString().orEmpty(),
+                            errorResponse.statusCode,
+                            errorResponse.reasonPhrase.orEmpty(),
+                        )
+                    }
+                }
             }
+            onConfigure(this)
             loadUrl(url)
         }
     }
@@ -98,7 +154,10 @@ fun WeiboWebView(
         factory = { webView },
         modifier = modifier,
         update = { view ->
-            if (view.url != url) view.loadUrl(url)
+            if (loadedUrl != url) {
+                loadedUrl = url
+                view.loadUrl(url)
+            }
         },
     )
 }
