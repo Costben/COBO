@@ -117,6 +117,7 @@ fun rememberExpandOrigin(cornerRadius: Dp = 24.dp): ExpandOrigin {
 @Stable
 internal class ExpandOriginVisibility(
     private val stack: List<NavEntry>,
+    private val paneEntry: () -> NavEntry? = { null },
 ) {
     fun isHidden(origin: ExpandOrigin, currentEntry: NavEntry?): Boolean {
         val startIndex = if (currentEntry != null) {
@@ -125,8 +126,12 @@ internal class ExpandOriginVisibility(
         } else {
             1
         }
+        val pane = paneEntry()
         for (i in stack.lastIndex downTo startIndex) {
             val entry = stack[i]
+            // A page in the right pane sits beside the list, not over it: the card it was opened
+            // from stays visible, so its snapshot must keep drawing.
+            if (entry === pane) continue
             if (!entry.expand) continue
             if (matches(entry.origin, origin)) return true
         }
@@ -263,6 +268,29 @@ class NavState {
     var mainTab by mutableIntStateOf(App.settings.mainTab)
         private set
 
+    /** Bumped on every stack change, including a pane page being swapped for another. */
+    var navigationVersion by mutableIntStateOf(0)
+        private set
+
+    /**
+     * True while the window is wide enough to read a page beside the list. The host sets this from
+     * the window configuration, so [push] knows whether a page takes the right pane instead of
+     * covering the whole window.
+     */
+    var wide by mutableStateOf(false)
+
+    /**
+     * The detail page drawn beside the list. Only a detail opened straight from the main screen
+     * takes the pane; a deeper page still covers the window, so the list on the left is always the
+     * page the detail was opened from.
+     */
+    val paneEntry: NavEntry?
+        get() {
+            if (!wide || stack.size != 2) return null
+            if (stack[0].route !is Route.Main) return null
+            return stack[1].takeIf { it.route is Route.Detail }
+        }
+
     val current: Route get() = stack.last().route
 
     fun attach(scope: CoroutineScope) {
@@ -275,8 +303,29 @@ class NavState {
     }
 
     fun push(route: Route, origin: ExpandOrigin? = null) {
-        val entry = NavEntry(route, origin, initialProgress = 0f, initialFade = 0f)
+        navigationVersion++
+        // Tapping another post while a detail sits in the pane swaps the pane's page. Stacking it
+        // would cover the split with a third full-screen page the user never asked for.
+        val pane = paneEntry
+        if (pane != null && route is Route.Detail) {
+            pane.exiting = true
+            stack.remove(pane)
+            stack.add(NavEntry(route, initialProgress = 1f, initialFade = 1f))
+            return
+        }
+        // A page hosted in the pane is already on screen beside the list, so it arrives settled
+        // instead of sliding in or growing out of its card over the list.
+        val opensInPane = wide && route is Route.Detail && stack.size == 1 &&
+            stack[0].route is Route.Main
+        val entry = NavEntry(
+            route,
+            // The pane has no frame to grow from or return into; the card stays in the list.
+            if (opensInPane) null else origin,
+            initialProgress = if (opensInPane) 1f else 0f,
+            initialFade = if (opensInPane) 1f else 0f,
+        )
         stack.add(entry)
+        if (opensInPane) return
         val scope = host ?: return
         scope.launch {
             withFrameNanos { }
@@ -309,10 +358,28 @@ class NavState {
         }
     }
 
+    /** Closes a page hosted in the right pane. It left the window without covering anything, so
+     * there is no full-page exit to play. */
+    fun dismissPane() {
+        val entry = paneEntry ?: return
+        if (entry.exiting) return
+        entry.exiting = true
+        stack.remove(entry)
+        navigationVersion++
+    }
+
     fun pop(initialVelocity: Offset = Offset.Zero) {
         if (stack.size <= 1) return
         val entry = stack.last()
         if (entry.exiting) return
+        navigationVersion++
+        // A pane page never covered the list, so it hands the window back at once instead of
+        // shrinking into a card the user can still see.
+        if (entry === paneEntry) {
+            entry.exiting = true
+            stack.remove(entry)
+            return
+        }
         entry.exiting = true
         entry.origin?.let { it.refreshKey++ }
         val scope = host
@@ -380,6 +447,7 @@ class NavState {
     fun reset(route: Route) {
         stack.clear()
         stack.add(NavEntry(route))
+        navigationVersion++
     }
 
     /** Removes an entry whose progress was already driven to zero by a back gesture. */
@@ -387,6 +455,7 @@ class NavState {
         if (stack.lastOrNull() === entry) {
             entry.exiting = true
             stack.remove(entry)
+            navigationVersion++
         }
     }
 
@@ -397,6 +466,7 @@ class NavState {
         if (entry.exiting) return
         entry.exiting = true
         stack.remove(entry)
+        navigationVersion++
     }
 }
 

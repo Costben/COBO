@@ -11,9 +11,12 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -46,6 +50,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -119,11 +124,36 @@ import kotlinx.coroutines.withContext
  */
 private const val LandedProgress = 0.2f
 
+/** Width at which the next page is read beside the list instead of over it. */
+private const val WideLayoutMinWidthDp = 600
+
+/**
+ * The list's share of a wide window. Weights are relative: 0.72 against the pane's 1 leaves the
+ * list about 42% — roughly 250dp on a 600dp window, 350dp on a phone in landscape.
+ */
+private const val ListPaneWeight = 0.72f
+private const val DetailPaneWeight = 1f
+
 @Composable
 fun CoboRoot() {
     val nav = remember { NavState() }
     val scope = rememberCoroutineScope()
     SideEffect { nav.attach(scope) }
+
+    // A wide window reads the next page beside the list instead of over it. The host owns the
+    // window measurements, so it tells the navigator once per configuration change.
+    val wide = LocalConfiguration.current.screenWidthDp >= WideLayoutMinWidthDp
+    SideEffect { nav.wide = wide }
+
+    // The pane belongs to the tab it was opened from: switching tabs closes it, so the left list
+    // and the right page never show two different sections.
+    var lastMainTab by remember { mutableIntStateOf(nav.mainTab) }
+    LaunchedEffect(nav.mainTab) {
+        if (nav.mainTab != lastMainTab) {
+            lastMainTab = nav.mainTab
+            nav.dismissPane()
+        }
+    }
 
     // 启动时顺手续一次网页登录态。
     LaunchedEffect(Unit) { App.repo.refreshSessionIfStale() }
@@ -137,7 +167,7 @@ fun CoboRoot() {
     // The search field keeps focus after its result opens a page, and the IME's candidate bar
     // then floats over whatever is on top. Drop focus on every navigation.
     val focusManager = LocalFocusManager.current
-    LaunchedEffect(nav.stack.size) { focusManager.clearFocus(force = true) }
+    LaunchedEffect(nav.navigationVersion) { focusManager.clearFocus(force = true) }
 
     CoboPredictiveBackHandler(nav)
 
@@ -241,7 +271,9 @@ fun CoboRoot() {
     val blur = blurEffectsEnabled()
     // 缩略图把自己的屏幕位置登记在这里，看图页才能从被点的那张长出来、再缩回去。
     val imageOrigins = remember { ImageOrigins() }
-    val expandOriginVisibility = remember(nav) { ExpandOriginVisibility(nav.stack) }
+    val expandOriginVisibility = remember(nav) {
+        ExpandOriginVisibility(nav.stack, paneEntry = { nav.paneEntry })
+    }
 
     // 顶栏和底栏在各自的节点里钉密度（见 [PinnedBarDensity]），页面内容跟随系统「显示大小」。
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
@@ -257,6 +289,7 @@ fun CoboRoot() {
                 .semantics { testTagsAsResourceId = true }
         ) {
             val widthPx = constraints.maxWidth.toFloat()
+            val windowWidth = maxWidth
             val screenCorner = rememberScreenCornerRadius()
             Box(
                 Modifier
@@ -269,17 +302,60 @@ fun CoboRoot() {
                 val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
                 val pageSurface = pageContainerColor()
                 Box(Modifier.fillMaxSize().background(pageSurface))
+                val paneEntry = nav.paneEntry
+                // A pane entry is still drawn by the same RouteLayer, only inside a narrower box,
+                // so the list keeps its composition and scroll position when the pane opens.
+                val listPaneWidth = windowWidth * (ListPaneWeight / (ListPaneWeight + DetailPaneWeight))
+                val detailPaneWidth = windowWidth - listPaneWidth
                 nav.stack.forEachIndexed { index, entry ->
                     key(entry.id) {
-                        RouteLayer(
-                            entry = entry,
-                            index = index,
-                            lastIndex = nav.stack.lastIndex,
-                            widthPx = widthPx,
-                            screenCorner = screenCorner,
-                            nav = nav,
-                        )
+                        val inPane = paneEntry != null
+                        val isPane = entry === paneEntry
+                        val lastIndex = when {
+                            !inPane -> nav.stack.lastIndex
+                            isPane -> 1
+                            else -> 0
+                        }
+                        Box(
+                            Modifier
+                                .then(
+                                    when {
+                                        !inPane -> Modifier.fillMaxSize()
+                                        index == 0 -> Modifier
+                                            .align(Alignment.CenterStart)
+                                            .width(listPaneWidth)
+                                            .fillMaxHeight()
+                                        else -> Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .width(detailPaneWidth)
+                                            .fillMaxHeight()
+                                    }
+                                )
+                                .zIndex(if (index == nav.stack.lastIndex) 2f else 1f)
+                        ) {
+                            RouteLayer(
+                                entry = entry,
+                                index = if (inPane) (if (isPane) 1 else 0) else index,
+                                lastIndex = lastIndex,
+                                widthPx = widthPx,
+                                screenCorner = screenCorner,
+                                nav = nav,
+                            )
+                        }
                     }
+                }
+                if (paneEntry != null) {
+                    // The two panes share one surface tone, so a hairline is what tells the reader
+                    // where the list ends.
+                    Box(
+                        Modifier
+                            .align(Alignment.CenterStart)
+                            .offset(x = listPaneWidth)
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(COUITheme.colorScheme.dividerLine)
+                            .zIndex(2.5f)
+                    )
                 }
                 // 所以四角补一层页面底色：只画在超级椭圆外侧，页面本身一个像素都不盖，窗口怎么
                 // 缩、缩到哪个大小，漏出来的都还是这一页的调子。
@@ -386,7 +462,9 @@ private fun LikeConfirmPrompt() {
 fun CoboPredictiveBackHandler(nav: NavState) {
     // 根页面不注册返回回调：交给系统处理，才会播预测性返回退回桌面的动画。
     val hasPage = nav.stack.size > 1
-    if (!App.settings.predictiveBack) {
+    // A pane page never covered the window, so there is no card to shrink back into and no page
+    // underneath to preview: back simply closes it, like a regular panel.
+    if (!App.settings.predictiveBack || nav.paneEntry != null) {
         BackHandler(enabled = hasPage) {
             if (nav.stack.lastOrNull()?.exiting != true) nav.pop()
         }
@@ -477,6 +555,10 @@ fun CoboPredictiveBackHandler(nav: NavState) {
     }
 }
 
+/**
+ * The right-hand page of a wide window. It is already on screen beside the list, so it draws
+ * settled: no slide from the edge, no card frame, and no return target to hand back to.
+ */
 @Composable
 private fun RouteLayer(
     entry: NavEntry,
