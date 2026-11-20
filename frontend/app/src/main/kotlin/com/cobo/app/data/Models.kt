@@ -220,11 +220,14 @@ internal fun picsOf(o: JSONObject): List<Pic> {
 
 private fun picOf(p: JSONObject): Pic? {
     val large = p.optJSONObject("large") ?: p.optJSONObject("largest")
-    val url = p.str("url").ifBlank { large?.str("url").orEmpty() }
+    val thumbObj = p.optJSONObject("bmiddle") ?: p.optJSONObject("thumbnail")
+    val url = p.str("url")
+        .ifBlank { thumbObj?.str("url").orEmpty() }
+        .ifBlank { large?.str("url").orEmpty() }
     if (url.isBlank() && large == null) return null
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
     return Pic(
-        thumb = url.ifBlank { large?.str("url").orEmpty() },
+        thumb = url,
         large = large?.str("url")?.ifBlank { url } ?: url,
         width = geo?.int("width") ?: large?.int("width") ?: p.int("width"),
         height = geo?.int("height") ?: large?.int("height") ?: p.int("height"),
@@ -527,10 +530,18 @@ data class Status(
                 page?.str("type") == "23" ||
                 voteId != null
 
+            val rawText = o.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
+                ?: o.str("text")
+            val htmlText = formatContainerTextToHtml(
+                rawText,
+                o.optJSONArray("url_struct"),
+                o.optJSONArray("topic_struct"),
+            )
+
             return Status(
                 id = id,
                 mid = o.str("mid").ifBlank { id },
-                textHtml = enrichSuperTopicLinks(o.str("text"), o.optJSONArray("url_struct")),
+                textHtml = enrichSuperTopicLinks(htmlText, o.optJSONArray("url_struct")),
                 createdAt = o.str("created_at"),
                 source = stripHtml(o.str("source")),
                 user = User.from(o.optJSONObject("user")),
@@ -551,6 +562,154 @@ data class Status(
             )
         }
     }
+}
+
+private val WeiboHtmlTagRegex = Regex(
+    """</?(?:a|br|span|img|p|div|b|i|em|strong)\b""",
+    RegexOption.IGNORE_CASE,
+)
+
+private val ContainerRichTokenRegex = Regex(
+    """(https?://[^\s<>"'\u200B\u00A0]+)|(#[^#\n]+?#)|(@[A-Za-z0-9_\-\u4e00-\u9fa5·]+)"""
+)
+
+private fun escapeHtmlText(text: String): String = text
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\n", "<br/>")
+
+private fun escapeHtmlAttr(attr: String): String = attr
+    .replace("&", "&amp;")
+    .replace("\"", "&quot;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+
+/**
+ * 容器端（`api.weibo.cn/2/`）下发的正文与评论是纯文本 + `url_struct` / `topic_struct`，
+ * 没有网页端的 `<a href>` 标签和 `<br/>`。这里在保留已有 HTML 不动的前提下，
+ * 把纯文本里的超话、话题、`@用户`、`http://t.cn/...` 与换行转换成统一 HTML，
+ * 让现有的富文本渲染、链接跳转与历史记录直接复用。
+ */
+internal fun formatContainerTextToHtml(
+    raw: String,
+    urlStruct: JSONArray? = null,
+    topicStruct: JSONArray? = null,
+): String {
+    if (raw.isBlank()) return raw
+    if (WeiboHtmlTagRegex.containsMatchIn(raw)) return raw
+    val hasRichHints = urlStruct != null || topicStruct != null ||
+        raw.contains('\n') || raw.contains('@') || raw.contains('#') ||
+        raw.contains("http://", ignoreCase = true) || raw.contains("https://", ignoreCase = true)
+    if (!hasRichHints) return raw
+
+    val shortUrls = HashMap<String, Pair<String, String>>()
+    val superTopicUrls = HashMap<String, String>()
+    if (urlStruct != null) {
+        for (i in 0 until urlStruct.length()) {
+            val entry = urlStruct.optJSONObject(i) ?: continue
+            val short = entry.str("short_url").trim()
+            val ori = entry.str("ori_url").trim()
+            val long = entry.str("long_url").trim()
+            val pageId = entry.str("page_id").trim()
+            val title = entry.str("url_title").trim()
+            val target = when {
+                pageId.startsWith("100808", ignoreCase = true) ->
+                    "https://weibo.com/p/${pageId.lowercase()}"
+                ori.isNotBlank() -> ori
+                long.isNotBlank() -> long
+                else -> short
+            }
+            if (short.isNotBlank() && target.isNotBlank()) {
+                shortUrls[short] = title to target
+            }
+            val isSuper = pageId.startsWith("100808", ignoreCase = true) ||
+                ori.contains("100808") ||
+                entry.str("url_type_pic").contains("super", ignoreCase = true)
+            if (isSuper && target.isNotBlank() && title.isNotBlank()) {
+                superTopicUrls[title] = target
+                superTopicUrls[title.removeSuffix("超话").trim()] = target
+            }
+        }
+    }
+
+    val topicUrls = HashMap<String, String>()
+    if (topicStruct != null) {
+        for (i in 0 until topicStruct.length()) {
+            val entry = topicStruct.optJSONObject(i) ?: continue
+            val title = entry.str("topic_title").trim('#', ' ')
+            val url = entry.str("topic_url").trim()
+            if (title.isNotBlank() && url.isNotBlank()) {
+                topicUrls[title] = url
+            }
+        }
+    }
+
+    val out = StringBuilder(raw.length + 64)
+    var cursor = 0
+    for (match in ContainerRichTokenRegex.findAll(raw)) {
+        if (match.range.first < cursor) continue
+        if (match.range.first > cursor) {
+            out.append(escapeHtmlText(raw.substring(cursor, match.range.first)))
+        }
+        val token = match.value
+        when {
+            match.groups[1] != null -> {
+                val mapped = shortUrls[token]
+                val target = mapped?.second ?: token
+                val label = mapped?.first?.takeIf { it.isNotBlank() } ?: token
+                out.append("<a href=\"")
+                    .append(escapeHtmlAttr(target))
+                    .append("\">")
+                    .append(escapeHtmlText(label))
+                    .append("</a>")
+            }
+
+            match.groups[2] != null -> {
+                val inner = token.substring(1, token.length - 1)
+                if (inner.endsWith("[超话]")) {
+                    val name = inner.removeSuffix("[超话]").trim()
+                    val encoded = runCatching { java.net.URLEncoder.encode(name, "UTF-8") }.getOrDefault(name)
+                    val target = superTopicUrls[name]
+                        ?: superTopicUrls["${name}超话"]
+                        ?: "https://m.weibo.cn/k/$encoded"
+                    out.append("<a href=\"")
+                        .append(escapeHtmlAttr(target))
+                        .append("\">")
+                        .append(escapeHtmlText(name))
+                        .append("</a>")
+                } else {
+                    val encoded = runCatching { java.net.URLEncoder.encode(inner, "UTF-8") }.getOrDefault(inner)
+                    val target = topicUrls[inner] ?: "https://m.weibo.cn/k/$encoded"
+                    out.append("<a href=\"")
+                        .append(escapeHtmlAttr(target))
+                        .append("\">#")
+                        .append(escapeHtmlText(inner))
+                        .append("#</a>")
+                }
+            }
+
+            match.groups[3] != null -> {
+                val prevChar = raw.getOrNull(match.range.first - 1)
+                if (prevChar != null && (prevChar.isLetterOrDigit() || prevChar == '/' || prevChar == '.')) {
+                    out.append(escapeHtmlText(token))
+                } else {
+                    val name = token.substring(1)
+                    val encoded = runCatching { java.net.URLEncoder.encode(name, "UTF-8") }.getOrDefault(name)
+                    out.append("<a href=\"/n/")
+                        .append(escapeHtmlAttr(encoded))
+                        .append("\">@")
+                        .append(escapeHtmlText(name))
+                        .append("</a>")
+                }
+            }
+        }
+        cursor = match.range.last + 1
+    }
+    if (cursor < raw.length) {
+        out.append(escapeHtmlText(raw.substring(cursor)))
+    }
+    return out.toString()
 }
 
 private fun enrichSuperTopicLinks(textHtml: String, urlStruct: JSONArray?): String {
@@ -669,7 +828,11 @@ data class Comment(
             }
             return Comment(
                 id = id,
-                textHtml = o.str("text"),
+                textHtml = formatContainerTextToHtml(
+                    o.str("text"),
+                    o.optJSONArray("url_struct"),
+                    o.optJSONArray("topic_struct"),
+                ),
                 user = User.from(o.optJSONObject("user")),
                 createdAt = o.str("created_at"),
                 // The hot list spells it `like_count`, the chronological one `like_counts`.
@@ -1008,8 +1171,14 @@ internal fun statusesOf(arr: JSONArray): List<Status> {
  * 广告位的 `itemid` 带 `is_ad_pos:1|adid:<id>`，普通词条只有 `seqid` / `cate` / `t`，
  * 按这个字段就能整条跳过，不必看标题。跳过后 [HotItem.rank] 自然顺延，榜单不留空号。
  */
-internal fun parseHotItems(root: JSONObject?): List<HotItem> {
-    val cards = root?.optJSONObject("data")?.optJSONArray("cards") ?: return emptyList()
+internal fun parseHotItems(root: JSONObject?): List<HotItem> =
+    parseHotItemsFromCards(root?.optJSONObject("data")?.optJSONArray("cards"))
+
+internal fun parseContainerHotItems(root: JSONObject?): List<HotItem> =
+    parseHotItemsFromCards(root?.optJSONArray("cards"))
+
+private fun parseHotItemsFromCards(cards: JSONArray?): List<HotItem> {
+    if (cards == null) return emptyList()
     val out = ArrayList<HotItem>()
     for (i in 0 until cards.length()) {
         val card = cards.optJSONObject(i) ?: continue
@@ -1032,8 +1201,13 @@ internal fun parseHotItems(root: JSONObject?): List<HotItem> {
     return out
 }
 
-fun parseCards(root: JSONObject?): FeedPage {
-    val data = root?.optJSONObject("data")
+fun parseCards(root: JSONObject?): FeedPage =
+    parseCardsFromData(root?.optJSONObject("data"))
+
+fun parseContainerCards(root: JSONObject?): FeedPage =
+    parseCardsFromData(root)
+
+private fun parseCardsFromData(data: JSONObject?): FeedPage {
     val items = ArrayList<Status>()
     val cards: JSONArray? = data?.optJSONArray("cards")
     if (cards != null) {

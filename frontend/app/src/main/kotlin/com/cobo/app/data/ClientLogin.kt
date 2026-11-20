@@ -306,7 +306,7 @@ object ClientLogin {
     }
 
     /** 对应 Share `OP.java`：用原版 `"1".."20"` 设备指纹向 `guest/login` 领一次 `aid` 并落盘复用。 */
-    private suspend fun ensureAid(): String {
+    internal suspend fun ensureAid(): String {
         val cached = App.store.clientAid()
         if (cached.isNotBlank()) return cached
         return runCatching {
@@ -354,6 +354,18 @@ object ClientLogin {
         form: Map<String, String>,
         aid: String,
     ): Api.ContainerResponse {
+        signQuery(path, query, aid)
+        val headers = validatorHeaders(App.repo.session?.uid.orEmpty())
+        val resp = Api.containerPostShare(path, query, form, headers)
+        recordValidator(resp.xValidator)
+        return resp
+    }
+
+    internal fun signQuery(
+        path: String,
+        query: LinkedHashMap<String, String?>,
+        aid: String,
+    ) {
         if (aid.isNotBlank() && !query.containsKey("aid")) {
             query["aid"] = aid
         }
@@ -363,21 +375,26 @@ object ClientLogin {
             val cum = WeiboNative.cumFrom(unsignedUrl.substring(slash))
             if (!cum.isNullOrBlank()) query["cum"] = cum
         }
+    }
+
+    internal fun validatorHeaders(uid: String): LinkedHashMap<String, String> {
         val headers = LinkedHashMap<String, String>()
         val validator = xValidator
         if (validator.isNotBlank()) {
-            headers["X-Log-Uid"] = App.repo.session?.uid.orEmpty()
+            headers["X-Log-Uid"] = uid
             headers["X-Sessionid"] = UUID.randomUUID().toString()
             headers["X-Validator"] = validator
         }
-        val resp = Api.containerPostShare(path, query, form, headers)
-        if (!resp.xValidator.isNullOrBlank()) {
-            xValidator = resp.xValidator
-        }
-        return resp
+        return headers
     }
 
-    private fun putCommonParams(query: LinkedHashMap<String, String?>, from: String) {
+    internal fun recordValidator(value: String?) {
+        if (!value.isNullOrBlank()) {
+            xValidator = value
+        }
+    }
+
+    internal fun putCommonParams(query: LinkedHashMap<String, String?>, from: String) {
         query.putIfAbsent("lang", "zh_CN")
         query.putIfAbsent("networktype", Api.networkType())
         query.putIfAbsent("c", "android")
@@ -399,9 +416,9 @@ object ClientLogin {
         "device_name" to Api.deviceName(),
     )
 
-    private fun signInfo(info: String): String = WeiboNative.s(info) ?: WeiboSign.s(info)
+    internal fun signInfo(info: String): String = WeiboNative.s(info) ?: WeiboSign.s(info)
 
-    private fun iValue(): String = WeiboNative.i().orEmpty()
+    internal fun iValue(): String = WeiboNative.i().orEmpty()
 
     internal fun encryptPassword(password: String): String =
         encryptRsaBase64(password.toByteArray(Charsets.UTF_8), RSA_LOGIN_PUBKEY)

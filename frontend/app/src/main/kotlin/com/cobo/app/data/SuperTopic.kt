@@ -145,6 +145,21 @@ fun parseSuperTopicTab(
 ): SuperTopicPage =
     parseSuperTopicInternal(root, expectedContainerId, tabContainerId = tabContainerId, currentPage = currentPage)
 
+/** 容器端 `api.weibo.cn/2/page` 直接返回 `{pageInfo, cards, ...}`，包成同一结构复用解析。 */
+fun parseContainerSuperTopic(
+    root: JSONObject,
+    expectedContainerId: String,
+    tabContainerId: String,
+    currentPage: Int = 1,
+): SuperTopicPage {
+    val wrapped = JSONObject().put("ok", 1).put("data", root)
+    return if (tabContainerId.equals("${normalizedSuperTopicId(expectedContainerId)}_-_feed", ignoreCase = true)) {
+        parseSuperTopic(wrapped, expectedContainerId)
+    } else {
+        parseSuperTopicTab(wrapped, expectedContainerId, tabContainerId, currentPage)
+    }
+}
+
 private fun parseSuperTopicInternal(
     root: JSONObject,
     expectedContainerId: String,

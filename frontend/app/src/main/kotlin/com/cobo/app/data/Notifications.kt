@@ -60,11 +60,18 @@ fun parseDesktopNotifications(root: JSONObject, tab: NotificationTab): Notificat
     }
 
     val container = data ?: root
+    return parseNotificationPayload(container, tab)
+}
+
+/** 解析容器端（`api.weibo.cn/2/`）的通知接口响应，裸 JSON 无 `ok/data` 包装。 */
+fun parseContainerNotifications(root: JSONObject, tab: NotificationTab): NotificationPage =
+    parseNotificationPayload(root, tab)
+
+private fun parseNotificationPayload(container: JSONObject, tab: NotificationTab): NotificationPage {
     val nextCursor = container.str("next_cursor")
         .ifBlank { container.str("max_id") }
-        .ifBlank { root.str("next_cursor") }
         .takeIf { it.isNotBlank() && it != "0" }
-    val arr: JSONArray? = container.optJSONArray(tab.listKey) ?: root.optJSONArray(tab.listKey)
+    val arr: JSONArray? = container.optJSONArray(tab.listKey)
 
     if (tab == NotificationTab.AtWeibo) {
         return NotificationPage(

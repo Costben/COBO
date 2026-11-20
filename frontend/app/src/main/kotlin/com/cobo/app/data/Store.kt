@@ -9,29 +9,40 @@ class Store(private val context: Context) {
 
     private fun file(name: String) = File(context.filesDir, name)
 
-    private fun readArray(name: String): JSONArray {
+    /** 读文件。`secret` 的文件走 [SecretStore]，没有 `v1:` 前缀的旧明文照读。 */
+    private fun readText(name: String, secret: Boolean = false): String? {
         val f = file(name)
-        if (!f.exists()) return JSONArray()
-        return runCatching { JSONArray(f.readText()) }.getOrDefault(JSONArray())
+        if (!f.exists()) return null
+        val raw = runCatching { f.readText() }.getOrNull() ?: return null
+        return if (secret) SecretStore.open(raw) else raw
     }
 
-    private fun write(name: String, value: Any) {
+    private fun readObject(name: String, secret: Boolean = false): JSONObject? =
+        readText(name, secret)?.let { runCatching { JSONObject(it) }.getOrNull() }
+
+    private fun readArray(name: String, secret: Boolean = false): JSONArray {
+        val text = readText(name, secret) ?: return JSONArray()
+        return runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+    }
+
+    private fun write(name: String, value: Any, secret: Boolean = false) {
         runCatching {
+            val text = value.toString()
+            val payload = if (secret) SecretStore.seal(text) else text
             val f = file(name)
             val tmp = File(f.parentFile, "${f.name}.tmp")
-            tmp.writeText(value.toString())
+            tmp.writeText(payload)
             if (!tmp.renameTo(f)) {
-                f.writeText(value.toString())
+                f.writeText(payload)
                 tmp.delete()
             }
         }
     }
 
     fun session(): Session? {
-        val f = file("session.json")
-        if (!f.exists()) return null
+        val text = readText("session.json", secret = true) ?: return null
         return runCatching {
-            val o = JSONObject(f.readText())
+            val o = JSONObject(text)
             val cookies = o.optJSONObject("cookies").toStringMap()
             val cookie = o.str("cookie").ifBlank { CookieVault.authHeader(cookies, "m.weibo.cn") }
             val gsid = o.optString("gsid")
@@ -65,7 +76,7 @@ class Store(private val context: Context) {
             .put("savedAt", System.currentTimeMillis())
             .put("loginType", 1)
             .put("cookies", cookies.toJson())
-        write("session.json", o)
+        write("session.json", o, secret = true)
     }
 
     /** 客户端登录的完整会话：cookie 之外还有能换新 cookie 的 gsid。 */
@@ -90,7 +101,7 @@ class Store(private val context: Context) {
             .put("savedAt", now)
             .put("loginType", 4)
             .put("cookies", cookies.toJson())
-        write("session.json", o)
+        write("session.json", o, secret = true)
     }
 
     /** 续期只换 gsid 与 cookie，账号、昵称这些字段原样留着。 */
@@ -101,12 +112,7 @@ class Store(private val context: Context) {
         expires: Long,
         cookies: Map<String, String> = CookieVault.seed(cookie),
     ) {
-        val f = file("session.json")
-        val o = if (f.exists()) {
-            runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
-        } else {
-            JSONObject()
-        }
+        val o = readObject("session.json", secret = true) ?: JSONObject()
         o.put("source", "client")
         o.put("cookie", cookie)
         o.put("cookies", cookies.toJson())
@@ -115,7 +121,7 @@ class Store(private val context: Context) {
         o.put("gsidAt", System.currentTimeMillis())
         if (accessToken.isNotBlank()) o.put("accessToken", accessToken)
         if (expires > 0) o.put("expires", expires)
-        write("session.json", o)
+        write("session.json", o, secret = true)
     }
 
     /**
@@ -123,16 +129,14 @@ class Store(private val context: Context) {
      * 收下来就直接落盘，不必等下一次登录。
      */
     fun updateCookies(cookies: Map<String, String>) {
-        val f = file("session.json")
-        if (!f.exists()) return
-        val o = runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+        val o = readObject("session.json", secret = true) ?: return
         if (o.length() == 0) return
         val merged = LinkedHashMap(o.optJSONObject("cookies").toStringMap())
         merged.putAll(cookies)
         o.put("cookies", merged.toJson())
         o.put("cookie", CookieVault.header(merged, "m.weibo.cn"))
         o.put("savedAt", System.currentTimeMillis())
-        write("session.json", o)
+        write("session.json", o, secret = true)
     }
 
     /**
@@ -191,18 +195,19 @@ class Store(private val context: Context) {
     fun clearSession() = file("session.json").delete()
 
     /** 纯本地模式用的访客 cookie（SUB / SUBP），不对应任何账号，单独存一份免得每次启动重领。 */
-    fun visitorCookie(): String? {
-        val f = file("visitor.json")
-        if (!f.exists()) return null
-        return runCatching { JSONObject(f.readText()).str("cookie") }.getOrNull()?.ifBlank { null }
-    }
+    fun visitorCookie(): String? =
+        readObject("visitor.json", secret = true)?.str("cookie")?.ifBlank { null }
 
     fun saveVisitorCookie(cookie: String) {
-        write("visitor.json", JSONObject().put("cookie", cookie).put("savedAt", System.currentTimeMillis()))
+        write(
+            "visitor.json",
+            JSONObject().put("cookie", cookie).put("savedAt", System.currentTimeMillis()),
+            secret = true,
+        )
     }
 
     fun accounts(): List<Account> {
-        val arr = readArray("accounts.json")
+        val arr = readArray("accounts.json", secret = true)
         val out = ArrayList<Account>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -223,7 +228,7 @@ class Store(private val context: Context) {
     }
 
     fun saveAccount(account: Account) {
-        val arr = readArray("accounts.json")
+        val arr = readArray("accounts.json", secret = true)
         val out = JSONArray()
         val o = JSONObject()
             .put("uid", account.uid)
@@ -239,18 +244,18 @@ class Store(private val context: Context) {
             if (out.length() >= 10) break
             out.put(old)
         }
-        write("accounts.json", out)
+        write("accounts.json", out, secret = true)
     }
 
     fun removeAccount(uid: String) {
-        val arr = readArray("accounts.json")
+        val arr = readArray("accounts.json", secret = true)
         val out = JSONArray()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             if (o.str("uid") == uid) continue
             out.put(o)
         }
-        write("accounts.json", out)
+        write("accounts.json", out, secret = true)
     }
 
     fun drafts(): List<Draft> {

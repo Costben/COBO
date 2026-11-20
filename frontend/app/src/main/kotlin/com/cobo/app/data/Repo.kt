@@ -284,6 +284,8 @@ class Repo(private val context: Context, private val store: Store) {
     @Volatile
     private var clientMessagesNextCursor: String = "0"
 
+    private val relationCursors = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private val visitorLock = Mutex()
 
     /** 全局本地收藏状态：跨多账号与纯本地模式共用，切号与登出均保留。 */
@@ -316,7 +318,7 @@ class Repo(private val context: Context, private val store: Store) {
 
     init {
         // 网页端每次都可能在响应里滚一份新的 SUB / ALF，收到就收进表里，不进缓存也不去重。
-        Api.cookieSink = { url, headers -> absorbCookies(url, headers) }
+        Api.cookieSink = { url, headers, hadAuthCookie -> absorbCookies(url, headers, hadAuthCookie) }
     }
 
     /** 读数据用的 cookie：登录了就是账号的，纯本地模式下是访客的（可能还没领到）。 */
@@ -328,7 +330,7 @@ class Repo(private val context: Context, private val store: Store) {
      * 这是登录态能留住的关键：网页端靠「隔几天来一次、每次都收回新 cookie」续命，
      * 只读不写的话手里那份只会慢慢过期。纯本地模式下落到访客 cookie 上。
      */
-    private fun absorbCookies(url: HttpUrl, setCookies: List<String>) {
+    private fun absorbCookies(url: HttpUrl, setCookies: List<String>, hadAuthCookie: Boolean = true) {
         if (setCookies.isEmpty()) return
         val active = session
         if (active == null) {
@@ -340,6 +342,8 @@ class Repo(private val context: Context, private val store: Store) {
             store.saveVisitorCookie(header)
             return
         }
+        // 访客兜底请求没带当前账号 SUB，不能把访客响应的 Set-Cookie（如 MLOGIN=0）并进登录表。
+        if (!hadAuthCookie && !url.host.contains("passport", ignoreCase = true)) return
         val base = if (active.cookies.isEmpty()) CookieVault.seed(active.cookie) else active.cookies
         val merged = CookieVault.absorb(base, url, setCookies)
         if (merged == base) return
@@ -364,6 +368,8 @@ class Repo(private val context: Context, private val store: Store) {
         cachedMentionFriends = emptyList()
         cachedMentionUid = null
         cachedHotspotTopics = emptyList()
+        clientMobileRejectedSub = null
+        clientMobileRejectedAt = 0L
     }
 
     /**
@@ -405,7 +411,31 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     @Volatile
-    private var clientMobileRejectedCookie: String? = null
+    private var clientMobileRejectedSub: String? = null
+
+    @Volatile
+    private var clientMobileRejectedAt: Long = 0L
+
+    private fun subFingerprint(cookie: String?): String =
+        cookie.orEmpty()
+            .split(';')
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("SUB=") }
+            .orEmpty()
+
+    private fun isClientMobileRejected(cookie: String?): Boolean {
+        val sub = subFingerprint(cookie)
+        if (sub.isBlank() || sub != clientMobileRejectedSub) return false
+        return System.currentTimeMillis() - clientMobileRejectedAt < 10 * 60 * 1000L
+    }
+
+    private fun markClientMobileRejected(cookie: String?) {
+        val sub = subFingerprint(cookie)
+        if (sub.isNotBlank()) {
+            clientMobileRejectedSub = sub
+            clientMobileRejectedAt = System.currentTimeMillis()
+        }
+    }
 
     private fun isPrivateMobileEndpoint(url: String): Boolean =
         url.contains("/feed/friends") ||
@@ -416,17 +446,15 @@ class Repo(private val context: Context, private val store: Store) {
 
     /**
      * 只读请求的统一入口。登录态直接走 [Api.get]；客户端登录的会话被拒（`ok:-100` 或 432）时，
-     * 先拿 gsid 换一份新 cookie 再试一次；若新下发的 `.weibo.cn` Cookie 仍被 `m.weibo.cn` 拒绝，
-     * 对公开可读的容器/详情接口回落到访客身份读取，避免反复刷 `account/login`。
+     * 按 SUB 指纹冷却并在对公开接口可访问时回落到访客身份读取，避免反复刷 `account/login`。
      */
     private suspend fun get(url: String, cookie: String?, force: Boolean = false): JSONObject {
         val active = session
         if (active != null && active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
-            ensureClientSession()
             val current = session ?: active
             val reqCookie = if (cookie.isNullOrBlank() || cookie == active.cookie) cookie() else cookie
             val skipClientMobile = reqCookie == current.cookie &&
-                clientMobileRejectedCookie == current.cookie &&
+                isClientMobileRejected(current.cookie) &&
                 !isPrivateMobileEndpoint(url)
             val root = if (skipClientMobile) {
                 JSONObject().put("ok", -100)
@@ -439,17 +467,17 @@ class Repo(private val context: Context, private val store: Store) {
                 }
             }
             if (root.optInt("ok", 1) != -100) return root
-            if (!skipClientMobile) {
-                if (reqCookie == current.cookie && refreshClientSession(force = true)) {
+            if (!skipClientMobile && reqCookie == current.cookie) {
+                if (refreshClientSession(force = true)) {
                     val refreshed = session ?: current
                     val retry = runCatching { Api.get(url, refreshed.cookie, force = true) }.getOrNull()
                     if (retry != null && retry.optInt("ok", 1) != -100) {
-                        clientMobileRejectedCookie = null
+                        clientMobileRejectedSub = null
                         return retry
                     }
-                    clientMobileRejectedCookie = refreshed.cookie
-                } else if (reqCookie == current.cookie) {
-                    clientMobileRejectedCookie = current.cookie
+                    markClientMobileRejected(refreshed.cookie)
+                } else {
+                    markClientMobileRejected(current.cookie)
                 }
             }
             if (!isPrivateMobileEndpoint(url)) {
@@ -565,6 +593,9 @@ class Repo(private val context: Context, private val store: Store) {
         cachedMentionFriends = emptyList()
         cachedMentionUid = null
         cachedHotspotTopics = emptyList()
+        relationCursors.clear()
+        clientMobileRejectedSub = null
+        clientMobileRejectedAt = 0L
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -668,15 +699,59 @@ class Repo(private val context: Context, private val store: Store) {
         is ClientLogin.Outcome.WebVerify -> ClientLoginStep.WebVerify(outcome.url, outcome.message)
     }
 
+    private fun isClientChannel(): Boolean =
+        session?.let { it.loginType == LOGIN_TYPE_CLIENT && it.gsid.isNotBlank() && it.uid.isNotBlank() } == true
+
+    private suspend fun <T> withContainerAuth(
+        block: suspend (uid: String, gsid: String, aid: String) -> T,
+    ): T {
+        val active = session?.takeIf {
+            it.loginType == LOGIN_TYPE_CLIENT && it.gsid.isNotBlank() && it.uid.isNotBlank()
+        } ?: throw ApiException(LOGIN_REQUIRED, errno = "-100")
+        val aid = ClientLogin.ensureAid()
+        return try {
+            block(active.uid, active.gsid, aid)
+        } catch (e: ApiException) {
+            if (e.errno in ContainerApi.AUTH_ERRNOS && refreshClientSession(force = true, bypassCooldown = true)) {
+                val refreshed = session?.takeIf { it.gsid.isNotBlank() && it.uid.isNotBlank() } ?: throw e
+                block(refreshed.uid, refreshed.gsid, aid)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private suspend fun containerGet(path: String, extra: Map<String, String?> = emptyMap()): JSONObject =
+        withContainerAuth { uid, gsid, aid -> ContainerApi.get(path, uid, gsid, aid, extra) }
+
+    private suspend fun containerGetRaw(path: String, extra: Map<String, String?> = emptyMap()): String =
+        withContainerAuth { uid, gsid, aid -> ContainerApi.getRaw(path, uid, gsid, aid, extra) }
+
+    private suspend fun containerPost(
+        path: String,
+        form: Map<String, String> = emptyMap(),
+        queryExtra: Map<String, String?> = emptyMap(),
+    ): JSONObject = withContainerAuth { uid, gsid, aid ->
+        ContainerApi.post(path, uid, gsid, aid, form, queryExtra)
+    }
+
     private suspend fun finishClientLogin(result: ClientLogin.Result): Account {
-        if (result.cookie.isBlank()) throw ApiException("登录失败：没有拿到 Cookie")
         if (result.uid.isBlank() || result.gsid.isBlank()) throw ApiException("登录失败：缺少客户端会话凭证")
         var effectiveCookies = if (result.cookies.isNotEmpty()) result.cookies else CookieVault.seed(result.cookie)
         var effectiveGsid = result.gsid
         var effectiveCookie = result.cookie
-        var cfg = configFor(effectiveCookie, force = true)
-        if (!cfg.loggedIn) {
-            // 部分通道下发的 m.weibo.cn cookie 需要只保留 SUB/SUBP 或改用桌面域/gsid 换票验证
+        val aid = ClientLogin.ensureAid()
+        val containerUser = runCatching {
+            val prof = ContainerApi.get("profile", result.uid, effectiveGsid, aid, mapOf("uid" to result.uid))
+            User.from(prof.optJSONObject("userInfo"))
+        }.getOrNull()
+
+        var cfg = if (effectiveCookie.isNotBlank()) {
+            runCatching { configFor(effectiveCookie, force = true) }.getOrNull() ?: Config("", "", false)
+        } else {
+            Config("", "", false)
+        }
+        if (!cfg.loggedIn && effectiveCookie.isNotBlank()) {
             val subPairs = CookieVault.parseHeader(effectiveCookie).filter {
                 val key = it.substringBefore('=').trim()
                 key == "SUB" || key == "SUBP"
@@ -690,7 +765,7 @@ class Repo(private val context: Context, private val store: Store) {
                 }
             }
         }
-        if (!cfg.loggedIn) {
+        if (!cfg.loggedIn && containerUser == null) {
             val refreshed = runCatching { ClientLogin.refresh(result.uid, result.gsid) }.getOrNull()
             if (refreshed != null && refreshed.cookie.isNotBlank()) {
                 val refCfg = runCatching { configFor(refreshed.cookie, force = true) }.getOrNull()
@@ -703,7 +778,7 @@ class Repo(private val context: Context, private val store: Store) {
             }
         }
         val uid = cfg.uid.ifBlank { result.uid }
-        val desktopUser = if (!cfg.loggedIn) {
+        val desktopUser = if (containerUser == null && !cfg.loggedIn) {
             runCatching {
                 val desktopCookie = CookieVault.desktopAuthHeader(effectiveCookies, "weibo.com")
                 val info = Api.getDesktop(
@@ -726,10 +801,12 @@ class Repo(private val context: Context, private val store: Store) {
         } else {
             null
         }
-        if (!cfg.loggedIn && desktopUser == null) {
-            throw ApiException("登录成功，但网页会话验证未通过")
+        if (containerUser == null && !cfg.loggedIn && desktopUser == null) {
+            throw ApiException("登录成功，但会话验证未通过")
         }
-        val user = desktopUser ?: runCatching { profileFor(effectiveCookie, uid, force = true) }.getOrNull()
+        val user = containerUser
+            ?: desktopUser
+            ?: runCatching { profileFor(effectiveCookie, uid, force = true) }.getOrNull()
         resetAccountCaches(clearGroupTabs = true)
         App.settings.applyLocalMode(false)
         val now = System.currentTimeMillis()
@@ -764,7 +841,7 @@ class Repo(private val context: Context, private val store: Store) {
     private suspend fun ensureClientSession(): Boolean {
         val active = session ?: return false
         if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return false
-        if (active.loggedIn && System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) return true
+        if (System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) return true
         return refreshClientSession(force = false)
     }
 
@@ -776,7 +853,7 @@ class Repo(private val context: Context, private val store: Store) {
         clientRefreshLock.withLock {
             val active = session ?: return@withLock false
             if (active.loginType != LOGIN_TYPE_CLIENT || active.gsid.isBlank()) return@withLock false
-            if (!force && active.loggedIn && System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) {
+            if (!force && System.currentTimeMillis() - active.gsidAt < GSID_TTL_MS) {
                 return@withLock true
             }
             val now = System.currentTimeMillis()
@@ -785,7 +862,7 @@ class Repo(private val context: Context, private val store: Store) {
             }
             val attempt = runCatching { ClientLogin.refresh(active.uid, active.gsid) }
             val result = attempt.getOrNull()
-            if (result == null || result.cookie.isBlank()) {
+            if (result == null || (result.cookie.isBlank() && result.gsid.isBlank())) {
                 lastClientRefreshFailAt = System.currentTimeMillis()
                 val errCode = (attempt.exceptionOrNull() as? ApiException)?.errno
                 if (!active.loggedIn && errCode in setOf("50113002", "-100", "21327", "21315")) {
@@ -800,8 +877,9 @@ class Repo(private val context: Context, private val store: Store) {
     private suspend fun applyRefreshedClient(active: Session, result: ClientLogin.Result) {
         lastClientRefreshFailAt = 0L
         val gsid = result.gsid.ifBlank { active.gsid }
+        val cookie = result.cookie.ifBlank { active.cookie }
         val cookies = if (result.cookies.isEmpty()) active.cookies else result.cookies
-        store.updateClientSession(gsid, result.cookie, result.accessToken, result.expires, cookies)
+        store.updateClientSession(gsid, cookie, result.accessToken, result.expires, cookies)
         session = store.session()
         App.cache.clear()
         cachedConfig = null
@@ -812,7 +890,7 @@ class Repo(private val context: Context, private val store: Store) {
         if (known != null) {
             store.saveAccount(
                 known.copy(
-                    cookie = result.cookie,
+                    cookie = cookie,
                     gsid = gsid,
                     gsidAt = System.currentTimeMillis(),
                 )
@@ -833,13 +911,13 @@ class Repo(private val context: Context, private val store: Store) {
 
     /**
      * 冷启动时顺手续一次登录态：
-     * - 客户端会话（`gsid`）：距上次换 Cookie 超过 [GSID_TTL_MS] 或缺少 `SUB` 时静默换一套新表；
+     * - 客户端会话（`gsid`）：距上次换 Cookie 超过 [GSID_TTL_MS] 时静默换一套新表；
      * - 网页会话：像浏览器一样打开一次 `m.weibo.cn` 刷新短命 cookie，最后把表灌回 WebView。
      */
     suspend fun refreshSessionIfStale() {
         val active = session ?: return
         if (active.loginType == LOGIN_TYPE_CLIENT && active.gsid.isNotBlank()) {
-            if (!active.loggedIn || System.currentTimeMillis() - active.gsidAt >= GSID_TTL_MS) {
+            if (System.currentTimeMillis() - active.gsidAt >= GSID_TTL_MS) {
                 refreshClientSession(force = true, bypassCooldown = true)
             }
         } else if (active.loggedIn) {
@@ -854,6 +932,18 @@ class Repo(private val context: Context, private val store: Store) {
         runCatching { Api.getHtml("https://m.weibo.cn/", active.cookie) }
     }
 
+    private fun parseContainerStatusPage(root: JSONObject, boundaryId: String? = null): FeedPage {
+        val arr = root.optJSONArray("statuses") ?: JSONArray()
+        val rawItems = statusesOf(arr)
+        val items = if (boundaryId.isNullOrBlank()) rawItems else rawItems.filter { it.id != boundaryId }
+        val cursor = root.str("next_cursor_str")
+            .ifBlank { root.str("next_cursor") }
+            .ifBlank { root.str("max_id") }
+            .takeIf { it.isNotBlank() && it != "0" && it != boundaryId }
+            ?: items.lastOrNull()?.id?.takeIf { items.size >= 5 }
+        return FeedPage(items, cursor)
+    }
+
     suspend fun container(
         cid: String,
         sinceId: String? = null,
@@ -861,6 +951,26 @@ class Repo(private val context: Context, private val store: Store) {
         force: Boolean = false,
         cookie: String? = this.cookie(),
     ): FeedPage {
+        if (isClientChannel() && (cookie == null || cookie == this.cookie())) {
+            if (cid == "102803" && extra.isEmpty()) {
+                val params = LinkedHashMap<String, String?>()
+                params["group_id"] = "102803"
+                params["refresh_type"] = if (sinceId.isNullOrBlank()) "0" else "1"
+                params["count"] = "15"
+                if (!sinceId.isNullOrBlank()) params["max_id"] = sinceId
+                val root = containerGet("statuses/unread_hot_timeline", params)
+                val items = statusesOf(root.optJSONArray("statuses") ?: JSONArray())
+                val next = root.str("max_id").takeIf { it.isNotBlank() && it != "0" && it != sinceId }
+                return FeedPage(items, next)
+            }
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = cid
+            if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
+            extra.forEach { (k, v) -> params[k] = v }
+            val endpoint = if (cid.startsWith("100103")) "searchall" else "cardlist"
+            val root = containerGet(endpoint, params)
+            return parseContainerCards(root)
+        }
         val params = LinkedHashMap<String, String?>()
         params["containerid"] = cid
         if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
@@ -878,60 +988,60 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     /**
-     * The "关注" feed. It lives on /feed/friends, not on the container endpoint:
-     * containerid=231093 is the follow-group management page and returns an empty
-     * card list for accounts without groups. Cursor pagination uses max_id.
+     * The "关注" feed. 客户端登录走容器 `statuses/friends/timeline`，网页登录走 `/feed/friends`。
      */
     suspend fun friends(maxId: String? = null, force: Boolean = false): FeedPage {
-        val active = session
-        val skipMobile = active?.loginType == LOGIN_TYPE_CLIENT && active.cookie == clientMobileRejectedCookie
-        val mobileErr = if (!skipMobile) {
-            val mobile = runCatching { statusFeed("https://m.weibo.cn/feed/friends", maxId, force) }
-            mobile.getOrNull()?.let { return it }
-            mobile.exceptionOrNull()
-        } else null
-        if (active == null || active.loginType != LOGIN_TYPE_CLIENT) {
-            throw mobileErr ?: ApiException("加载失败")
+        if (isClientChannel()) {
+            val params = LinkedHashMap<String, String?>()
+            params["count"] = "20"
+            if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+            val root = containerGet("statuses/friends/timeline", params)
+            return parseContainerStatusPage(root, maxId)
         }
-        val params = LinkedHashMap<String, String?>()
-        params["is_all"] = "1"
-        params["count"] = GROUP_FEED_PAGE_SIZE.toString()
-        if (!maxId.isNullOrBlank()) params["max_id"] = maxId
-        val root = Api.getDesktop(
-            Api.url("https://weibo.com/ajax/feed/friendstimeline", params),
-            desktopCookieOrNull(),
-        )
-        return parseDesktopTimeline(root)
+        return statusFeed("https://m.weibo.cn/feed/friends", maxId, force)
     }
 
-    /** The "好友圈" feed: posts from mutual follows, same shape as /feed/friends. */
+    /** The "好友圈" feed: 客户端登录走 `groups/timeline`（`10009<uid>`），网页登录走 `/feed/circle`。 */
     suspend fun circle(maxId: String? = null, force: Boolean = false): FeedPage {
-        val active = session
-        val skipMobile = active?.loginType == LOGIN_TYPE_CLIENT && active.cookie == clientMobileRejectedCookie
-        val mobileErr = if (!skipMobile) {
-            val mobile = runCatching { statusFeed("https://m.weibo.cn/feed/circle", maxId, force) }
-            mobile.getOrNull()?.let { return it }
-            mobile.exceptionOrNull()
-        } else null
-        if (active == null || active.loginType != LOGIN_TYPE_CLIENT) {
-            throw mobileErr ?: ApiException("加载失败")
+        if (isClientChannel()) {
+            val uid = session?.uid.orEmpty()
+            val params = LinkedHashMap<String, String?>()
+            params["list_id"] = "10009$uid"
+            params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+            val root = containerGet("groups/timeline", params)
+            return parseContainerStatusPage(root, maxId)
         }
-        val gid = circleGroupId(force)
-        if (!gid.isNullOrBlank()) return groupFeed(gid, maxId)
-        throw mobileErr ?: ApiException("暂未找到「好友圈」分组")
+        return statusFeed("https://m.weibo.cn/feed/circle", maxId, force)
     }
 
     /**
      * The "特别关注" feed.
-     *
-     * m.weibo.cn 没有单独的特别关注时间线：H5 的关注页只有 关注 / 好友圈 / 悄悄关注 / 自建分组
-     * 四个 tab，特别关注的人发的东西是被塞进 /feed/friends 里的（weibo.com 设特别关注时的提示
-     * 原话就是「发布的微博在信息流将置顶显示」）。所以这里扫关注流，只留下特别关注的人：
-     * 先用 231093_-_specialfollow 把名单拿全，再退回每条 status 上现成的 special_follow 标记，
-     * 两者取并集 —— 名单接口挂了也不至于整页空白。
      */
-    suspend fun special(maxId: String? = null, force: Boolean = false): FeedPage =
-        byUsers(specialFollowUids(force) + FollowTags.uids(FollowTag.Special), maxId, force)
+    suspend fun special(maxId: String? = null, force: Boolean = false): FeedPage {
+        if (isClientChannel()) {
+            val gid = runCatching {
+                findGroupIdByTitle(containerGet("groups/allgroups"), "特别关注")
+            }.getOrNull() ?: "4040233714204024"
+            val params = LinkedHashMap<String, String?>()
+            params["list_id"] = gid
+            params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+            val page = parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
+            val localUids = FollowTags.uids(FollowTag.Special)
+            if (maxId.isNullOrBlank() && localUids.isNotEmpty()) {
+                val extra = byUsers(localUids.toSet(), maxId = null, force = force)
+                if (extra.items.isNotEmpty()) {
+                    val merged = LinkedHashMap<String, Status>()
+                    (page.items + extra.items).forEach { merged.putIfAbsent(it.id, it) }
+                    val sorted = merged.values.sortedByDescending { it.id.toLongOrNull() ?: 0L }
+                    return FeedPage(sorted, page.sinceId)
+                }
+            }
+            return page
+        }
+        return byUsers(specialFollowUids(force) + FollowTags.uids(FollowTag.Special), maxId, force)
+    }
 
     /** 「悄悄关注」：服务端没有这个名单，就按本机打的「悄悄」标记拼。 */
     suspend fun secret(maxId: String? = null, force: Boolean = false): FeedPage =
@@ -946,13 +1056,18 @@ class Repo(private val context: Context, private val store: Store) {
     @Volatile
     private var cachedCircleGroupId: String? = null
 
-    private suspend fun fetchDesktopAllGroups(): JSONObject = Api.getDesktop(
-        Api.url(
-            "https://weibo.com/ajax/feed/allGroups",
-            mapOf("is_new_segment" to "1", "fetch_hot" to "1"),
-        ),
-        desktopCookieOrNull(),
-    )
+    private suspend fun fetchDesktopAllGroups(): JSONObject =
+        if (isClientChannel()) {
+            containerGet("groups/allgroups")
+        } else {
+            Api.getDesktop(
+                Api.url(
+                    "https://weibo.com/ajax/feed/allGroups",
+                    mapOf("is_new_segment" to "1", "fetch_hot" to "1"),
+                ),
+                desktopCookieOrNull(),
+            )
+        }
 
     /**
      * 账号里的自建关注分组。
@@ -997,6 +1112,13 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun groupFeed(gid: String, maxId: String? = null): FeedPage {
         if (gid.isBlank()) return FeedPage(emptyList(), null)
+        if (isClientChannel()) {
+            val params = LinkedHashMap<String, String?>()
+            params["list_id"] = gid
+            params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+            return parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
+        }
         val params = LinkedHashMap<String, String?>()
         params["list_id"] = gid
         params["refresh"] = "4"
@@ -1284,8 +1406,12 @@ class Repo(private val context: Context, private val store: Store) {
 
     /** 热搜榜。[board] 换的是容器上的 `filter_type`，几个榜的条目结构完全一样。 */
     suspend fun hot(board: HotBoard = HotBoard.Realtime, force: Boolean = false): List<HotItem> {
-        val cookie = cookie()
         val cid = "106003type=25&t=3&disable_hot=1&filter_type=${board.filterType}"
+        if (isClientChannel()) {
+            val root = containerGet("page", mapOf("containerid" to cid))
+            return parseContainerHotItems(root)
+        }
+        val cookie = cookie()
         val root = get(
             Api.url(
                 "https://m.weibo.cn/api/container/getIndex",
@@ -1302,6 +1428,13 @@ class Repo(private val context: Context, private val store: Store) {
      * 不带令牌只会回「请求失败」。
      */
     suspend fun suggest(keyword: String): List<String> {
+        if (isClientChannel()) {
+            val raw = runCatching { containerGetRaw("page/get_search_suggest", mapOf("q" to keyword)) }.getOrNull()
+            if (!raw.isNullOrBlank()) {
+                val list = ContainerApi.parseSearchSuggest(raw)
+                if (list.isNotEmpty()) return list
+            }
+        }
         val url = Api.url("https://m.weibo.cn/api/search/suggest", mapOf("keyword" to keyword))
         var cookie = cookie() ?: return emptyList()
         var st = configFor(cookie).st
@@ -1348,16 +1481,21 @@ class Repo(private val context: Context, private val store: Store) {
             pageCursor.removePrefix("page:").toIntOrNull()?.coerceAtLeast(2)
                 ?: throw ApiException("无效的超话翻页参数")
         } else null
-        val active = session
-        if (active?.loginType == LOGIN_TYPE_CLIENT) {
-            return desktopSuperTopicTab(id, tabId, cursor)
-        }
         val params = buildMap {
             put("containerid", tabId)
             if (pageNumber != null) {
                 put("page", pageNumber.toString())
             } else {
                 put("since_id", pageCursor)
+            }
+        }
+        if (isClientChannel()) {
+            val root = containerGet("page", params)
+            val parsed = parseContainerSuperTopic(root, id, tabId, currentPage = pageNumber ?: 1)
+            return if (tabId.lowercase().endsWith("_-_video") && parsed.items.isNotEmpty()) {
+                hydrateSuperTopicVideoItems(parsed)
+            } else {
+                parsed
             }
         }
         val root = try {
@@ -1482,6 +1620,10 @@ class Repo(private val context: Context, private val store: Store) {
         params["containerid"] = cid
         params["page_type"] = "searchall"
         params["page"] = page.coerceAtLeast(1).toString()
+        if (isClientChannel()) {
+            val root = containerGet("searchall", params)
+            return parse(JSONObject().put("data", root))
+        }
         val root = get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
         val items = parse(root)
         if (items.isEmpty() && root.optInt("ok", 1) != 1) {
@@ -1493,20 +1635,23 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun detail(id: String, force: Boolean = false): Status? {
-        val root = get(
-            Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
-            cookie(),
-            force,
-        )
-        var parsed = Status.from(root.optJSONObject("data"))
-        if (parsed == null && session?.loginType == LOGIN_TYPE_CLIENT) {
-            parsed = runCatching {
-                val desktopRoot = Api.getDesktop(
-                    Api.url("https://weibo.com/ajax/statuses/show", mapOf("id" to id)),
-                    desktopCookieOrNull(),
-                )
-                Status.from(desktopRoot)
-            }.getOrNull()
+        var parsed: Status? = if (isClientChannel()) {
+            val root = containerGet("statuses/show", mapOf("id" to id))
+            if ((root.optBoolean("isLongText") || root.optBoolean("truncated")) && root.optJSONObject("longText") == null) {
+                val ext = runCatching { containerGet("statuses/extend", mapOf("id" to id)) }.getOrNull()
+                val longContent = ext?.optString("longTextContent").orEmpty()
+                if (longContent.isNotBlank()) {
+                    root.put("longText", JSONObject().put("longTextContent", longContent))
+                }
+            }
+            Status.from(root)
+        } else {
+            val root = get(
+                Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
+                cookie(),
+                force,
+            )
+            Status.from(root.optJSONObject("data"))
         }
         if (parsed == null) return null
         val favorited = isFavorited(id)
@@ -1647,6 +1792,51 @@ class Repo(private val context: Context, private val store: Store) {
         page: Int = 1,
         force: Boolean = false,
     ): CommentPage {
+        if (isClientChannel()) {
+            if (sort == CommentSort.Time) {
+                val curPage = page.coerceAtLeast(1)
+                val root = containerGet(
+                    "comments/show",
+                    mapOf("id" to id, "page" to curPage.toString(), "count" to "20"),
+                )
+                val arr = root.optJSONArray("comments") ?: JSONArray()
+                val items = ArrayList<Comment>(arr.length())
+                for (i in 0 until arr.length()) {
+                    Comment.from(arr.optJSONObject(i))?.let(items::add)
+                }
+                val total = root.optInt("total_number", 0)
+                val hasMore = items.isNotEmpty() && (root.optLong("next_cursor", 0L) > 0L || curPage * 20 < total)
+                return CommentPage(
+                    items = items,
+                    maxId = "",
+                    maxIdType = 0,
+                    nextPage = if (hasMore) curPage + 1 else 0,
+                )
+            }
+            val params = LinkedHashMap<String, String?>()
+            params["id"] = id
+            params["is_show_bulletin"] = "2"
+            params["fetch_level"] = "0"
+            params["count"] = "20"
+            if (maxId.isNullOrBlank()) {
+                params["max_id_type"] = "0"
+            } else {
+                params["max_id"] = maxId
+                params["max_id_type"] = maxIdType.toString()
+            }
+            val root = containerGet("comments/build_comments", params)
+            val arr = root.optJSONArray("root_comments") ?: JSONArray()
+            val items = ArrayList<Comment>(arr.length())
+            for (i in 0 until arr.length()) {
+                Comment.from(arr.optJSONObject(i))?.let(items::add)
+            }
+            val nextMax = root.str("max_id_str").ifBlank { root.str("max_id") }.let { if (it == "0") "" else it }
+            return CommentPage(
+                items = items,
+                maxId = nextMax,
+                maxIdType = root.int("max_id_type"),
+            )
+        }
         val params = LinkedHashMap<String, String?>()
         params["id"] = id
         if (sort == CommentSort.Time) {
@@ -1707,6 +1897,29 @@ class Repo(private val context: Context, private val store: Store) {
         maxIdType: Int = 0,
         force: Boolean = false,
     ): CommentPage {
+        if (isClientChannel()) {
+            val params = LinkedHashMap<String, String?>()
+            params["id"] = cid
+            params["is_show_bulletin"] = "2"
+            params["fetch_level"] = "1"
+            params["count"] = "20"
+            params["max_id"] = maxId ?: "0"
+            params["max_id_type"] = maxIdType.toString()
+            val root = containerGet("comments/build_comments", params)
+            val arr = root.optJSONArray("comments") ?: JSONArray()
+            val items = ArrayList<Comment>(arr.length())
+            for (i in 0 until arr.length()) {
+                Comment.from(arr.optJSONObject(i), depth = 1)?.let(items::add)
+            }
+            val total = root.optInt("total_number", 0)
+            val nextMax = root.str("max_id_str").ifBlank { root.str("max_id") }.let { if (it == "0") "" else it }
+            return CommentPage(
+                items = items,
+                maxId = nextMax,
+                maxIdType = root.int("max_id_type"),
+                nextPage = if (total > 0) total else 0,
+            )
+        }
         val params = LinkedHashMap<String, String?>()
         params["cid"] = cid
         params["max_id"] = maxId ?: "0"
@@ -1741,13 +1954,18 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun uidForName(name: String): String? {
         val q = java.net.URLEncoder.encode(name, "UTF-8")
-        val root = get(
-            Api.url(
-                "https://m.weibo.cn/api/container/getIndex",
-                mapOf("containerid" to "100103type=3&q=$q"),
-            ),
-            cookie(),
-        )
+        val root = if (isClientChannel()) {
+            val raw = containerGet("searchall", mapOf("containerid" to "100103type=3&q=$q"))
+            JSONObject().put("data", raw)
+        } else {
+            get(
+                Api.url(
+                    "https://m.weibo.cn/api/container/getIndex",
+                    mapOf("containerid" to "100103type=3&q=$q"),
+                ),
+                cookie(),
+            )
+        }
         val cards = root.optJSONObject("data")?.optJSONArray("cards") ?: return null
         var fallback: String? = null
         for (i in 0 until cards.length()) {
@@ -1803,11 +2021,10 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun likeComment(id: String, liked: Boolean): Boolean {
-        if (isClientLogin()) {
-            val body = JSONObject().put("object_id", id).put("object_type", "comment").toString()
-            checkDesktopOk(
-                desktopWrite("操作失败", if (liked) "/ajax/statuses/destroyLike" else "/ajax/statuses/updateLike", body),
-                "操作失败",
+        if (isClientChannel()) {
+            containerPost(
+                if (liked) "like/destroy" else "like/update",
+                form = mapOf("object_id" to id, "object_type" to "comment"),
             )
             return true
         }
@@ -1830,11 +2047,10 @@ class Repo(private val context: Context, private val store: Store) {
             likeBusy[id] = now
         }
         val ok = try {
-            if (isClientLogin()) {
-                val body = JSONObject().put("id", id).toString()
-                checkDesktopOk(
-                    desktopWrite("操作失败", if (liked) "/ajax/statuses/cancelLike" else "/ajax/statuses/setLike", body),
-                    "操作失败",
+            if (isClientChannel()) {
+                containerPost(
+                    if (liked) "like/cancel_like" else "like/set_like",
+                    form = mapOf("id" to id),
                 )
                 true
             } else {
@@ -1874,15 +2090,10 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun follow(uid: String, follow: Boolean): Boolean {
-        if (isClientLogin()) {
-            val body = JSONObject().put(if (follow) "friend_uid" else "uid", uid).toString()
-            checkDesktopOk(
-                desktopWrite(
-                    if (follow) "关注失败" else "取关失败",
-                    if (follow) "/ajax/friendships/create" else "/ajax/friendships/destory",
-                    body,
-                ),
-                if (follow) "关注失败" else "取关失败",
+        if (isClientChannel()) {
+            containerPost(
+                if (follow) "friendships/create" else "friendships/destroy",
+                form = mapOf("uid" to uid),
             )
             return true
         }
@@ -1914,18 +2125,10 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun comment(id: String, mid: String, text: String): Boolean {
-        val ok = if (isClientLogin()) {
-            checkDesktopOk(
-                desktopPost(
-                    "/ajax/comments/create",
-                    form = mapOf(
-                        "id" to id,
-                        "mid" to mid.ifBlank { id },
-                        "comment" to text,
-                        "is_repost" to "0",
-                    ),
-                ),
-                "评论失败",
+        val ok = if (isClientChannel()) {
+            containerPost(
+                "comments/create",
+                form = mapOf("id" to id, "comment" to text),
             )
             true
         } else {
@@ -1945,28 +2148,23 @@ class Repo(private val context: Context, private val store: Store) {
      * created reply comes back so the thread can show it without re-reading a lagging list.
      */
     suspend fun replyComment(id: String, mid: String, cid: String, text: String): Comment {
-        val root = if (isClientLogin()) {
-            desktopPost(
-                "/ajax/comments/reply",
-                form = mapOf(
-                    "id" to id,
-                    "mid" to mid.ifBlank { id },
-                    "cid" to cid,
-                    "comment" to text,
-                    "is_repost" to "0",
-                ),
+        if (isClientChannel()) {
+            val root = containerPost(
+                "comments/reply",
+                form = mapOf("id" to id, "cid" to cid, "comment" to text),
             )
-        } else {
-            postJson(
-                "https://m.weibo.cn/api/comments/reply",
-                mapOf(
-                    "id" to id,
-                    "mid" to mid.ifBlank { id },
-                    "cid" to cid,
-                    "content" to text,
-                ),
-            )
+            App.cache.clear()
+            return Comment.from(root, depth = 1) ?: throw ApiException("回复失败")
         }
+        val root = postJson(
+            "https://m.weibo.cn/api/comments/reply",
+            mapOf(
+                "id" to id,
+                "mid" to mid.ifBlank { id },
+                "cid" to cid,
+                "content" to text,
+            ),
+        )
         if (root.optInt("ok", 0) != 1) throw ApiException(root.str("msg").ifBlank { root.str("message", "回复失败") })
         App.cache.clear()
         return Comment.from(root.optJSONObject("data"), depth = 1)
@@ -1974,20 +2172,14 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun repost(id: String, mid: String, text: String, visible: Int = 0): Boolean {
-        val ok = if (isClientLogin()) {
-            checkDesktopOk(
-                desktopPost(
-                    "/ajax/statuses/normal_repost",
-                    form = mapOf(
-                        "id" to id,
-                        "comment" to text,
-                        "visible" to visible.toString(),
-                        "is_repost" to "0",
-                        "comment_ori" to "0",
-                        "is_comment" to "0",
-                    ),
+        val ok = if (isClientChannel()) {
+            containerPost(
+                "statuses/repost",
+                form = mapOf(
+                    "id" to id,
+                    "status" to text,
+                    "visible" to visible.toString(),
                 ),
-                "转发失败",
             )
             true
         } else {
@@ -2003,12 +2195,12 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun publish(text: String, picIds: List<String>, visible: Int = 0): Boolean {
-        val ok = if (isClientLogin()) {
+        val ok = if (isClientChannel()) {
             val form = LinkedHashMap<String, String>()
-            form["content"] = text
+            form["status"] = text
             form["visible"] = visible.toString()
             if (picIds.isNotEmpty()) form["pic_id"] = picIds.joinToString(",")
-            checkDesktopOk(desktopPost("/ajax/statuses/update", form = form), "发布失败")
+            containerPost("statuses/update", form = form)
             true
         } else {
             val form = LinkedHashMap<String, String>()
@@ -2023,11 +2215,8 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun deleteStatus(id: String, mid: String = ""): Boolean {
         val targetMid = mid.ifBlank { id }
-        val ok = if (isClientLogin()) {
-            checkDesktopOk(
-                desktopWrite("删除失败", "/ajax/statuses/destroy", JSONObject().put("id", targetMid).toString()),
-                "删除失败",
-            )
+        val ok = if (isClientChannel()) {
+            containerPost("statuses/destroy", form = mapOf("id" to targetMid))
             true
         } else {
             postOk(
@@ -2092,6 +2281,27 @@ class Repo(private val context: Context, private val store: Store) {
         if (cachedMentionFriends.isNotEmpty() && cachedMentionUid == uid) {
             return cachedMentionFriends
         }
+        if (isClientChannel() && uid.isNotBlank()) {
+            val containerFriends = runCatching {
+                val root = containerGet(
+                    "friendships/friends",
+                    mapOf("uid" to uid, "count" to "30", "cursor" to "0"),
+                )
+                val arr = root.optJSONArray("users")
+                buildList<User> {
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            User.from(arr.optJSONObject(i))?.let(::add)
+                        }
+                    }
+                }
+            }.getOrDefault(emptyList())
+            if (containerFriends.isNotEmpty()) {
+                cachedMentionFriends = containerFriends
+                cachedMentionUid = uid
+                return containerFriends
+            }
+        }
         val cookie = cookie() ?: return emptyList()
         val fromCompose = try {
             val root = get(
@@ -2153,13 +2363,17 @@ class Repo(private val context: Context, private val store: Store) {
         val cookie = cookie()
         if (trimmed.isEmpty()) {
             if (cachedHotspotTopics.isNotEmpty()) return cachedHotspotTopics
-            val hotTopics = try {
-                val root = get("https://m.weibo.cn/api/suggest/hotspot", cookie, force = false)
-                parseHotspotTopics(root)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
+            val hotTopics = if (isClientChannel()) {
                 emptyList()
+            } else {
+                try {
+                    val root = get("https://m.weibo.cn/api/suggest/hotspot", cookie, force = false)
+                    parseHotspotTopics(root)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    emptyList()
+                }
             }
             val result = if (hotTopics.isNotEmpty()) {
                 hotTopics
@@ -2178,16 +2392,18 @@ class Repo(private val context: Context, private val store: Store) {
             return result.take(20)
         }
         val out = LinkedHashMap<String, TopicSuggestion>()
-        try {
-            val root = get(
-                Api.url("https://m.weibo.cn/api/suggest/shotspot", mapOf("keyword" to trimmed)),
-                cookie,
-                force = false,
-            )
-            parseHotspotTopics(root).forEach { out.putIfAbsent(it.title, it) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
+        if (!isClientChannel()) {
+            try {
+                val root = get(
+                    Api.url("https://m.weibo.cn/api/suggest/shotspot", mapOf("keyword" to trimmed)),
+                    cookie,
+                    force = false,
+                )
+                parseHotspotTopics(root).forEach { out.putIfAbsent(it.title, it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
         }
         if (out.isEmpty()) {
             try {
@@ -2241,6 +2457,22 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun messages(page: Int, force: Boolean = false): List<MessageItem> {
+        if (isClientChannel()) {
+            val cursor = if (page <= 1) {
+                clientMessagesNextCursor = "0"
+                "0"
+            } else {
+                clientMessagesNextCursor.takeIf { it.isNotBlank() && it != "0" } ?: return emptyList()
+            }
+            val root = containerGet(
+                "direct_messages/user_list",
+                mapOf("count" to "30", "cursor" to cursor),
+            )
+            val next = root.str("next_cursor")
+            clientMessagesNextCursor = if (next == cursor) "0" else next
+            val arr = root.optJSONArray("user_list") ?: JSONArray()
+            return parseClientMessageEntries(arr)
+        }
         val active = session
         if (active?.loginType == LOGIN_TYPE_CLIENT) {
             return clientMessages(page)
@@ -2287,6 +2519,19 @@ class Repo(private val context: Context, private val store: Store) {
         force: Boolean = false,
     ): ChatPage {
         val isGroup = gid.isNotBlank()
+        if (isClientChannel() && !isGroup) {
+            val params = LinkedHashMap<String, String?>()
+            params["uid"] = uid
+            params["count"] = count.toString()
+            if (!maxId.isNullOrBlank()) {
+                params["max_id"] = maxId.toLongOrNull()?.minus(1)?.toString() ?: maxId
+            } else if (!sinceId.isNullOrBlank()) {
+                params["since_id"] = sinceId
+            }
+            val root = containerGet("direct_messages/conversation", params)
+            val arr = root.optJSONArray("direct_messages") ?: return ChatPage(emptyList(), emptyMap(), "", 0)
+            return parseClientChatPage(arr)
+        }
         val active = session
         if (active?.loginType == LOGIN_TYPE_CLIENT) {
             return clientChat(uid, gid, maxId, sinceId, count)
@@ -2314,6 +2559,10 @@ class Repo(private val context: Context, private val store: Store) {
 
     /** 发一条纯文字私信。群聊传 [gid]，一对一传 [uid]。 */
     suspend fun sendChat(uid: String, text: String, gid: String = ""): ChatMessage? {
+        if (isClientChannel() && gid.isBlank()) {
+            val root = containerPost("direct_messages/create", mapOf("uid" to uid, "text" to text))
+            return ChatMessage.fromClient(root)
+        }
         if (isClientLogin()) {
             return clientSendChat(uid, gid, text)
         }
@@ -2394,6 +2643,10 @@ class Repo(private val context: Context, private val store: Store) {
         val next = root.str("next_cursor")
         clientMessagesNextCursor = if (next == cursor) "0" else next
         val arr = root.optJSONArray("contacts") ?: root.optJSONArray("user_list") ?: return emptyList()
+        return parseClientMessageEntries(arr)
+    }
+
+    private fun parseClientMessageEntries(arr: JSONArray): List<MessageItem> {
         val out = ArrayList<MessageItem>(arr.length())
         for (i in 0 until arr.length()) {
             val entry = arr.optJSONObject(i) ?: continue
@@ -2471,6 +2724,10 @@ class Repo(private val context: Context, private val store: Store) {
         val root = webImRequest { Api.getWebIm(Api.url(endpoint, params), it) }
         val arr = (if (isGroup) root.optJSONArray("messages") else root.optJSONArray("direct_messages"))
             ?: return ChatPage(emptyList(), emptyMap(), "", 0)
+        return parseClientChatPage(arr)
+    }
+
+    private fun parseClientChatPage(arr: JSONArray): ChatPage {
         val messages = ArrayList<ChatMessage>(arr.length())
         val users = HashMap<String, User>()
         for (i in 0 until arr.length()) {
@@ -2584,7 +2841,19 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun notifications(tab: NotificationTab, maxId: String? = null): NotificationPage {
         if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
-        if (isClientLogin()) ensureClientSession()
+        if (isClientChannel()) {
+            val path = when (tab) {
+                NotificationTab.AtWeibo -> "statuses/mentions"
+                NotificationTab.AtComment -> "comments/mentions"
+                NotificationTab.Comment -> "comments/to_me"
+                NotificationTab.SentComment -> "comments/by_me"
+                NotificationTab.Like -> "like/to_me"
+            }
+            val params = LinkedHashMap<String, String?>()
+            params["count"] = "20"
+            if (!maxId.isNullOrBlank() && maxId != "0") params["max_id"] = maxId
+            return parseContainerNotifications(containerGet(path, params), tab)
+        }
         val params = LinkedHashMap<String, String?>()
         if (!maxId.isNullOrBlank() && maxId != "0") params["max_id"] = maxId
         val url = Api.url("https://weibo.com${tab.path}", params)
@@ -2607,6 +2876,14 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun profileFor(cookie: String?, uid: String, force: Boolean = false): User? {
+        if (isClientChannel() && (cookie == null || cookie == this.cookie())) {
+            runCatching {
+                User.from(containerGet("profile", mapOf("uid" to uid)).optJSONObject("userInfo"))
+            }.getOrNull()?.let { return it }
+            runCatching {
+                User.from(containerGet("users/show", mapOf("uid" to uid)))
+            }.getOrNull()?.let { return it }
+        }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
             desktopProfile(uid)?.let { return it }
         }
@@ -2650,9 +2927,11 @@ class Repo(private val context: Context, private val store: Store) {
 
     /** 桌面端 cookie：`.weibo.com` 自己的 XSRF-TOKEN 要留着，身份字段再从别的域补齐。 */
     private fun desktopCookie(): String {
-        val active = session?.takeIf { it.loggedIn } ?: throw ApiException(LOGIN_REQUIRED)
-        return CookieVault.desktopAuthHeader(active.cookies, CookieVault.WEIBO_COM)
+        val active = session?.takeIf { hasSession() } ?: throw ApiException(LOGIN_REQUIRED)
+        val header = CookieVault.desktopAuthHeader(active.cookies, CookieVault.WEIBO_COM)
             .ifBlank { active.cookie }
+        if (!header.contains("SUB=")) throw ApiException(LOGIN_REQUIRED)
+        return header
     }
 
     private fun desktopXsrf(): String? {
@@ -2743,6 +3022,14 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun createProfileGroup(name: String): ProfileGroup {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) throw ApiException("分组名称不能为空")
+        if (isClientChannel()) {
+            val root = containerPost("groups/create", form = mapOf("name" to trimmed, "mode" to "private"))
+            cachedFollowGroupsAt = 0L
+            return ProfileGroup(
+                gid = root.str("idstr").ifBlank { root.str("id") },
+                name = root.str("name").ifBlank { trimmed },
+            )
+        }
         val json = JSONObject()
             .put("name", trimmed)
             .put("isOpen", false)
@@ -2768,6 +3055,11 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun renameProfileGroup(gid: String, name: String): ProfileGroup {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) throw ApiException("分组名称不能为空")
+        if (isClientChannel()) {
+            val root = containerPost("groups/update", form = mapOf("list_id" to gid, "name" to trimmed))
+            cachedFollowGroupsAt = 0L
+            return ProfileGroup(gid = gid, name = root.str("name").ifBlank { trimmed })
+        }
         val json = JSONObject()
             .put("list_id", gid)
             .put("name", trimmed)
@@ -2784,6 +3076,11 @@ class Repo(private val context: Context, private val store: Store) {
     /** 删除分组：网页端 `ajax/profile/destroyGroup`，组里的人会掉回「未分组」。 */
     suspend fun deleteProfileGroup(gid: String) {
         if (gid.isBlank()) throw ApiException("分组不存在")
+        if (isClientChannel()) {
+            containerPost("!/groups/destroy", form = mapOf("list_id" to gid))
+            cachedFollowGroupsAt = 0L
+            return
+        }
         val json = JSONObject().put("list_id", gid).toString()
         val root = desktopWrite("删除分组失败", "/ajax/profile/destroyGroup", json)
         if (root.optInt("ok", 0) != 1) {
@@ -2824,6 +3121,17 @@ class Repo(private val context: Context, private val store: Store) {
      * 官方前端还会带一个 `list_name`，但中文名进 JSON 会被网关直接 400，服务端并不依赖它。
      */
     suspend fun setProfileGroups(uid: String, selected: List<String>, origin: List<String>): Boolean {
+        if (isClientChannel()) {
+            val target = selected.filter { it.isNotBlank() }.toSet()
+            val current = origin.filter { it.isNotBlank() }.toSet()
+            for (gid in target - current) {
+                containerPost("groups/members_add", form = mapOf("list_id" to gid, "uids" to uid))
+            }
+            for (gid in current - target) {
+                containerPost("groups/members_destroy", form = mapOf("list_id" to gid, "uids" to uid))
+            }
+            return true
+        }
         val json = JSONObject()
             .put("uids", uid)
             .put("list_ids", groupIdsParam(selected))
@@ -2838,13 +3146,28 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     /** 网页版「基本资料」：性别、生日、所在地、注册时间这些 m.weibo.cn 的 userInfo 里没有的字段。 */
-    suspend fun profileDetail(uid: String): ProfileDetail =
-        parseProfileDetail(
+    suspend fun profileDetail(uid: String): ProfileDetail {
+        if (isClientChannel()) {
+            val desktop = desktopCookieOrNull()?.let { desk ->
+                runCatching {
+                    val root = Api.getDesktop(
+                        Api.url("https://weibo.com/ajax/profile/detail", mapOf("uid" to uid)),
+                        desk,
+                    )
+                    if (root.optInt("ok", 0) == 1) root.optJSONObject("data") else null
+                }.getOrNull()
+            }
+            if (desktop != null) return parseProfileDetail(desktop)
+            val userInfo = containerGet("profile", mapOf("uid" to uid)).optJSONObject("userInfo")
+            return parseProfileDetail(userInfo)
+        }
+        return parseProfileDetail(
             Api.getDesktop(
                 Api.url("https://weibo.com/ajax/profile/detail", mapOf("uid" to uid)),
                 desktopCookie(),
             ).optJSONObject("data"),
         )
+    }
 
     /**
      * 加入黑名单：网页端 `ajax/statuses/filterUser`。
@@ -2852,6 +3175,10 @@ class Repo(private val context: Context, private val store: Store) {
      */
     suspend fun blockUser(uid: String): Boolean {
         val numeric = uid.toLongOrNull() ?: throw ApiException("用户不存在")
+        if (isClientChannel()) {
+            containerPost("blocks/create", form = mapOf("uid" to numeric.toString()))
+            return true
+        }
         val json = JSONObject()
             .put("uid", numeric)
             .put("status", 1)
@@ -2869,6 +3196,13 @@ class Repo(private val context: Context, private val store: Store) {
         session?.uid?.takeIf { it.isNotBlank() } ?: config().uid
 
     suspend fun userStatuses(uid: String, sinceId: String? = null, force: Boolean = false): FeedPage {
+        if (isClientChannel()) {
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = "107603$uid"
+            params["count"] = "20"
+            if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
+            return parseContainerCards(containerGet("profile/statuses", params))
+        }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
             val desktop = runCatching { desktopUserStatuses(uid, sinceId) }.getOrNull()
             if (desktop != null) return desktop
@@ -2918,6 +3252,25 @@ class Repo(private val context: Context, private val store: Store) {
         page: Int,
         force: Boolean = false,
     ): List<User> {
+        val current = page.coerceAtLeast(1)
+        if (isClientChannel()) {
+            val cacheKey = "$uid:${kind.name}"
+            val cursor = if (current == 1) "0" else relationCursors["$cacheKey:$current"] ?: return emptyList()
+            if (current > 1 && cursor == "0") return emptyList()
+            val path = if (kind == RelationKind.Following) "friendships/friends" else "friendships/followers"
+            val root = containerGet(
+                path,
+                mapOf("uid" to uid, "count" to RELATION_PAGE_SIZE.toString(), "cursor" to cursor),
+            )
+            val nextCursor = root.str("next_cursor").ifBlank { "0" }
+            relationCursors["$cacheKey:${current + 1}"] = nextCursor
+            val arr = root.optJSONArray("users") ?: return emptyList()
+            return buildList(arr.length()) {
+                for (i in 0 until arr.length()) {
+                    User.from(arr.optJSONObject(i))?.let(::add)
+                }
+            }
+        }
         val own = uid.isNotBlank() && uid == ownUid()
         val cid = when (kind) {
             RelationKind.Following ->
@@ -2925,7 +3278,6 @@ class Repo(private val context: Context, private val store: Store) {
             RelationKind.Followers ->
                 if (own) "231016_-_selffans" else "231051_-_fans_-_$uid"
         }
-        val current = page.coerceAtLeast(1)
         val params = LinkedHashMap<String, String?>()
         params["containerid"] = cid
         when (kind) {
@@ -2941,11 +3293,6 @@ class Repo(private val context: Context, private val store: Store) {
 
     /**
      * 附近 / 同城流。
-     *
-     * `m.weibo.cn/api/feed/trendtop?containerid=102803_2222` 在客户端会话或部分 Cookie 下
-     * 会直接返回 `{"ok":1,"data":{"statuses":false}}` 导致整页空白；桌面端同城接口
-     * `weibo.com/ajax/feed/hottimeline`（`group_id=1028032222`）同时认 `lat` / `lon` 与
-     * `max_id` 翻页，客户端登录态、网页登录态与访客态都能正常出流。
      */
     suspend fun nearby(
         lat: String,
@@ -2953,6 +3300,19 @@ class Repo(private val context: Context, private val store: Store) {
         maxId: String? = null,
         force: Boolean = false,
     ): FeedPage {
+        if (isClientChannel() && maxId?.contains("_-_") != true) {
+            val params = LinkedHashMap<String, String?>()
+            params["group_id"] = "102803_2222"
+            params["refresh_type"] = if (maxId.isNullOrBlank()) "0" else "1"
+            params["count"] = "15"
+            params["lat"] = lat
+            params["lon"] = lon
+            if (!maxId.isNullOrBlank()) params["max_id"] = maxId
+            val root = containerGet("statuses/unread_hot_timeline", params)
+            val items = statusesOf(root.optJSONArray("statuses") ?: JSONArray())
+            val next = root.str("max_id").takeIf { it.isNotBlank() && it != "0" && it != maxId }
+            return FeedPage(items, next)
+        }
         val useDesktop = isClientLogin() || maxId?.contains("_-_") == true
         if (useDesktop) {
             return desktopNearby(lat, lon, maxId)
@@ -3020,6 +3380,21 @@ class Repo(private val context: Context, private val store: Store) {
      * 接口抽风或返回空时兜底常见城市列表，保证切换城市弹窗可用。
      */
     suspend fun nearbyCities(force: Boolean = false): List<NearbyPlace> {
+        if (isClientChannel()) {
+            val places = runCatching {
+                val root = containerGet(
+                    "cardlist",
+                    linkedMapOf(
+                        "containerid" to "2306860024_____8008631000000000000",
+                        "needlocation" to "1",
+                        "extparam" to "city",
+                    ),
+                )
+                parseNearbyPlaces(JSONObject().put("data", root))
+            }.getOrDefault(emptyList())
+            if (places.isNotEmpty()) return places
+            return DEFAULT_NEARBY_PLACES
+        }
         val url = Api.url(
             "https://m.weibo.cn/api/container/getIndex",
             linkedMapOf(

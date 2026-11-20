@@ -41,16 +41,18 @@ object Api {
 
     /**
      * 每收到一次微博响应，就把里面的 `Set-Cookie` 交出去。由 [Repo] 挂上，
-     * 用来把网页端滚动下发的 `SUB` / `ALF` 收进 cookie 表。
+     * 用来把网页端滚动下发的 `SUB` / `ALF` 收进 cookie 表；第三个参数标识请求本身
+     * 是否携带了登录态 `SUB`，防止访客降级请求把已登录会话的 cookie 冲掉。
      */
     @Volatile
-    var cookieSink: ((HttpUrl, List<String>) -> Unit)? = null
+    var cookieSink: ((HttpUrl, List<String>, Boolean) -> Unit)? = null
 
     private val capture = okhttp3.Interceptor { chain ->
         val response = chain.proceed(chain.request())
         val headers = response.headers.values("Set-Cookie")
         if (headers.isNotEmpty() && CookieVault.isWeibo(response.request.url.host)) {
-            runCatching { cookieSink?.invoke(response.request.url, headers) }
+            val hadAuthCookie = response.request.header("Cookie")?.contains("SUB=") == true
+            runCatching { cookieSink?.invoke(response.request.url, headers, hadAuthCookie) }
         }
         response
     }
@@ -105,7 +107,9 @@ object Api {
                 App.cache.read(url, cookie)?.let { return@withContext it }
             }
             val json = execute(Request.Builder().url(url).weiboHeaders(cookie).get().build())
-            App.cache.write(url, cookie, json)
+            if (json.optInt("ok", 1) == 1 && !json.has("errno")) {
+                App.cache.write(url, cookie, json)
+            }
             json
         }
 
@@ -475,6 +479,43 @@ object Api {
      * 不伪造网页 `Referer`、透传 `User-Agent` / `X-Validator`，并在服务端用 HTTP 4xx
      * 返回 `-1005` / `-1007` 等 JSON 错误体时仍将其解成 [JSONObject]。
      */
+    suspend fun containerGetShare(
+        path: String,
+        query: Map<String, String?>,
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): ContainerResponse = withContext(Dispatchers.IO) {
+        val target = url("https://api.weibo.cn/2/$path", query)
+        val request = Request.Builder()
+            .url(target)
+            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
+            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
+            .get()
+            .build()
+        executeContainerShare(request)
+    }
+
+    suspend fun containerGetRawShare(
+        path: String,
+        query: Map<String, String?>,
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): Pair<String, String?> = withContext(Dispatchers.IO) {
+        val target = url("https://api.weibo.cn/2/$path", query)
+        val request = Request.Builder()
+            .url(target)
+            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
+            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            val xValidator = response.header("X-Validator")?.takeIf { it.isNotBlank() }
+            if (!response.isSuccessful) throw ApiHttpException(response.code, text)
+            text to xValidator
+        }
+    }
+
     suspend fun containerPostShare(
         path: String,
         query: Map<String, String?>,
