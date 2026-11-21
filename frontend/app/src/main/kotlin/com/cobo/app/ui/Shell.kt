@@ -148,6 +148,7 @@ import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
@@ -1110,6 +1111,7 @@ private fun HomeSearchOverlay(
 ) {
     val surfaceColor = pageContainerColor()
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     val horizontalPadding = searchHorizontalPadding()
     val density = LocalDensity.current
     val topBarHeightPx = with(density) { topBarHeight.toPx() }

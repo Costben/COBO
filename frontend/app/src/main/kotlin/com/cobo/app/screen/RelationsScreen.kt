@@ -45,6 +45,7 @@ import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -75,6 +76,7 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
     var error by remember(uid, kind) { mutableStateOf<String?>(null) }
     var moreError by remember(uid, kind) { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     val pullState = rememberFullPagePullToRefreshState()
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)

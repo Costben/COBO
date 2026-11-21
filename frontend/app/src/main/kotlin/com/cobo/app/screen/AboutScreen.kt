@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.openExternalUrl
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
@@ -148,6 +150,8 @@ fun AboutScreen(nav: NavState) {
     val blurEffects = blurEffectsEnabled()
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(
@@ -157,6 +161,7 @@ fun AboutScreen(nav: NavState) {
                 .background(pageColor),
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                 contentPadding = PaddingValues(
                     start = 12.dp,

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
@@ -73,6 +74,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.rememberExpandOrigin
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.ChipTabData
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
@@ -204,6 +206,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                     val store = storeFor(tab)
                     val feed = store.feed
                     val listState = listStateFor(tab)
+                    BindScrollToTop(listState, enabled = pageIndex == pagerState.settledPage)
                     val pullState = rememberFullPagePullToRefreshState()
 
                     SyncDeletedStatuses(feed)

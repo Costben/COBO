@@ -50,6 +50,7 @@ import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
@@ -68,6 +69,7 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
     var end by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。

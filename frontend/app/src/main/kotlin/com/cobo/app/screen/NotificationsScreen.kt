@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -70,6 +71,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.rememberExpandOrigin
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.ChipTabData
@@ -226,6 +228,7 @@ fun NotificationsScreen(nav: NavState) {
                     val tab = tabs[pageIndex]
                     val state = stateFor(tab)
                     val listState = listStateFor(tab)
+                    BindScrollToTop(listState, enabled = pageIndex == pagerState.settledPage)
                     val pullState = rememberFullPagePullToRefreshState()
 
                     LaunchedEffect(state) {

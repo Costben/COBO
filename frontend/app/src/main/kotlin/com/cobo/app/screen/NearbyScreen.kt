@@ -61,6 +61,7 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.navBottomPadding
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -104,6 +105,7 @@ fun NearbyScreen(nav: NavState) {
     var showCityPicker by remember { mutableStateOf(false) }
     var permissionTick by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 

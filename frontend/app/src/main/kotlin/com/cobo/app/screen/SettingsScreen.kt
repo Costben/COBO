@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -81,6 +82,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.parseHexColor
 import com.cobo.app.ui.pinnedHeight
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
@@ -181,10 +183,13 @@ fun SettingsScreen(nav: NavState) {
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().scrollEndHaptic(),
             // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
             // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
@@ -1393,10 +1398,13 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
     val pageColor = pageContainerColor()
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic(),
                 contentPadding = PaddingValues(
                     start = 12.dp,

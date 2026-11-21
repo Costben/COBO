@@ -15,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import com.cobo.app.ui.CoboRoot
 import com.cobo.app.ui.CoboTheme
 import com.cobo.app.ui.isDarkTheme
+import io.github.suqi8.coui.kmp.basic.ScrollToTopHost
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,7 +50,9 @@ class MainActivity : ComponentActivity() {
                     }
                     onDispose {}
                 }
-                CoboRoot()
+                ScrollToTopHost {
+                    CoboRoot()
+                }
             }
         }
     }

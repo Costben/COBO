@@ -65,6 +65,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.rememberExpandOrigin
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.ChipTabData
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
@@ -146,6 +147,7 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                 val channel = channels[pageIndex]
                 val store = stores[pageIndex]
                 val listState = listStates[pageIndex]
+                BindScrollToTop(listState, enabled = pageIndex == pagerState.settledPage)
                 val pullState = rememberFullPagePullToRefreshState()
 
                 SyncDeletedStatuses(store)

@@ -63,6 +63,7 @@ import com.cobo.app.ui.components.WeiboRichText
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.pageContainerColor
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -117,7 +118,10 @@ fun DraftsScreen(nav: NavState) {
             }
         },
     ) { padding ->
+        val listState = rememberLazyListState()
+        BindScrollToTop(listState)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().scrollEndHaptic().padding(padding),
             contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -173,6 +177,7 @@ fun HistoryScreen(nav: NavState) {
     // 同一时间只展开一行，和通知栏一样：拉开新的一行，上一行自己收回去。
     var openId by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     // 筛选：点漏斗展开搜索框，输入即过滤；再点一次收起，同时清掉关键词和过滤结果。
     var filterOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -456,7 +461,10 @@ fun AccountsScreen(nav: NavState) {
             }
         },
     ) { padding ->
+        val listState = rememberLazyListState()
+        BindScrollToTop(listState)
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().scrollEndHaptic().padding(padding),
             contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 12.dp + navBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(8.dp),

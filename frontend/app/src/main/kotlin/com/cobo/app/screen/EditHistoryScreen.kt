@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -48,6 +49,7 @@ import com.cobo.app.ui.components.ImageGrid
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.navBottomPadding
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -90,7 +92,10 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
+            val listState = rememberLazyListState()
+            BindScrollToTop(listState)
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("edit_history_list"),
                 contentPadding = PaddingValues(
                     start = 12.dp,

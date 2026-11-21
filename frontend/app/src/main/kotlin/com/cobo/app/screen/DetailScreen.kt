@@ -116,6 +116,7 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarDefaults
 import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
@@ -183,6 +184,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     var repostComment by remember { mutableStateOf<Comment?>(null) }
     var commentDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     // The bar floats over this list too, so the quoted post inside the card below has to be able to
     // read where the bar ends when a page returns into it.
     val topBarBounds = remember { TopBarBounds() }

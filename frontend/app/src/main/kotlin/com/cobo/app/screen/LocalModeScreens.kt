@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
@@ -32,6 +33,7 @@ import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.SectionTitle
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.CardListPosition
@@ -79,7 +81,10 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
         }
     }
 
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize().scrollEndHaptic(),
         contentPadding = PaddingValues(
             start = 12.dp,
