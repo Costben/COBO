@@ -286,6 +286,9 @@ class Repo(private val context: Context, private val store: Store) {
 
     private val relationCursors = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    private val uploadedContainerMedia =
+        java.util.concurrent.ConcurrentHashMap<String, ContainerApi.UploadedMedia>()
+
     private val visitorLock = Mutex()
 
     /** 全局本地收藏状态：跨多账号与纯本地模式共用，切号与登出均保留。 */
@@ -594,6 +597,7 @@ class Repo(private val context: Context, private val store: Store) {
         cachedMentionUid = null
         cachedHotspotTopics = emptyList()
         relationCursors.clear()
+        uploadedContainerMedia.clear()
         clientMobileRejectedSub = null
         clientMobileRejectedAt = 0L
     }
@@ -733,6 +737,14 @@ class Repo(private val context: Context, private val store: Store) {
         queryExtra: Map<String, String?> = emptyMap(),
     ): JSONObject = withContainerAuth { uid, gsid, aid ->
         ContainerApi.post(path, uid, gsid, aid, form, queryExtra)
+    }
+
+    private suspend fun containerPostMultipart(
+        path: String,
+        parts: Map<String, String> = emptyMap(),
+        queryExtra: Map<String, String?> = emptyMap(),
+    ): JSONObject = withContainerAuth { uid, gsid, aid ->
+        ContainerApi.postMultipart(path, uid, gsid, aid, parts, queryExtra)
     }
 
     private suspend fun finishClientLogin(result: ClientLogin.Result): Account {
@@ -2196,11 +2208,11 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun publish(text: String, picIds: List<String>, visible: Int = 0): Boolean {
         val ok = if (isClientChannel()) {
-            val form = LinkedHashMap<String, String>()
-            form["status"] = text
-            form["visible"] = visible.toString()
-            if (picIds.isNotEmpty()) form["pic_id"] = picIds.joinToString(",")
-            containerPost("statuses/update", form = form)
+            val mediaList = picIds.map { fid ->
+                uploadedContainerMedia.remove(fid) ?: ContainerApi.UploadedMedia(fid = fid)
+            }
+            val parts = ContainerApi.buildPublishParts(text, visible, mediaList)
+            containerPostMultipart("statuses/send", parts = parts)
             true
         } else {
             val form = LinkedHashMap<String, String>()
@@ -2425,10 +2437,22 @@ class Repo(private val context: Context, private val store: Store) {
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw ApiException("无法读取图片")
         val mime = resolver.getType(uri) ?: "image/jpeg"
-        if (isClientLogin()) {
-            val md5Hex = java.security.MessageDigest.getInstance("MD5").digest(bytes).joinToString("") {
-                "%02x".format(it)
+        val name = when {
+            mime.contains("png") -> "pic.png"
+            mime.contains("gif") -> "pic.gif"
+            mime.contains("webp") -> "pic.webp"
+            else -> "pic.jpg"
+        }
+        if (isClientChannel()) {
+            val md5Hex = ContainerApi.md5Hex(bytes)
+            val uploaded = withContainerAuth { uid, gsid, aid ->
+                ContainerApi.uploadPic(uid, gsid, aid, bytes, name, md5Hex)
             }
+            uploadedContainerMedia[uploaded.fid] = uploaded
+            return uploaded.fid
+        }
+        if (isClientLogin()) {
+            val md5Hex = ContainerApi.md5Hex(bytes)
             val root = Api.uploadDesktopPic(bytes, session?.uid.orEmpty(), md5Hex, mime, desktopCookie())
             val pid = root.optJSONObject("pic")?.str("pid").orEmpty()
                 .ifBlank { root.optJSONObject("data")?.optJSONObject("pics")?.optJSONObject("pic_1")?.str("pid").orEmpty() }
@@ -2437,12 +2461,6 @@ class Repo(private val context: Context, private val store: Store) {
         }
         val cookie = loginCookie()
         val st = st()
-        val name = when {
-            mime.contains("png") -> "pic.png"
-            mime.contains("gif") -> "pic.gif"
-            mime.contains("webp") -> "pic.webp"
-            else -> "pic.jpg"
-        }
         val root = Api.upload(
             "https://m.weibo.cn/api/statuses/uploadPic",
             bytes,

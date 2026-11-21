@@ -56,6 +56,7 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.VisibilityPickerDialog
 import com.cobo.app.ui.components.VisibilityPill
 import com.cobo.app.ui.components.WeiboEmojiPanel
+import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -75,6 +76,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun PublishScreen(nav: NavState, draft: String) {
     val scope = rememberCoroutineScope()
+    val pageScrollState = rememberScrollState()
+    BindScrollToTop(pageScrollState)
     var field by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(draft, TextRange(draft.length)))
     }
@@ -146,11 +149,11 @@ fun PublishScreen(nav: NavState, draft: String) {
                                         progress = "正在发布…"
                                         App.repo.publish(field.text.trim(), ids, visibility.code)
                                         App.notifyPublished()
-                                        progress = ""
                                         nav.pop()
                                     } catch (t: Throwable) {
                                         error = t.message ?: "发布失败"
                                     } finally {
+                                        progress = ""
                                         publishing = false
                                     }
                                 }
@@ -167,7 +170,7 @@ fun PublishScreen(nav: NavState, draft: String) {
                 .padding(padding)
                 .imePadding()
                 .scrollEndHaptic()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(pageScrollState)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             TextField(

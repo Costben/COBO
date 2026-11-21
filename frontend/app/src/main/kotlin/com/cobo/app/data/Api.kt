@@ -479,6 +479,18 @@ object Api {
      * 不伪造网页 `Referer`、透传 `User-Agent` / `X-Validator`，并在服务端用 HTTP 4xx
      * 返回 `-1005` / `-1007` 等 JSON 错误体时仍将其解成 [JSONObject]。
      */
+    private fun buildContainerShareRequest(
+        targetUrl: String,
+        headers: Map<String, String>,
+        ua: String,
+        configure: Request.Builder.() -> Request.Builder,
+    ): Request = Request.Builder()
+        .url(targetUrl)
+        .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
+        .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
+        .configure()
+        .build()
+
     suspend fun containerGetShare(
         path: String,
         query: Map<String, String?>,
@@ -486,12 +498,7 @@ object Api {
         ua: String = clientHeaderUa(),
     ): ContainerResponse = withContext(Dispatchers.IO) {
         val target = url("https://api.weibo.cn/2/$path", query)
-        val request = Request.Builder()
-            .url(target)
-            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
-            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
-            .get()
-            .build()
+        val request = buildContainerShareRequest(target, headers, ua) { get() }
         executeContainerShare(request)
     }
 
@@ -502,12 +509,7 @@ object Api {
         ua: String = clientHeaderUa(),
     ): Pair<String, String?> = withContext(Dispatchers.IO) {
         val target = url("https://api.weibo.cn/2/$path", query)
-        val request = Request.Builder()
-            .url(target)
-            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
-            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
-            .get()
-            .build()
+        val request = buildContainerShareRequest(target, headers, ua) { get() }
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             val xValidator = response.header("X-Validator")?.takeIf { it.isNotBlank() }
@@ -522,17 +524,44 @@ object Api {
         form: Map<String, String>,
         headers: Map<String, String> = emptyMap(),
         ua: String = clientHeaderUa(),
+        multipart: Boolean = false,
     ): ContainerResponse = withContext(Dispatchers.IO) {
         val target = url("https://api.weibo.cn/2/$path", query)
-        val body = FormBody.Builder().apply {
-            form.forEach { (key, value) -> add(key, value) }
-        }.build()
-        val request = Request.Builder()
-            .url(target)
-            .apply { if (ua.isNotBlank()) header("User-Agent", ua) }
-            .apply { headers.forEach { (k, v) -> if (v.isNotBlank()) header(k, v) } }
-            .post(body)
-            .build()
+        val body = if (multipart) {
+            MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+                form.forEach { (key, value) -> addFormDataPart(key, value) }
+            }.build()
+        } else {
+            FormBody.Builder().apply {
+                form.forEach { (key, value) -> add(key, value) }
+            }.build()
+        }
+        val request = buildContainerShareRequest(target, headers, ua) { post(body) }
+        executeContainerShare(request)
+    }
+
+    suspend fun containerUrlGetShare(
+        fullUrl: String,
+        query: Map<String, String?>,
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): ContainerResponse = withContext(Dispatchers.IO) {
+        val target = url(fullUrl, query)
+        val request = buildContainerShareRequest(target, headers, ua) { get() }
+        executeContainerShare(request)
+    }
+
+    suspend fun containerUrlPostBytesShare(
+        fullUrl: String,
+        query: Map<String, String?>,
+        bytes: ByteArray,
+        contentType: String = "application/octet-stream",
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): ContainerResponse = withContext(Dispatchers.IO) {
+        val target = url(fullUrl, query)
+        val body = bytes.toRequestBody(contentType.toMediaType())
+        val request = buildContainerShareRequest(target, headers, ua) { post(body) }
         executeContainerShare(request)
     }
 

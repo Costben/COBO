@@ -382,7 +382,7 @@ access_token / gsid / s / i / aid  ...
 ## 7. 接入注意事项
 
 1. **两条通道并存（双通道路由）**：
-   - **客户端登录（`LOGIN_TYPE_CLIENT`）**：走 `api.weibo.cn/2/` 容器协议，用 Share 3.9.6 渠道号 `10B6395010` + `WeiboSpoofContext` + `libwbutil.so` 计算 `s`/`i`/`cum` 并携带 `gsid`。实测 2026-11 业务读写接口（`statuses/friends/timeline`、`statuses/unread_hot_timeline`、`groups/timeline`、`page`、`cardlist`、`searchall`、`statuses/show`、`comments/build_comments`、`profile`、`direct_messages/*`、`like/*`、`comments/*`、`statuses/update` 等）全部可用，且不依赖 `m.weibo.cn` / `weibo.com` 的网页 `SUB` Cookie。
+   - **客户端登录（`LOGIN_TYPE_CLIENT`）**：走 `api.weibo.cn/2/` 容器协议，用 Share 3.9.6 渠道号 `10B6395010` + `WeiboSpoofContext` + `libwbutil.so` 计算 `s`/`i`/`cum` 并携带 `gsid`。实测 2026-11 业务读写接口（`statuses/friends/timeline`、`statuses/unread_hot_timeline`、`groups/timeline`、`page`、`cardlist`、`searchall`、`statuses/show`、`comments/build_comments`、`profile`、`direct_messages/*`、`like/*`、`comments/*`、`statuses/send` 等）全部可用，且不依赖 `m.weibo.cn` / `weibo.com` 的网页 `SUB` Cookie。
    - **网页登录（`LOGIN_TYPE_WEB`）与游客模式**：完整保留 `m.weibo.cn` Web API（及既有 `weibo.com/ajax/*` 能力），只使用 Cookie 会话与 `st` 令牌，两侧凭证不混用。
 2. **渠道号与 `libwbutil.so` 说明**：
    - 早期用新版 `10GB195010`（微博 16.11.1）测试时因新版已切到 `libslib.so`（`libsoshell` 加固壳）导致 `-105`；而 Share 3.9.6 对应的 `10B6395010` + `libwbutil.so` + `WeiboSpoofContext`（伪装 `com.sina.weibo` 包名与官方签名摘要）在 `api.weibo.cn/2/` 仍被服务端完整放行。
