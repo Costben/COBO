@@ -254,6 +254,12 @@ class Settings(context: Context) {
     var blurEffects by mutableStateOf(sp.getBoolean("blur_effects", true))
         private set
 
+    /**
+     * 允许横屏：关掉之后 Activity 钉死竖屏，也就不会进入左右双页。默认开，跟随系统方向。
+     */
+    var allowLandscape by mutableStateOf(sp.getBoolean("allow_landscape", true))
+        private set
+
     /** 点赞前确认：点爱心之后先弹窗问一句，避免手滑。默认关，和以前一样点一下就赞；取消赞不拦。 */
     var confirmLike by mutableStateOf(sp.getBoolean("confirm_like", false))
         private set
@@ -268,6 +274,17 @@ class Settings(context: Context) {
 
     /** 悬浮底栏的「我」是否显示当前账号头像（代替默认图标）。默认开。 */
     var profileTabAvatar by mutableStateOf(sp.getBoolean("profile_tab_avatar", true))
+        private set
+
+    /**
+     * 首页信息流的微博是否保留最外层卡片外框。关掉后卡片背景与圆角去掉，正文横向撑到与顶栏
+     * 按钮对齐；卡片内部的区块（转发块、投票卡、媒体、楼中楼）仍保留各自的外框。默认保留。
+     */
+    var feedCardFrame by mutableStateOf(sp.getBoolean("feed_card_frame", true))
+        private set
+
+    /** 详情页主贴与热门评论是否保留最外层卡片外框。默认保留，与首页分开设置。 */
+    var detailCardFrame by mutableStateOf(sp.getBoolean("detail_card_frame", true))
         private set
 
     /** 倒序浏览：刷新时停在原阅读位置，将新微博插入上方并支持断点补拉。默认关。 */
@@ -497,6 +514,11 @@ class Settings(context: Context) {
         sp.edit().putBoolean("blur_effects", value).apply()
     }
 
+    fun applyAllowLandscape(value: Boolean) {
+        allowLandscape = value
+        sp.edit().putBoolean("allow_landscape", value).apply()
+    }
+
     fun applyConfirmLike(value: Boolean) {
         confirmLike = value
         sp.edit().putBoolean("confirm_like", value).apply()
@@ -515,6 +537,16 @@ class Settings(context: Context) {
     fun applyProfileTabAvatar(value: Boolean) {
         profileTabAvatar = value
         sp.edit().putBoolean("profile_tab_avatar", value).apply()
+    }
+
+    fun applyFeedCardFrame(value: Boolean) {
+        feedCardFrame = value
+        sp.edit().putBoolean("feed_card_frame", value).apply()
+    }
+
+    fun applyDetailCardFrame(value: Boolean) {
+        detailCardFrame = value
+        sp.edit().putBoolean("detail_card_frame", value).apply()
     }
 
     fun applyReverseBrowse(value: Boolean) {

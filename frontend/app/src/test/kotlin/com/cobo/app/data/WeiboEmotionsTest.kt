@@ -37,6 +37,8 @@ class WeiboEmotionsTest {
             sections.first().items,
         )
         assertTrue(sections.last().items.isNotEmpty())
+        // 批量灌完之后要一次性落到地址表里，正文才能把 [doge] 换成图。
+        assertEquals("https://face.t.sinajs.cn/doge.png", WeiboEmojiBitmaps.urlOf("[doge]"))
     }
 
     @Test

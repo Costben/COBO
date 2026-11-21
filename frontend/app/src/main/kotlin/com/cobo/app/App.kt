@@ -15,16 +15,22 @@ import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
 import com.cobo.app.data.Store
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
+import com.cobo.app.data.WeiboEmojiBitmaps
 
 class CoboApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         App.init(this)
+        WeiboEmojiBitmaps.attach(this)
+        // 表情表先有内置的一整份，这里只是顺手把接口里的新表情补进来；失败就继续用内置表。
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+            .launch { runCatching { App.repo.emotions() } }
         // 私信附件在 attachment.api.weibo.com 上，不带 cookie 直接 403，
         // 默认加载器拿不到图，气泡就只剩一圈内边距。只给 weibo 域名挂 cookie。
         SingletonImageLoader.setSafe { ctx ->

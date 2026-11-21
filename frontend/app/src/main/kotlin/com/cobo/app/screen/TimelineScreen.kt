@@ -913,6 +913,7 @@ private fun TimelinePage(
                                 quotedOrigin.attachToRow(listState, status.id, topBar)
                                 nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
                             },
+                            keepFrame = App.settings.feedCardFrame,
                         )
                     }
                 }

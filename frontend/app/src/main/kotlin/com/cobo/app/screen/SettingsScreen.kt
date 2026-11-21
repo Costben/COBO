@@ -122,6 +122,7 @@ fun SettingsScreen(nav: NavState) {
     var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
     var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
     var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
+    var allowLandscape by remember { mutableStateOf(App.settings.allowLandscape) }
     var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
     var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
     var inAppBrowser by remember { mutableStateOf(App.settings.inAppBrowser) }
@@ -129,6 +130,8 @@ fun SettingsScreen(nav: NavState) {
     var profileTabAvatar by remember { mutableStateOf(App.settings.profileTabAvatar) }
     var reverseBrowse by remember { mutableStateOf(App.settings.reverseBrowse) }
     var collapseFollowGroups by remember { mutableStateOf(App.settings.collapseFollowGroups) }
+    var feedCardFrame by remember { mutableStateOf(App.settings.feedCardFrame) }
+    var detailCardFrame by remember { mutableStateOf(App.settings.detailCardFrame) }
     var message by remember { mutableStateOf("") }
     var logout by remember { mutableStateOf(false) }
     var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
@@ -263,6 +266,18 @@ fun SettingsScreen(nav: NavState) {
                         cardListPosition = CardListPosition.Middle,
                     )
                     PreferenceDivider()
+                    SwitchPreference(
+                        checked = allowLandscape,
+                        onCheckedChange = {
+                            allowLandscape = it
+                            App.settings.applyAllowLandscape(it)
+                        },
+                        title = "允许横屏",
+                        summary = "关闭后固定竖屏，不再进入左右双页",
+                        modifier = Modifier.testTag("settings_allow_landscape"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
                     ArrowPreference(
                         title = "搜索面板动画",
                         modifier = Modifier.testTag("settings_search_panel_anim"),
@@ -374,6 +389,38 @@ fun SettingsScreen(nav: NavState) {
                         title = "倒序浏览",
                         summary = "刷新不回顶，从当前位置往上补看新微博",
                         modifier = Modifier.testTag("settings_reverse_browse"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = feedCardFrame,
+                        onCheckedChange = {
+                            feedCardFrame = it
+                            App.settings.applyFeedCardFrame(it)
+                        },
+                        title = "首页卡片外框",
+                        summary = if (feedCardFrame) {
+                            "关闭后去掉卡片底色与圆角，正文横向与顶栏按钮对齐"
+                        } else {
+                            "已去掉卡片外框，正文与顶栏按钮对齐"
+                        },
+                        modifier = Modifier.testTag("settings_feed_card_frame"),
+                        cardListPosition = CardListPosition.Middle,
+                    )
+                    PreferenceDivider()
+                    SwitchPreference(
+                        checked = detailCardFrame,
+                        onCheckedChange = {
+                            detailCardFrame = it
+                            App.settings.applyDetailCardFrame(it)
+                        },
+                        title = "详情页卡片外框",
+                        summary = if (detailCardFrame) {
+                            "关闭后主贴与热门评论去掉外框，正文与顶栏按钮对齐；楼中楼等内部块保留"
+                        } else {
+                            "已去掉主贴与热门评论外框，正文与顶栏按钮对齐"
+                        },
+                        modifier = Modifier.testTag("settings_detail_card_frame"),
                         cardListPosition = CardListPosition.Tail,
                     )
                 }

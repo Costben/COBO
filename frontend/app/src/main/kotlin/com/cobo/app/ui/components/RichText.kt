@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.cobo.app.data.WeiboEmojiBitmaps
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.LocalLinkHandler
@@ -267,6 +268,11 @@ private fun linkPrefixInlineContent(
     }
 }
 
+/**
+ * 微博富文本：链接可点、超话与视频带图标、`<img>` 表情内联成图片。
+ *
+ * 表情按 1.0em 内联，不会撑高行盒；同一段 html 的解析结果会记住，列表滚动不会反复重建。
+ */
 @Composable
 fun WeiboText(
     html: String,
@@ -275,23 +281,16 @@ fun WeiboText(
     lineHeight: TextUnit = 21.sp,
     maxLines: Int = Int.MAX_VALUE,
     color: Color = COUITheme.colorScheme.onSurface,
+    linkColor: Color = COUITheme.colorScheme.primary,
+    selectable: Boolean = true,
 ) {
     val linkHandler = LocalLinkHandler.current
-    val linkColor = COUITheme.colorScheme.primary
-    val parsed = remember(html) { parseWeiboContent(html) }
-    val (text, inline) = remember(parsed, linkHandler, linkColor) {
-        val inlineContent = LinkedHashMap<String, InlineTextContent>()
-        val builder = AnnotatedString.Builder()
-        appendParsedWeibo(
-            builder = builder,
-            inlineContent = inlineContent,
-            parsed = parsed,
-            onLink = { linkHandler(it) },
-            linkColor = linkColor,
-        )
-        builder.toAnnotatedString() to inlineContent
+    // 表情表加载完后，正文里的 [表情] 要重新拆一遍，否则会一直停在方括号文字上。
+    val emojiVersion = WeiboEmojiBitmaps.version
+    val (text, inline) = remember(html, linkHandler, linkColor, emojiVersion) {
+        buildWeiboAnnotated(html, onLink = linkHandler, linkColor = linkColor)
     }
-    SelectionContainer {
+    val body: @Composable () -> Unit = {
         Text(
             text = text,
             modifier = modifier,
@@ -304,34 +303,114 @@ fun WeiboText(
             inlineContent = inline,
         )
     }
+    if (selectable) SelectionContainer { body() } else body()
 }
 
-private val EmojiImg = Regex("<img[^>]*?alt=\"([^\"]*)\"[^>]*?src=\"([^\"]*)\"[^>]*?>")
+/**
+ * 把微博 HTML 变成一段带内联内容的文本。
+ *
+ * 链接、超话、视频图标走 [appendParsedWeibo]；`<img>` 表情按 1.0em 内联成图片，
+ * 占位一旦高过字体自身的行盒，带表情的那一行就会被撑高，同列的卡片会因此比邻居高一截。
+ */
+private fun buildWeiboAnnotated(
+    html: String,
+    onLink: (String) -> Unit,
+    linkColor: Color,
+): Pair<AnnotatedString, Map<String, InlineTextContent>> {
+    val inlineContent = LinkedHashMap<String, InlineTextContent>()
+    val builder = AnnotatedString.Builder()
+    splitEmoji(html, WeiboEmojiBitmaps::urlOf).forEachIndexed { index, (url, segment) ->
+        if (url == null) {
+            appendParsedWeibo(
+                builder = builder,
+                inlineContent = inlineContent,
+                parsed = parseWeiboContent(segment),
+                onLink = onLink,
+                linkColor = linkColor,
+                inlineIdPrefix = "seg_${index}_",
+            )
+        } else {
+            val value = segment
+            val id = "emoji_$index"
+            builder.appendInlineContent(id, value)
+            inlineContent[id] = InlineTextContent(
+                Placeholder(1.0.em, 1.0.em, PlaceholderVerticalAlign.Center),
+            ) {
+                AsyncImage(
+                    model = url,
+                    contentDescription = value,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+    return builder.toAnnotatedString() to inlineContent
+}
+
+private val ImgTag = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+private val ImgAttr = Regex("([A-Za-z-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
 
 /**
  * 把正文切成「文本 / 表情图」两类片段。
  *
  * 微博的 emoji 是 `<img alt="[可爱]" src="...">`，交给 Html.fromHtml 只会剩一个 U+FFFC 占位符，
- * [parseWeiboHtml] 又把它删掉 —— 纯表情正文就成了空白。这里先把 src 抽出来，按 1.0em 内联成图片，
+ * [parseWeiboContent] 又把它删掉 —— 纯表情正文就成了空白。这里先把 src 抽出来内联成图片，
  * 其余片段仍走 [appendParsedWeibo]，链接和图标照旧。
+ *
+ * 属性顺序在不同接口里并不固定，地址也可能是 `//host/...` 这种省略协议的写法，
+ * 所以逐个属性解析，而不是拿一条写死顺序的正则去匹配。
  */
-private fun splitEmoji(html: String): List<Pair<String?, String>> {
+internal fun splitEmoji(html: String, urlOf: (String) -> String?): List<Pair<String?, String>> {
     val out = ArrayList<Pair<String?, String>>()
     var cursor = 0
-    EmojiImg.findAll(html).forEach { match ->
-        if (match.range.first > cursor) out.add(null to html.substring(cursor, match.range.first))
-        out.add(match.groupValues[2] to match.groupValues[1])
+    ImgTag.findAll(html).forEach { match ->
+        val attrs = ImgAttr.findAll(match.value).associate {
+            it.groupValues[1].lowercase() to (it.groupValues[2].ifEmpty { it.groupValues[3] })
+        }
+        val alt = attrs["alt"].orEmpty()
+        val src = attrs["src"].orEmpty()
+        if (alt.isBlank() || src.isBlank()) return@forEach
+        if (match.range.first > cursor) appendPlain(out, html.substring(cursor, match.range.first), urlOf)
+        out.add(normalizeImageUrl(src) to alt)
         cursor = match.range.last + 1
     }
-    if (cursor < html.length) out.add(null to html.substring(cursor))
+    if (cursor < html.length) appendPlain(out, html.substring(cursor), urlOf)
     return out
 }
 
+private val EmojiPhrase = Regex("\\[[^\\[\\]\\n]{1,12}\\]")
+
 /**
- * 带表情的微博富文本：链接可点，`<img>` 表情按行高比例内联成图片。
+ * 纯文字里出现的 `[表情]` 也拆成图。
  *
- * 与 [WeiboText] 的区别只有表情：信息流那种「一屏几十条、每条都可能带十几张表情」的地方仍用
- * [WeiboText]（表情直接丢掉），聊天和浏览历史这种单条正文用这个重载，表情才会真的显示出来。
+ * 走 H5 通道时正文里的表情本来就是 `<img>`；换成客户端通道以后同一个表情只剩 `[笑而不语]`
+ * 这样的文字，正文就成了一串方括号。这里按表情表把认得的换成图，不认识的照旧当文字留着。
+ */
+private fun appendPlain(
+    out: MutableList<Pair<String?, String>>,
+    text: String,
+    urlOf: (String) -> String?,
+) {
+    var cursor = 0
+    EmojiPhrase.findAll(text).forEach { match ->
+        val url = urlOf(match.value) ?: return@forEach
+        if (match.range.first > cursor) out.add(null to text.substring(cursor, match.range.first))
+        out.add(url to match.value)
+        cursor = match.range.last + 1
+    }
+    if (cursor < text.length) out.add(null to text.substring(cursor))
+}
+
+/** 微博图床允许 https；省略协议和 http 的地址统一补成 https，免得被明文策略挡掉。 */
+private fun normalizeImageUrl(url: String): String = when {
+    url.startsWith("//") -> "https:$url"
+    url.startsWith("http://") -> "https://" + url.removePrefix("http://")
+    else -> url
+}
+
+/**
+ * 带表情的微博富文本。现在 [WeiboText] 自己也渲染表情，这个重载只是保留原来的调用点与默认行高，
+ * 并允许单独指定链接色和是否可选中。
  *
  * @param linkColor 超话图标 / 视频三角这些链接文字与前缀的色值，默认主题主色。
  * @param selectable 是否包一层 [SelectionContainer]。放在可左滑、可点进详情的列表行里时关掉，
@@ -348,56 +427,14 @@ fun WeiboRichText(
     linkColor: Color = COUITheme.colorScheme.primary,
     selectable: Boolean = true,
 ) {
-    val linkHandler = LocalLinkHandler.current
-    val segments = remember(html) {
-        splitEmoji(html).map { (url, value) ->
-            if (url == null) null to parseWeiboContent(value) else (url to value) to null
-        }
-    }
-    val (text, inline) = remember(segments, linkHandler, linkColor) {
-        val inlineContent = LinkedHashMap<String, InlineTextContent>()
-        val builder = AnnotatedString.Builder()
-        var index = 0
-        segments.forEachIndexed { segIndex, (emoji, parsed) ->
-            if (parsed != null) {
-                appendParsedWeibo(
-                    builder = builder,
-                    inlineContent = inlineContent,
-                    parsed = parsed,
-                    onLink = linkHandler,
-                    linkColor = linkColor,
-                    inlineIdPrefix = "seg_${segIndex}_",
-                )
-            } else if (emoji != null) {
-                val (url, value) = emoji
-                val id = "emoji_${index++}"
-                builder.appendInlineContent(id, value)
-                inlineContent[id] = InlineTextContent(
-                    // 一个 em 见方，不要更大：内联占位一旦高过字体自身的行盒，带表情的那一行就会
-                    // 被撑高，同列的卡片会因此比邻居高一截。
-                    Placeholder(1.0.em, 1.0.em, PlaceholderVerticalAlign.Center),
-                ) {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = value,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-        builder.toAnnotatedString() to inlineContent
-    }
-    val body: @Composable () -> Unit = {
-        Text(
-            text = text,
-            modifier = modifier,
-            color = color,
-            fontSize = fontSize,
-            lineHeight = lineHeight,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
-            inlineContent = inline,
-        )
-    }
-    if (selectable) SelectionContainer { body() } else body()
+    WeiboText(
+        html = html,
+        modifier = modifier,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        maxLines = maxLines,
+        color = color,
+        linkColor = linkColor,
+        selectable = selectable,
+    )
 }

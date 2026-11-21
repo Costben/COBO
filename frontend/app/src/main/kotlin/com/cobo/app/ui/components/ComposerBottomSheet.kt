@@ -250,6 +250,7 @@ fun ComposerBottomSheet(
     OverlayBottomSheet(
         show = shown,
         showDragHandle = false,
+        backgroundColor = ComposerPanel.panelColor(),
         insideMargin = DpSize(ComposerPanel.SideInset, bottomGap),
         panelPaddingBottom = 0.dp,
         allowDismiss = !submitting,
@@ -298,7 +299,7 @@ fun ComposerBottomSheet(
                     .fillMaxWidth()
                     .heightIn(max = editorMax)
                     .squircleSurface(
-                        color = COUITheme.colorScheme.surfaceContainer,
+                        color = ComposerPanel.surfaceColor(),
                         cornerRadius = ComposerPanel.EditorRadius,
                     ),
             ) {
@@ -457,7 +458,7 @@ fun ComposerSuggestPanel(
             .fillMaxWidth()
             .heightIn(max = 160.dp)
             .squircleSurface(
-                color = scheme.surfaceContainer,
+                color = ComposerPanel.surfaceColor(),
                 cornerRadius = 16.dp,
             )
             .scrollEndHaptic()
@@ -584,7 +585,7 @@ fun VisibilityPill(
     Row(
         modifier = Modifier
             .clip(capsuleShape)
-            .background(if (active) scheme.secondaryContainer else scheme.surfaceContainer)
+            .background(if (active) scheme.secondaryContainer else ComposerPanel.surfaceColor())
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -742,7 +743,7 @@ fun WeiboEmojiPanel(
                                 Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(COUITheme.colorScheme.surfaceContainerHigh)
+                                    .background(ComposerPanel.surfaceColor())
                                     .clickable { onPick(emoji) }
                                     .padding(horizontal = 4.dp, vertical = 8.dp),
                                 contentAlignment = Alignment.Center,
@@ -979,6 +980,23 @@ private object ComposerPanel {
         Color.Transparent,
         Color.White.copy(alpha = 0.15f),
     )
+
+    /**
+     * 面板底色。跟顶栏那个玻璃按钮同一档：深色下比页面再压暗一档，浅色下比页面提亮一档，
+     * 展开来不会是一整片跟页面同色的灰/白。
+     */
+    @Composable
+    fun panelColor(): Color {
+        val bg = COUITheme.colorScheme.background
+        return if (bg.luminance() < 0.5f) lerp(bg, Color.Black, 0.2f) else lerp(bg, Color.White, 0.4f)
+    }
+
+    /** 面板里的输入框、候选条、表情格：深色下退到页面底色，浅色下用卡片白，避免整块纯白/浅灰。 */
+    @Composable
+    fun surfaceColor(): Color {
+        val scheme = COUITheme.colorScheme
+        return if (scheme.background.luminance() < 0.5f) scheme.background else scheme.surfaceContainer
+    }
 }
 
 @Composable

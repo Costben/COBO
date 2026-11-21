@@ -1,7 +1,12 @@
 package com.cobo.app.data
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import com.cobo.app.App
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,12 +28,71 @@ object WeiboEmojiBitmaps {
     private val urls = ConcurrentHashMap<String, String>()
     private val bitmaps = ConcurrentHashMap<String, Bitmap>()
     private val failed = ConcurrentHashMap.newKeySet<String>()
+    private var prefs: SharedPreferences? = null
 
-    fun register(phrase: String, url: String) {
-        if (phrase.isNotBlank() && url.isNotBlank()) {
-            urls.putIfAbsent(phrase, url)
+    /** 表情地址表的版本：表一变，正文里那些 `[表情]` 就得重新算一遍。 */
+    var version by mutableIntStateOf(0)
+        private set
+
+    /**
+     * 装上内置表情表，再把之前从接口学到的地址补回来。
+     *
+     * 客户端通道（api.weibo.com）返回的正文里表情是 `[笑而不语]` 这种纯文字，不带图，
+     * 全靠这张表还原；H5 通道本来就带 `<img>`，表只是兜底。
+     */
+    fun attach(context: Context) {
+        if (prefs != null) return
+        prefs = context.getSharedPreferences("weibo_emoji_urls", Context.MODE_PRIVATE)
+        runCatching {
+            val json = context.assets.open("weibo_emotions.json")
+                .bufferedReader()
+                .use { it.readText() }
+            val obj = JSONObject(json)
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val phrase = keys.next()
+                val url = obj.optString(phrase, "")
+                if (phrase.isNotBlank() && url.isNotBlank()) urls[phrase] = url
+            }
         }
+        prefs?.all?.forEach { (phrase, value) ->
+            if (value is String && value.isNotBlank()) urls[phrase] = value
+        }
+        version++
     }
+
+    private val pending = LinkedHashMap<String, String>()
+
+    /**
+     * 记下一个表情地址。
+     *
+     * [notify] 为 false 时只改内存，等这一批灌完由 [flush] 一次通知。接口一次回几百个表情，
+     * 逐条自增版本会让整屏富文本跟着重组几百次，逐条写盘也是几百次 apply。
+     */
+    fun register(phrase: String, url: String, notify: Boolean = true) {
+        if (phrase.isBlank() || url.isBlank()) return
+        val normalized = when {
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("http://") -> "https://" + url.removePrefix("http://")
+            else -> url
+        }
+        if (urls.put(phrase, normalized) == normalized) return
+        pending[phrase] = normalized
+        if (notify) flush()
+    }
+
+    /** 这批新地址收尾：版本只涨一次，磁盘也只写一次。 */
+    fun flush() {
+        if (pending.isEmpty()) return
+        prefs?.edit()?.apply {
+            pending.forEach { (phrase, url) -> putString(phrase, url) }
+        }?.apply()
+        pending.clear()
+        version++
+    }
+
+    /** 正文里这个 `[表情]` 对应的图片地址，不认识就是 null。 */
+    fun urlOf(phrase: String): String? = urls[phrase]
 
     fun getCached(phrase: String): Bitmap? = bitmaps[phrase]
 
@@ -111,7 +175,7 @@ fun parseWeiboEmotions(root: JSONObject?): List<EmojiSection> {
                 rawUrl.startsWith("http://") -> "https://" + rawUrl.removePrefix("http://")
                 else -> rawUrl
             }
-            WeiboEmojiBitmaps.register(phrase, url)
+            WeiboEmojiBitmaps.register(phrase, url, notify = false)
             items.add(WeiboEmoji(phrase = phrase, url = url))
         }
         if (items.isNotEmpty()) {
@@ -125,5 +189,6 @@ fun parseWeiboEmotions(root: JSONObject?): List<EmojiSection> {
     if (sections.isNotEmpty()) {
         sections.add(EmojiSection("Emoji", FallbackUnicodeEmojis.map { WeiboEmoji(it) }))
     }
+    WeiboEmojiBitmaps.flush()
     return sections
 }

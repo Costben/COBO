@@ -805,6 +805,10 @@ data class Comment(
     val createdAt: String,
     val likes: Int,
     val liked: Boolean = false,
+    /** 评论自带的配图（图片评论），按上传顺序。 */
+    val pics: List<Pic> = emptyList(),
+    /** ID 后面那串粉丝标识（铁粉 / 钻粉…）。接口给的是现成的小图，直接按图渲染。 */
+    val badges: List<CommentBadge> = emptyList(),
     val reply: Comment? = null,
     /** The replies Weibo inlines under a comment, oldest first. */
     val replies: List<Comment> = emptyList(),
@@ -838,6 +842,8 @@ data class Comment(
                 // The hot list spells it `like_count`, the chronological one `like_counts`.
                 likes = if (o.has("like_count")) o.int("like_count") else o.int("like_counts"),
                 liked = o.optBoolean("liked"),
+                pics = commentPicsOf(o),
+                badges = commentBadgesOf(o),
                 reply = if (depth < 1) from(o.optJSONObject("reply"), depth + 1) else null,
                 replies = replies,
                 replyCount = o.optInt("total_number", replies.size),
@@ -845,6 +851,42 @@ data class Comment(
         }
     }
 }
+
+/**
+ * 评论配图。H5 的评论带 `pic_ids` + `pic_infos`（也偶尔直接给 `pics`），客户端通道只回一个
+ * `pic` 字段，字符串或对象两种写法都有；都收，没图就是空表。
+ */
+private fun commentPicsOf(o: JSONObject): List<Pic> {
+    val pics = picsOf(o)
+    if (pics.isNotEmpty()) return pics
+    val single = o.str("pic").trim()
+    if (single.isNotBlank()) {
+        val url = if (single.startsWith("//")) "https:$single" else single
+        return listOf(Pic(thumb = url, large = url))
+    }
+    val obj = o.optJSONObject("pic") ?: return emptyList()
+    return picOf(obj)?.let { listOf(it) } ?: emptyList()
+}
+
+/**
+ * 评论 ID 后面的粉丝标识。`comment_badge` 里每条就是一个现成的小图：
+ * `{"pic_url": ".../member_7_bigfan2_4.png", "name": "loyal_fans", "type_and_level": "2_4"}`。
+ * 不同等级是不同图，照着渲染即可，不需要自己拼文案。
+ */
+private fun commentBadgesOf(o: JSONObject): List<CommentBadge> {
+    val arr = o.optJSONArray("comment_badge") ?: return emptyList()
+    return buildList {
+        for (i in 0 until arr.length()) {
+            val b = arr.optJSONObject(i) ?: continue
+            val pic = b.str("pic_url").ifBlank { b.str("url") }
+            if (pic.isBlank()) continue
+            add(CommentBadge(pic = pic, name = b.str("name")))
+        }
+    }
+}
+
+/** 评论 ID 后面的一枚粉丝标识，比如「铁粉」「钻粉」。 */
+data class CommentBadge(val pic: String, val name: String = "")
 
 data class FeedPage(val items: List<Status>, val sinceId: String?)
 

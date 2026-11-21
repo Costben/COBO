@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -61,6 +62,7 @@ import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
 import com.cobo.app.data.Status
+import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.StatusVisibility
 import com.cobo.app.data.User
 import com.cobo.app.data.VideoInfo
@@ -107,6 +109,9 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import kotlinx.coroutines.launch
 
+/** 去掉外框后补在列表 12dp 内边距上的横向留白，合计 16dp，与顶栏按钮外框对齐。 */
+private val FlatFrameInset = 4.dp
+
 @Composable
 fun StatusCard(
     status: Status,
@@ -125,8 +130,12 @@ fun StatusCard(
     /** Opens the quoted post when it is tapped; the frame grows from and returns into that block. */
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
     onDeleted: (() -> Unit)? = null,
+    /** 是否保留最外层卡片外框。关掉后只去掉卡片底色与圆角，内容横向与顶栏按钮对齐。 */
+    keepFrame: Boolean = true,
 ) {
     if (App.repo.isDeleted(status.id)) return
+    // 列表画过就记住这条，详情页第一帧直接用它，不用再等接口。
+    remember(status) { StatusMemory.remember(status) }
     val scheme = COUITheme.colorScheme
     val scope = rememberCoroutineScope()
     val effectiveFavorited = App.repo.isFavorited(status.id)
@@ -139,13 +148,7 @@ fun StatusCard(
         val nowFavorited = App.repo.toggleLocalFavorite(status)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
     }
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        cornerRadius = CardDefaults.GroupCornerRadius,
-        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-        weight = CardDefaults.GroupWeight,
-        onClick = onOpen,
-    ) {
+    val content: @Composable ColumnScope.() -> Unit = {
         StatusHeader(
             status = status,
             onUser = onUser,
@@ -164,7 +167,7 @@ fun StatusCard(
         }
         if (status.isVote) {
             Spacer(Modifier.height(8.dp))
-            StatusVoteCard(status = status, actionsEnabled = actionsEnabled)
+            StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = keepFrame)
         }
         StatusMedia(status, compact, onImage, onVideo)
         if (status.retweeted != null) {
@@ -178,6 +181,7 @@ fun StatusCard(
                 onUser = onUser,
                 onImage = onImage,
                 onVideo = onVideo,
+                onCard = keepFrame,
             )
         }
         val region = status.region.trim()
@@ -223,6 +227,26 @@ fun StatusCard(
                 }
             }
         }
+    }
+    if (keepFrame) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+            weight = CardDefaults.GroupWeight,
+            onClick = onOpen,
+            content = content,
+        )
+    } else {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                // 列表左右各留 12dp，这里再补 4dp，内容左缘正好落在 16dp 的顶栏按钮外框上，
+                // 不再比返回/搜索按钮更靠外。
+                .padding(horizontal = FlatFrameInset, vertical = 12.dp),
+            content = content,
+        )
     }
     if (confirmDelete) {
         ConfirmDialog(
@@ -724,8 +748,11 @@ fun RetweetBlock(
     onVideo: (VideoInfo) -> Unit,
     onOpenQuoted: ((Status, ExpandOrigin) -> Unit)? = null,
     actionsEnabled: Boolean = true,
+    /** 当前块是否直接落在卡片面上：决定嵌套块的底色，卡片去掉后要反过来才看得见。 */
+    onCard: Boolean = true,
 ) {
     val scheme = COUITheme.colorScheme
+    remember(status) { StatusMemory.remember(status) }
     // The quoted post is a page of its own: it opens from the block it is drawn in and comes back
     // into it, so the block carries the same expand origin a whole card does.
     val quotedOrigin = rememberExpandOrigin(cornerRadius = 10.dp)
@@ -734,7 +761,7 @@ fun RetweetBlock(
             .fillMaxWidth()
             .expandOrigin(quotedOrigin)
             .clip(RoundedCornerShape(10.dp))
-            .background(nestedBlockTone())
+            .background(nestedBlockTone(onCard))
             .clickable {
                 if (onOpenQuoted != null) onOpenQuoted(status, quotedOrigin) else onOpen()
             }
@@ -768,7 +795,7 @@ fun RetweetBlock(
         }
         if (status.isVote) {
             Spacer(Modifier.height(6.dp))
-            StatusVoteCard(status = status, actionsEnabled = actionsEnabled)
+            StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = !onCard)
         }
         StatusMedia(status, true, onImage, onVideo)
     }
@@ -779,6 +806,8 @@ fun StatusVoteCard(
     status: Status,
     modifier: Modifier = Modifier,
     actionsEnabled: Boolean = true,
+    /** 是否直接落在卡片面上，决定投票块的底色；卡片去掉后要反过来。 */
+    onCard: Boolean = true,
 ) {
     if (!actionsEnabled) {
         Text(
@@ -878,7 +907,7 @@ fun StatusVoteCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(SquircleShape(12.dp))
-            .background(nestedBlockTone())
+            .background(nestedBlockTone(onCard))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1216,11 +1245,15 @@ private fun VoteFooter(
 
 /**
  * The tone of a block nested inside a status card. COUI's light surfaceContainer is the same white
- * as the card, so nested blocks vanished into it. Light takes the page grey; dark keeps the
- * translucent white that already reads as a layer.
+ * as the card, so nested blocks vanished into it. Light takes the page grey on a card and the card
+ * white on the page; dark keeps the translucent white that already reads as a layer.
  */
 @Composable
-private fun nestedBlockTone(): Color {
+private fun nestedBlockTone(onCard: Boolean): Color {
     val scheme = COUITheme.colorScheme
-    return if (scheme.background.luminance() < 0.5f) scheme.surfaceContainer else scheme.background
+    return if (scheme.background.luminance() < 0.5f || !onCard) {
+        scheme.surfaceContainer
+    } else {
+        scheme.background
+    }
 }
