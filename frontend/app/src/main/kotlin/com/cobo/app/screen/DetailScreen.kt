@@ -1276,18 +1276,31 @@ internal fun ReplyRow(
     keepFrame: Boolean = true,
     /** 楼中楼收起、只做预览时不渲染「回复」「点赞」两个按钮。 */
     showActions: Boolean = true,
+    /** 评论详情页中的楼中楼回复传 `false`，与主评论采用完全一致的字号、头像与按钮尺寸。 */
+    compact: Boolean = true,
     onImage: (List<Pic>, Int) -> Unit = { _, _ -> },
     onRepost: (Comment) -> Unit = {},
     onReport: (Comment) -> Unit = {},
 ) {
     val scheme = COUITheme.colorScheme
-    Row(Modifier.padding(vertical = 3.dp)) {
+    val avatarSize = if (compact) 22.dp else 36.dp
+    val avatarGap = if (compact) 8.dp else 10.dp
+    val nameSize = if (compact) 14.sp else 15.sp
+    val nameWeight = if (compact) FontWeight.Medium else FontWeight.SemiBold
+    val badgeSize = if (compact) 13.dp else 14.dp
+    val bodyGap = if (compact) 2.dp else 4.dp
+    val bodySize = if (compact) 13.sp else 15.sp
+    val bodyLineHeight = if (compact) 18.sp else 21.sp
+    val thumbGap = if (compact) 4.dp else 6.dp
+    val thumbSize = if (compact) 64.dp else 96.dp
+    val bottomGap = if (compact) 2.dp else 6.dp
+    Row(if (compact) Modifier.padding(vertical = 3.dp) else Modifier) {
         Avatar(
             url = reply.user?.avatar,
-            size = 22.dp,
+            size = avatarSize,
             verifiedKind = reply.user?.verifiedKind ?: VerifiedKind.None,
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(avatarGap))
         Column(Modifier.weight(1f)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1299,37 +1312,37 @@ internal fun ReplyRow(
                 ) {
                     Text(
                         reply.user?.name.orEmpty(),
-                        fontSize = 14.sp,
+                        fontSize = nameSize,
                         color = scheme.onSurfaceSecondary,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = nameWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    CommentHeaderBadges(reply, 13.dp)
+                    CommentHeaderBadges(reply, badgeSize)
                 }
                 if (showActions) {
                     CommentMoreButton(
                         comment = reply,
                         readOnly = !enabled,
-                        compact = true,
+                        compact = compact,
                         onRepost = { onRepost(reply) },
                         onReport = { onReport(reply) },
                         onReply = onReply,
                     )
                 }
             }
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(bodyGap))
             WeiboText(
                 html = reply.textHtml,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
+                fontSize = bodySize,
+                lineHeight = bodyLineHeight,
             )
             if (reply.pics.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                CommentThumbnails(reply.pics, 64.dp, onImage)
+                Spacer(Modifier.height(thumbGap))
+                CommentThumbnails(reply.pics, thumbSize, onImage)
             }
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(bottomGap))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = formatWeiboTime(reply.createdAt),
@@ -1344,7 +1357,7 @@ internal fun ReplyRow(
                         likes = reply.likes,
                         liked = reply.liked,
                         enabled = enabled,
-                        compact = true,
+                        compact = compact,
                         replyModifier = Modifier.testTag("reply_reply"),
                         likeModifier = Modifier.testTag("reply_like"),
                         onReply = onReply,

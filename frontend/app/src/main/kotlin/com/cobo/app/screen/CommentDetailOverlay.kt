@@ -529,7 +529,7 @@ private fun CommentDetailSheetContent(
                                             )
                                             .padding(
                                                 horizontal = if (keepFrame) 14.dp else FlatCommentInset,
-                                                vertical = if (keepFrame) 10.dp else 8.dp,
+                                                vertical = 12.dp,
                                             ),
                                     ) {
                                         ReplyRow(
@@ -539,6 +539,7 @@ private fun CommentDetailSheetContent(
                                             enabled = !readOnly,
                                             keepFrame = keepFrame,
                                             showActions = true,
+                                            compact = false,
                                             onImage = onImage,
                                             onRepost = onRepost,
                                             onReport = onReport,
@@ -557,7 +558,7 @@ private fun CommentDetailSheetContent(
                                     Column(Modifier.testTag("sub_reply_card_$index")) {
                                         itemBlock()
                                         HorizontalDivider(
-                                            modifier = Modifier.padding(start = FlatCommentInset + 30.dp, end = FlatCommentInset),
+                                            modifier = Modifier.padding(start = FlatCommentInset + 46.dp, end = FlatCommentInset),
                                             color = scheme.dividerLine.copy(alpha = 0.45f),
                                             thickness = 0.5.dp,
                                         )
