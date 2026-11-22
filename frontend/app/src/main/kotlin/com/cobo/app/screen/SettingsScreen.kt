@@ -1,5 +1,6 @@
 package com.cobo.app.screen
 
+import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.webkit.CookieManager
 import androidx.compose.animation.AnimatedVisibility
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -28,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -110,75 +113,148 @@ import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+
+/**
+ * 设置页分组定义，用于在「我」一级页面展示分组目录，并跳转到对应的二级设置页。
+ */
+enum class SettingsGroup(val title: String, val summary: String) {
+    Display("显示与交互", "深色模式、强调色、字号、手势与「我」页布局"),
+    Feed("微博", "主页分栏、卡片外框、倒序浏览与热搜榜"),
+    AccountAndContent("账号与内容", "账号管理、快捷切号、底栏头像与本地关注"),
+    Update("更新", "检查更新、更新日志与自动更新"),
+    Other("其他", "清理缓存、关于与账号退出"),
+}
+
+@Stable
+private class SettingsUiState(context: Context) {
+    val version: String = Updater.currentVersion(context)
+    val guest: Boolean = App.repo.guest
+
+    var darkMode by mutableIntStateOf(App.settings.darkMode)
+    var accentColor by mutableIntStateOf(App.settings.accentColor)
+    var fontScale by mutableStateOf(App.settings.fontScale)
+    var autoCheckUpdate by mutableStateOf(App.settings.autoCheckUpdate)
+    var acceptPrerelease by mutableStateOf(App.settings.acceptPrerelease)
+    var inAppUpdate by mutableStateOf(App.settings.inAppUpdate)
+    var blurEffects by mutableStateOf(App.settings.blurEffects)
+    var allowLandscape by mutableStateOf(App.settings.allowLandscape)
+    var searchPanelAnimation by mutableStateOf(App.settings.searchPanelAnimation)
+    var confirmLike by mutableStateOf(App.settings.confirmLike)
+    var inAppBrowser by mutableStateOf(App.settings.inAppBrowser)
+    var quickSwitchAccount by mutableStateOf(App.settings.quickSwitchAccount)
+    var profileTabAvatar by mutableStateOf(App.settings.profileTabAvatar)
+    var profileShowStatuses by mutableStateOf(App.settings.profileShowStatuses)
+    var reverseBrowse by mutableStateOf(App.settings.reverseBrowse)
+    var collapseFollowGroups by mutableStateOf(App.settings.collapseFollowGroups)
+    var feedCardFrame by mutableStateOf(App.settings.feedCardFrame)
+    var detailCardFrame by mutableStateOf(App.settings.detailCardFrame)
+    var showVipLevel by mutableStateOf(App.settings.showVipLevel)
+    var showFanLevel by mutableStateOf(App.settings.showFanLevel)
+    var showVerifiedBadge by mutableStateOf(App.settings.showVerifiedBadge)
+    var message by mutableStateOf("")
+    var logout by mutableStateOf(false)
+    var localFollowUid by mutableStateOf(App.settings.localFollowUid)
+    var feedLeftTab by mutableStateOf(App.settings.feedLeftTab)
+    var feedCenterTab by mutableStateOf(App.settings.feedCenterTab)
+    var feedRightTab by mutableStateOf(App.settings.feedRightTab)
+    var feedGroups by mutableStateOf<List<FollowGroup>>(emptyList())
+    var pickLocalFollow by mutableStateOf(false)
+    var pickFeedLeft by mutableStateOf(false)
+    var pickFeedCenter by mutableStateOf(false)
+    var pickFeedRight by mutableStateOf(false)
+    var pickSearchPanelAnimation by mutableStateOf(false)
+    var pickBottomLeftAction by mutableStateOf(false)
+    var pickImageBrowseQuality by mutableStateOf(false)
+    var pickHotBoards by mutableStateOf(false)
+    var pickAccentColor by mutableStateOf(false)
+}
+
+@Composable
+private fun rememberSettingsUiState(): SettingsUiState {
+    val context = LocalContext.current
+    val state = remember { SettingsUiState(context) }
+    // 关注分组是账号里的数据：只在真的要选栏位内容时才去网页版拉一次，拉不到就只列内置流。
+    LaunchedEffect(state.pickFeedLeft, state.pickFeedCenter, state.pickFeedRight) {
+        if (state.guest || !(state.pickFeedLeft || state.pickFeedCenter || state.pickFeedRight)) {
+            return@LaunchedEffect
+        }
+        runCatching { App.repo.followGroups() }.onSuccess { state.feedGroups = it }
+    }
+    return state
+}
 
 @Composable
 fun SettingsScreen(nav: NavState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val version = remember { Updater.currentVersion(context) }
-    var darkMode by remember { mutableStateOf(App.settings.darkMode) }
-    var accentColor by remember { mutableIntStateOf(App.settings.accentColor) }
-    var fontScale by remember { mutableStateOf(App.settings.fontScale) }
-    var autoCheckUpdate by remember { mutableStateOf(App.settings.autoCheckUpdate) }
-    var acceptPrerelease by remember { mutableStateOf(App.settings.acceptPrerelease) }
-    var inAppUpdate by remember { mutableStateOf(App.settings.inAppUpdate) }
-    var blurEffects by remember { mutableStateOf(App.settings.blurEffects) }
-    var allowLandscape by remember { mutableStateOf(App.settings.allowLandscape) }
-    var searchPanelAnimation by remember { mutableStateOf(App.settings.searchPanelAnimation) }
-    var confirmLike by remember { mutableStateOf(App.settings.confirmLike) }
-    var inAppBrowser by remember { mutableStateOf(App.settings.inAppBrowser) }
-    var quickSwitchAccount by remember { mutableStateOf(App.settings.quickSwitchAccount) }
-    var profileTabAvatar by remember { mutableStateOf(App.settings.profileTabAvatar) }
-    var reverseBrowse by remember { mutableStateOf(App.settings.reverseBrowse) }
-    var collapseFollowGroups by remember { mutableStateOf(App.settings.collapseFollowGroups) }
-    var feedCardFrame by remember { mutableStateOf(App.settings.feedCardFrame) }
-    var detailCardFrame by remember { mutableStateOf(App.settings.detailCardFrame) }
-    var message by remember { mutableStateOf("") }
-    var logout by remember { mutableStateOf(false) }
-    var localFollowUid by remember { mutableStateOf(App.settings.localFollowUid) }
-    val guest = App.repo.guest
-    var pickLocalFollow by remember { mutableStateOf(false) }
-    var feedLeftTab by remember { mutableStateOf(App.settings.feedLeftTab) }
-    var feedCenterTab by remember { mutableStateOf(App.settings.feedCenterTab) }
-    var feedRightTab by remember { mutableStateOf(App.settings.feedRightTab) }
-    var feedGroups by remember { mutableStateOf<List<FollowGroup>>(emptyList()) }
-    var pickFeedLeft by remember { mutableStateOf(false) }
-    var pickFeedCenter by remember { mutableStateOf(false) }
-    var pickFeedRight by remember { mutableStateOf(false) }
-    var pickSearchPanelAnimation by remember { mutableStateOf(false) }
-    var pickBottomLeftAction by remember { mutableStateOf(false) }
-    var pickImageBrowseQuality by remember { mutableStateOf(false) }
-    var pickHotBoards by remember { mutableStateOf(false) }
-    var pickAccentColor by remember { mutableStateOf(false) }
+    val state = rememberSettingsUiState()
 
-    // 关注分组是账号里的数据：只在真的要选栏位内容时才去网页版拉一次，拉不到就只列内置流。
-    LaunchedEffect(pickFeedLeft, pickFeedCenter, pickFeedRight) {
-        if (guest || !(pickFeedLeft || pickFeedCenter || pickFeedRight)) return@LaunchedEffect
-        runCatching { App.repo.followGroups() }.onSuccess { feedGroups = it }
-    }
-    // 纯本地模式取不到分组，就别把上次存的分组当成一个可选但选不动的项列出来。
-    val leftOptions = feedTabOptions(feedGroups, allowNone = true, current = if (guest) null else feedLeftTab)
-    val centerOptions = feedTabOptions(feedGroups, allowNone = false, current = if (guest) null else feedCenterTab)
-    val rightOptions = feedTabOptions(feedGroups, allowNone = true, current = if (guest) null else feedRightTab)
+    SettingsScaffold(
+        nav = nav,
+        title = "设置",
+        state = state,
+    ) {
+        displaySettingsItems(nav = nav, state = state, showHeader = true)
+        feedSettingsItems(state = state, showHeader = true)
+        accountSettingsItems(
+            nav = nav,
+            state = state,
+            showHeader = true,
+            includeLibraryShortcuts = true,
+        )
+        updateSettingsItems(nav = nav, state = state, scope = scope, showHeader = true)
+        otherSettingsItems(nav = nav, state = state, context = context, showHeader = true)
 
-    // 只在选中的 uid 变化时读一次账号表，切到别的账号后摘要跟着换。
-    val accounts = remember(localFollowUid) { App.store.accounts() }
-    val localFollowAccount = accounts.firstOrNull { it.uid == localFollowUid }
-    val localFollowSummary = if (localFollowAccount == null) {
-        "跟随当前账号"
-    } else {
-        "用 ${localFollowAccount.name.ifBlank { "UID ${localFollowAccount.uid}" }} 的身份取数"
-    }
-
-    val hotBoardsSummary = App.settings.hotBoards.let { picked ->
-        when {
-            picked.isEmpty() -> "已隐藏"
-            picked.size == HotBoard.entries.size -> "全部"
-            else -> HotBoard.entries.filter { it in picked }.joinToString("、") { it.label }
+        item {
+            Text(
+                "基于 m.weibo.cn Web API 的第三方微博客户端。\n仅用于个人学习与研究。",
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = COUITheme.colorScheme.onSurfaceSecondary,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+            )
         }
     }
+}
 
+/**
+ * 分组二级设置页：从「我」一级页面点进具体设置分组时使用，复用同一套设置项与弹窗。
+ */
+@Composable
+fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state = rememberSettingsUiState()
+
+    SettingsScaffold(
+        nav = nav,
+        title = group.title,
+        state = state,
+    ) {
+        when (group) {
+            SettingsGroup.Display -> displaySettingsItems(nav = nav, state = state, showHeader = false)
+            SettingsGroup.Feed -> feedSettingsItems(state = state, showHeader = false)
+            SettingsGroup.AccountAndContent -> accountSettingsItems(
+                nav = nav,
+                state = state,
+                showHeader = false,
+                includeLibraryShortcuts = false,
+            )
+            SettingsGroup.Update -> updateSettingsItems(nav = nav, state = state, scope = scope, showHeader = false)
+            SettingsGroup.Other -> otherSettingsItems(nav = nav, state = state, context = context, showHeader = false)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScaffold(
+    nav: NavState,
+    title: String,
+    state: SettingsUiState,
+    content: LazyListScope.() -> Unit,
+) {
     val pageColor = pageContainerColor()
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
@@ -187,514 +263,620 @@ fun SettingsScreen(nav: NavState) {
     BindScrollToTop(listState)
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
-        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
-            // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
-            // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
-            contentPadding = PaddingValues(
-                start = 12.dp,
-                top = glassBarContentTop(topBarHeight, 10.dp),
-                end = 12.dp,
-                bottom = 24.dp + navBottomPadding(),
-            ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item { SectionTitle("显示与交互", topPadding = 4.dp) }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    ArrowPreference(
-                        title = "深色模式",
-                        modifier = Modifier.testTag("settings_dark"),
-                        summary = when (darkMode) {
-                            1 -> "浅色"
-                            2 -> "深色"
-                            else -> "跟随系统"
-                        },
-                        cardListPosition = CardListPosition.Head,
-                        onClick = {
-                            darkMode = App.settings.cycleDarkMode()
-                        },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "强调色",
-                        modifier = Modifier.testTag("settings_accent_color"),
-                        summary = accentColorSummary(accentColor),
-                        endActions = {
-                            Box(
-                                Modifier
-                                    .padding(end = 6.dp)
-                                    .size(18.dp)
-                                    .clip(CircleShape)
-                                    .background(COUITheme.colorScheme.primary)
-                                    .border(1.dp, COUITheme.colorScheme.outline, CircleShape),
-                            )
-                        },
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickAccentColor = true },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "字号",
-                        modifier = Modifier.testTag("settings_font"),
-                        summary = "${(fontScale * 100).toInt()}%",
-                        onClick = {
-                            fontScale = App.settings.cycleFontScale()
-                        },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "预测性返回手势设置",
-                        summary = if (App.settings.predictiveBack) "已开启" else "已关闭",
-                        modifier = Modifier.testTag("settings_predictive_back_entry"),
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { nav.push(Route.PredictiveBackSettings) },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = blurEffects,
-                        onCheckedChange = {
-                            blurEffects = it
-                            App.settings.applyBlurEffects(it)
-                        },
-                        title = "模糊效果",
-                        summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
-                        modifier = Modifier.testTag("settings_blur"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = allowLandscape,
-                        onCheckedChange = {
-                            allowLandscape = it
-                            App.settings.applyAllowLandscape(it)
-                        },
-                        title = "允许横屏",
-                        summary = "关闭后固定竖屏，不再进入左右双页",
-                        modifier = Modifier.testTag("settings_allow_landscape"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "搜索面板动画",
-                        modifier = Modifier.testTag("settings_search_panel_anim"),
-                        summary = searchPanelAnimation.label,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickSearchPanelAnimation = true },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "底栏左下角按钮",
-                        modifier = Modifier.testTag("settings_bottom_left_action"),
-                        summary = App.settings.bottomLeftAction.label,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickBottomLeftAction = true },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "浏览图片",
-                        modifier = Modifier.testTag("settings_image_browse_quality"),
-                        summary = App.settings.imageBrowseQuality.label,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickImageBrowseQuality = true },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = inAppBrowser,
-                        onCheckedChange = {
-                            inAppBrowser = it
-                            App.settings.applyInAppBrowser(it)
-                        },
-                        title = "使用内置浏览器打开外部网页",
-                        summary = "关闭后点击外部链接将直接调用系统浏览器打开",
-                        modifier = Modifier.testTag("settings_in_app_browser"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = confirmLike,
-                        onCheckedChange = {
-                            confirmLike = it
-                            App.settings.applyConfirmLike(it)
-                        },
-                        title = "点赞前确认",
-                        modifier = Modifier.testTag("settings_confirm_like"),
-                        cardListPosition = CardListPosition.Tail,
-                    )
-                }
-            }
-
-            item { SectionTitle("微博") }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    ArrowPreference(
-                        title = "微博左侧栏",
-                        modifier = Modifier.testTag("settings_feed_left_tab"),
-                        summary = feedLeftTab.label,
-                        cardListPosition = CardListPosition.Head,
-                        onClick = { pickFeedLeft = true },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "微博中间栏",
-                        modifier = Modifier.testTag("settings_feed_center_tab"),
-                        summary = feedCenterTab.label,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickFeedCenter = true },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "微博右侧栏",
-                        modifier = Modifier.testTag("settings_feed_right_tab"),
-                        summary = feedRightTab.label,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickFeedRight = true },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = collapseFollowGroups,
-                        onCheckedChange = {
-                            collapseFollowGroups = it
-                            App.settings.applyCollapseFollowGroups(it)
-                        },
-                        title = "收纳关注分组",
-                        summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
-                        modifier = Modifier.testTag("settings_collapse_follow_groups"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "搜索页热搜榜单",
-                        modifier = Modifier.testTag("settings_hot_boards"),
-                        summary = hotBoardsSummary,
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { pickHotBoards = true },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = reverseBrowse,
-                        onCheckedChange = {
-                            reverseBrowse = it
-                            App.settings.applyReverseBrowse(it)
-                        },
-                        title = "倒序浏览",
-                        summary = "刷新不回顶，从当前位置往上补看新微博",
-                        modifier = Modifier.testTag("settings_reverse_browse"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = feedCardFrame,
-                        onCheckedChange = {
-                            feedCardFrame = it
-                            App.settings.applyFeedCardFrame(it)
-                        },
-                        title = "首页卡片外框",
-                        summary = if (feedCardFrame) {
-                            "关闭后去掉卡片底色与圆角，正文横向与顶栏按钮对齐"
-                        } else {
-                            "已去掉卡片外框，正文与顶栏按钮对齐"
-                        },
-                        modifier = Modifier.testTag("settings_feed_card_frame"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = detailCardFrame,
-                        onCheckedChange = {
-                            detailCardFrame = it
-                            App.settings.applyDetailCardFrame(it)
-                        },
-                        title = "详情页卡片外框",
-                        summary = if (detailCardFrame) {
-                            "关闭后主贴与热门评论去掉外框，正文与顶栏按钮对齐；楼中楼等内部块保留"
-                        } else {
-                            "已去掉主贴与热门评论外框，正文与顶栏按钮对齐"
-                        },
-                        modifier = Modifier.testTag("settings_detail_card_frame"),
-                        cardListPosition = CardListPosition.Tail,
-                    )
-                }
-            }
-
-            item { SectionTitle("账号与内容") }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    ArrowPreference(
-                        title = "账号管理",
-                        modifier = Modifier.testTag("settings_accounts"),
-                        cardListPosition = CardListPosition.Head,
-                        onClick = { nav.push(Route.Accounts) },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = quickSwitchAccount,
-                        onCheckedChange = {
-                            quickSwitchAccount = it
-                            App.settings.applyQuickSwitchAccount(it)
-                        },
-                        title = "长按「我」切换账号",
-                        summary = "长按悬浮底栏的「我」快速切换已保存账号",
-                        modifier = Modifier.testTag("settings_quick_switch_account"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = profileTabAvatar,
-                        onCheckedChange = {
-                            profileTabAvatar = it
-                            App.settings.applyProfileTabAvatar(it)
-                        },
-                        title = "底栏「我」显示头像",
-                        summary = "在悬浮底栏的「我」位置显示当前账号头像",
-                        modifier = Modifier.testTag("settings_profile_tab_avatar"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    // 纯本地模式一律用访客身份取数，没有账号可选。
-                    if (!guest) {
-                        PreferenceDivider()
-                        ArrowPreference(
-                            title = "本地关注使用账号",
-                            modifier = Modifier.testTag("settings_local_follow"),
-                            summary = localFollowSummary,
-                            onClick = { pickLocalFollow = true },
-                        )
-                    }
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "草稿箱",
-                        modifier = Modifier.testTag("settings_drafts"),
-                        summary = "${App.store.drafts().size} 条草稿",
-                        onClick = { nav.push(Route.Drafts) },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "浏览历史",
-                        modifier = Modifier.testTag("settings_history"),
-                        summary = "${App.store.history().size} 条记录",
-                        onClick = { nav.push(Route.History) },
-                    )
-                    // 本地收藏全局共用，纯本地模式下同样可直接打开。
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "收藏",
-                        modifier = Modifier.testTag("settings_favorites"),
-                        summary = "${App.repo.localFavoriteIds.size} 条收藏",
-                        onClick = { nav.push(Route.Container("230267", "收藏")) },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "话题 / 超话",
-                        modifier = Modifier.testTag("settings_topic"),
-                        cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.None,
-                        onClick = { nav.push(Route.Topic()) },
-                    )
-                    if (!guest) {
-                        PreferenceDivider()
-                        ArrowPreference(
-                            title = "附近",
-                            modifier = Modifier.testTag("settings_nearby"),
-                            cardListPosition = CardListPosition.Tail,
-                            onClick = { nav.push(Route.Nearby) },
-                        )
-                    }
-                }
-            }
-
-            item { SectionTitle("更新") }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    ArrowPreference(
-                        title = "检查更新",
-                        modifier = Modifier.testTag("settings_update"),
-                        summary = if (App.checkingUpdate) "正在检查…" else "当前版本 $version",
-                        cardListPosition = CardListPosition.Head,
-                        onClick = { scope.launch { App.checkUpdate(manual = true) } },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "更新日志",
-                        modifier = Modifier.testTag("settings_changelog"),
-                        cardListPosition = CardListPosition.Middle,
-                        onClick = { nav.push(Route.Changelog) },
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = autoCheckUpdate,
-                        onCheckedChange = {
-                            autoCheckUpdate = it
-                            App.settings.applyAutoCheckUpdate(it)
-                        },
-                        title = "自动检查更新",
-                        modifier = Modifier.testTag("settings_auto_update"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = acceptPrerelease,
-                        onCheckedChange = {
-                            acceptPrerelease = it
-                            App.settings.applyAcceptPrerelease(it)
-                        },
-                        title = "接收预发布版本",
-                        modifier = Modifier.testTag("settings_prerelease"),
-                        cardListPosition = CardListPosition.Middle,
-                    )
-                    PreferenceDivider()
-                    SwitchPreference(
-                        checked = inAppUpdate,
-                        onCheckedChange = {
-                            inAppUpdate = it
-                            App.settings.applyInAppUpdate(it)
-                        },
-                        title = "应用内更新",
-                        modifier = Modifier.testTag("settings_in_app_update"),
-                        cardListPosition = CardListPosition.Tail,
-                    )
-                }
-            }
-
-            item { SectionTitle("其他") }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    ArrowPreference(
-                        title = "清理缓存",
-                        modifier = Modifier.testTag("settings_clear_cache"),
-                        cardListPosition = CardListPosition.Head,
-                        onClick = {
-                            runCatching {
-                                val loader = SingletonImageLoader.get(context)
-                                loader.memoryCache?.clear()
-                                loader.diskCache?.clear()
-                                context.cacheDir.resolve("live").deleteRecursively()
-                            }
-                            App.cache.clear()
-                            message = "已清理图片与内容缓存"
-                        },
-                    )
-                    PreferenceDivider()
-                    ArrowPreference(
-                        title = "关于",
-                        modifier = Modifier.testTag("settings_about"),
-                        summary = "v$version · 上游库与开源致谢",
-                        cardListPosition = CardListPosition.Tail,
-                        onClick = { nav.push(Route.About) },
-                    )
-                }
-            }
-
-            // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起。
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    cornerRadius = CardDefaults.GroupCornerRadius,
-                    insideMargin = PaddingValues(0.dp),
-                    weight = CardDefaults.GroupWeight,
-                ) {
-                    if (guest) {
-                        ArrowPreference(
-                            title = "退出纯本地模式",
-                            modifier = Modifier.testTag("settings_leave_local"),
-                            summary = "回到登录页，本地关注名单保留",
-                            cardListPosition = CardListPosition.Full,
-                            onClick = {
-                                App.settings.applyLocalMode(false)
-                                nav.reset(Route.Login())
-                            },
-                        )
-                    } else {
-                        ArrowPreference(
-                            title = "退出登录",
-                            modifier = Modifier.testTag("settings_logout"),
-                            summary = "清除本地会话",
-                            cardListPosition = CardListPosition.Full,
-                            onClick = { logout = true },
-                        )
-                    }
-                }
-            }
-
-            if (message.isNotBlank()) {
-                item {
-                    Text(
-                        message,
-                        fontSize = 12.sp,
-                        color = COUITheme.colorScheme.onSurfaceSecondary,
-                        modifier = Modifier.padding(horizontal = 6.dp),
-                    )
-                }
-            }
-
-            item {
-                Text(
-                    "基于 m.weibo.cn Web API 的第三方微博客户端。\n仅用于个人学习与研究。",
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                    color = COUITheme.colorScheme.onSurfaceSecondary,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
-                )
-            }
-        }
+        Box(Modifier.fillMaxSize().layerBackdropIf(state.blurEffects, backdrop).background(pageColor)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
+                // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    top = glassBarContentTop(topBarHeight, 10.dp),
+                    end = 12.dp,
+                    bottom = 24.dp + navBottomPadding(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
         }
 
         CompositionLocalProvider(
-            LocalBackdrop provides if (blurEffects) backdrop else null,
+            LocalBackdrop provides if (state.blurEffects) backdrop else null,
             // 内容铺到状态栏下面，顶栏玻璃才有东西可采样（COUI 17 规范要求 edgeToEdge）。
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
                 SmallTopAppBar(
-                    title = "设置",
+                    title = title,
                     modifier = Modifier.align(Alignment.TopCenter),
                     color = pageColor,
                     showDivider = false,
-                    gradientGlass = blurEffects,
+                    gradientGlass = state.blurEffects,
                     navigationIcon = { BackIconButton { nav.pop() } },
                 )
             }
         }
     }
 
-    if (logout) {
+    SettingsDialogs(nav = nav, state = state)
+}
+
+private fun LazyListScope.displaySettingsItems(
+    nav: NavState,
+    state: SettingsUiState,
+    showHeader: Boolean,
+) {
+    if (showHeader) {
+        item { SectionTitle("显示与交互", topPadding = 4.dp) }
+    }
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            ArrowPreference(
+                title = "深色模式",
+                modifier = Modifier.testTag("settings_dark"),
+                summary = when (state.darkMode) {
+                    1 -> "浅色"
+                    2 -> "深色"
+                    else -> "跟随系统"
+                },
+                cardListPosition = CardListPosition.Head,
+                onClick = { state.darkMode = App.settings.cycleDarkMode() },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "强调色",
+                modifier = Modifier.testTag("settings_accent_color"),
+                summary = accentColorSummary(state.accentColor),
+                endActions = {
+                    Box(
+                        Modifier
+                            .padding(end = 6.dp)
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(COUITheme.colorScheme.primary)
+                            .border(1.dp, COUITheme.colorScheme.outline, CircleShape),
+                    )
+                },
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickAccentColor = true },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "字号",
+                modifier = Modifier.testTag("settings_font"),
+                summary = "${(state.fontScale * 100).toInt()}%",
+                onClick = { state.fontScale = App.settings.cycleFontScale() },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "预测性返回手势设置",
+                summary = if (App.settings.predictiveBack) "已开启" else "已关闭",
+                modifier = Modifier.testTag("settings_predictive_back_entry"),
+                cardListPosition = CardListPosition.Middle,
+                onClick = { nav.push(Route.PredictiveBackSettings) },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.blurEffects,
+                onCheckedChange = {
+                    state.blurEffects = it
+                    App.settings.applyBlurEffects(it)
+                },
+                title = "模糊效果",
+                summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
+                modifier = Modifier.testTag("settings_blur"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.allowLandscape,
+                onCheckedChange = {
+                    state.allowLandscape = it
+                    App.settings.applyAllowLandscape(it)
+                },
+                title = "允许横屏",
+                summary = "关闭后固定竖屏，不再进入左右双页",
+                modifier = Modifier.testTag("settings_allow_landscape"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.profileShowStatuses,
+                onCheckedChange = {
+                    state.profileShowStatuses = it
+                    App.settings.applyProfileShowStatuses(it)
+                },
+                title = "「我」页展示我的微博",
+                summary = if (state.profileShowStatuses) {
+                    "开启后在「我」标签页直接展开我的全部微博"
+                } else {
+                    "关闭后「我」标签页作为互动中心与设置一级入口"
+                },
+                modifier = Modifier.testTag("settings_profile_show_statuses"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "搜索面板动画",
+                modifier = Modifier.testTag("settings_search_panel_anim"),
+                summary = state.searchPanelAnimation.label,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickSearchPanelAnimation = true },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "底栏左下角按钮",
+                modifier = Modifier.testTag("settings_bottom_left_action"),
+                summary = App.settings.bottomLeftAction.label,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickBottomLeftAction = true },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "浏览图片",
+                modifier = Modifier.testTag("settings_image_browse_quality"),
+                summary = App.settings.imageBrowseQuality.label,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickImageBrowseQuality = true },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.inAppBrowser,
+                onCheckedChange = {
+                    state.inAppBrowser = it
+                    App.settings.applyInAppBrowser(it)
+                },
+                title = "使用内置浏览器打开外部网页",
+                summary = "关闭后点击外部链接将直接调用系统浏览器打开",
+                modifier = Modifier.testTag("settings_in_app_browser"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.confirmLike,
+                onCheckedChange = {
+                    state.confirmLike = it
+                    App.settings.applyConfirmLike(it)
+                },
+                title = "点赞前确认",
+                modifier = Modifier.testTag("settings_confirm_like"),
+                cardListPosition = CardListPosition.Tail,
+            )
+        }
+    }
+}
+
+private fun LazyListScope.feedSettingsItems(
+    state: SettingsUiState,
+    showHeader: Boolean,
+) {
+    if (showHeader) {
+        item { SectionTitle("微博") }
+    }
+    item {
+        val hotBoardsSummary = App.settings.hotBoards.let { picked ->
+            when {
+                picked.isEmpty() -> "已隐藏"
+                picked.size == HotBoard.entries.size -> "全部"
+                else -> HotBoard.entries.filter { it in picked }.joinToString("、") { it.label }
+            }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            ArrowPreference(
+                title = "微博左侧栏",
+                modifier = Modifier.testTag("settings_feed_left_tab"),
+                summary = state.feedLeftTab.label,
+                cardListPosition = CardListPosition.Head,
+                onClick = { state.pickFeedLeft = true },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "微博中间栏",
+                modifier = Modifier.testTag("settings_feed_center_tab"),
+                summary = state.feedCenterTab.label,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickFeedCenter = true },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "微博右侧栏",
+                modifier = Modifier.testTag("settings_feed_right_tab"),
+                summary = state.feedRightTab.label,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickFeedRight = true },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.collapseFollowGroups,
+                onCheckedChange = {
+                    state.collapseFollowGroups = it
+                    App.settings.applyCollapseFollowGroups(it)
+                },
+                title = "收纳关注分组",
+                summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
+                modifier = Modifier.testTag("settings_collapse_follow_groups"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "搜索页热搜榜单",
+                modifier = Modifier.testTag("settings_hot_boards"),
+                summary = hotBoardsSummary,
+                cardListPosition = CardListPosition.Middle,
+                onClick = { state.pickHotBoards = true },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.reverseBrowse,
+                onCheckedChange = {
+                    state.reverseBrowse = it
+                    App.settings.applyReverseBrowse(it)
+                },
+                title = "倒序浏览",
+                summary = "刷新不回顶，从当前位置往上补看新微博",
+                modifier = Modifier.testTag("settings_reverse_browse"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.feedCardFrame,
+                onCheckedChange = {
+                    state.feedCardFrame = it
+                    App.settings.applyFeedCardFrame(it)
+                },
+                title = "首页卡片外框",
+                summary = if (state.feedCardFrame) {
+                    "关闭后去掉卡片底色与圆角，正文横向与顶栏按钮对齐"
+                } else {
+                    "已去掉卡片外框，正文与顶栏按钮对齐"
+                },
+                modifier = Modifier.testTag("settings_feed_card_frame"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.detailCardFrame,
+                onCheckedChange = {
+                    state.detailCardFrame = it
+                    App.settings.applyDetailCardFrame(it)
+                },
+                title = "详情页卡片外框",
+                summary = if (state.detailCardFrame) {
+                    "关闭后主贴与热门评论去掉外框，正文与顶栏按钮对齐；楼中楼等内部块保留"
+                } else {
+                    "已去掉主贴与热门评论外框，正文与顶栏按钮对齐"
+                },
+                modifier = Modifier.testTag("settings_detail_card_frame"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.showVipLevel,
+                onCheckedChange = {
+                    state.showVipLevel = it
+                    App.settings.applyShowVipLevel(it)
+                },
+                title = "显示 VIP 等级",
+                summary = "开启后在昵称旁显示 VIP / SVIP / VVIP 及等级标识",
+                modifier = Modifier.testTag("settings_show_vip_level"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.showFanLevel,
+                onCheckedChange = {
+                    state.showFanLevel = it
+                    App.settings.applyShowFanLevel(it)
+                },
+                title = "显示粉丝等级",
+                summary = "开启后在评论区昵称旁显示铁粉、金粉、钻粉等粉丝标识",
+                modifier = Modifier.testTag("settings_show_fan_level"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.showVerifiedBadge,
+                onCheckedChange = {
+                    state.showVerifiedBadge = it
+                    App.settings.applyShowVerifiedBadge(it)
+                },
+                title = "显示认证 V 标",
+                summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
+                modifier = Modifier.testTag("settings_show_verified_badge"),
+                cardListPosition = CardListPosition.Tail,
+            )
+        }
+    }
+}
+
+private fun LazyListScope.accountSettingsItems(
+    nav: NavState,
+    state: SettingsUiState,
+    showHeader: Boolean,
+    includeLibraryShortcuts: Boolean,
+) {
+    if (showHeader) {
+        item { SectionTitle("账号与内容") }
+    }
+    item {
+        val accounts = remember(state.localFollowUid) { App.store.accounts() }
+        val localFollowAccount = accounts.firstOrNull { it.uid == state.localFollowUid }
+        val localFollowSummary = if (localFollowAccount == null) {
+            "跟随当前账号"
+        } else {
+            "用 ${localFollowAccount.name.ifBlank { "UID ${localFollowAccount.uid}" }} 的身份取数"
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            ArrowPreference(
+                title = "账号管理",
+                modifier = Modifier.testTag("settings_accounts"),
+                cardListPosition = CardListPosition.Head,
+                onClick = { nav.push(Route.Accounts) },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.quickSwitchAccount,
+                onCheckedChange = {
+                    state.quickSwitchAccount = it
+                    App.settings.applyQuickSwitchAccount(it)
+                },
+                title = "长按「我」切换账号",
+                summary = "长按悬浮底栏的「我」快速切换已保存账号",
+                modifier = Modifier.testTag("settings_quick_switch_account"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.profileTabAvatar,
+                onCheckedChange = {
+                    state.profileTabAvatar = it
+                    App.settings.applyProfileTabAvatar(it)
+                },
+                title = "底栏「我」显示头像",
+                summary = "在悬浮底栏的「我」位置显示当前账号头像",
+                modifier = Modifier.testTag("settings_profile_tab_avatar"),
+                cardListPosition = if (!includeLibraryShortcuts && state.guest) CardListPosition.Tail else CardListPosition.Middle,
+            )
+            // 纯本地模式一律用访客身份取数，没有账号可选。
+            if (!state.guest) {
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "本地关注使用账号",
+                    modifier = Modifier.testTag("settings_local_follow"),
+                    summary = localFollowSummary,
+                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Tail,
+                    onClick = { state.pickLocalFollow = true },
+                )
+            }
+            if (includeLibraryShortcuts) {
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "草稿箱",
+                    modifier = Modifier.testTag("settings_drafts"),
+                    summary = "${App.store.drafts().size} 条草稿",
+                    onClick = { nav.push(Route.Drafts) },
+                )
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "浏览历史",
+                    modifier = Modifier.testTag("settings_history"),
+                    summary = "${App.store.history().size} 条记录",
+                    onClick = { nav.push(Route.History) },
+                )
+                // 本地收藏全局共用，纯本地模式下同样可直接打开。
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "收藏",
+                    modifier = Modifier.testTag("settings_favorites"),
+                    summary = "${App.repo.localFavoriteIds.size} 条收藏",
+                    onClick = { nav.push(Route.Favorites) },
+                )
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "话题 / 超话",
+                    modifier = Modifier.testTag("settings_topic"),
+                    cardListPosition = if (state.guest) CardListPosition.Tail else CardListPosition.None,
+                    onClick = { nav.push(Route.Topic()) },
+                )
+                if (!state.guest) {
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "附近",
+                        modifier = Modifier.testTag("settings_nearby"),
+                        cardListPosition = CardListPosition.Tail,
+                        onClick = { nav.push(Route.Nearby) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun LazyListScope.updateSettingsItems(
+    nav: NavState,
+    state: SettingsUiState,
+    scope: CoroutineScope,
+    showHeader: Boolean,
+) {
+    if (showHeader) {
+        item { SectionTitle("更新") }
+    }
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            ArrowPreference(
+                title = "检查更新",
+                modifier = Modifier.testTag("settings_update"),
+                summary = if (App.checkingUpdate) "正在检查…" else "当前版本 ${state.version}",
+                cardListPosition = CardListPosition.Head,
+                onClick = { scope.launch { App.checkUpdate(manual = true) } },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "更新日志",
+                modifier = Modifier.testTag("settings_changelog"),
+                cardListPosition = CardListPosition.Middle,
+                onClick = { nav.push(Route.Changelog) },
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.autoCheckUpdate,
+                onCheckedChange = {
+                    state.autoCheckUpdate = it
+                    App.settings.applyAutoCheckUpdate(it)
+                },
+                title = "自动检查更新",
+                modifier = Modifier.testTag("settings_auto_update"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.acceptPrerelease,
+                onCheckedChange = {
+                    state.acceptPrerelease = it
+                    App.settings.applyAcceptPrerelease(it)
+                },
+                title = "接收预发布版本",
+                modifier = Modifier.testTag("settings_prerelease"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = state.inAppUpdate,
+                onCheckedChange = {
+                    state.inAppUpdate = it
+                    App.settings.applyInAppUpdate(it)
+                },
+                title = "应用内更新",
+                modifier = Modifier.testTag("settings_in_app_update"),
+                cardListPosition = CardListPosition.Tail,
+            )
+        }
+    }
+}
+
+private fun LazyListScope.otherSettingsItems(
+    nav: NavState,
+    state: SettingsUiState,
+    context: Context,
+    showHeader: Boolean,
+) {
+    if (showHeader) {
+        item { SectionTitle("其他") }
+    }
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            ArrowPreference(
+                title = "清理缓存",
+                modifier = Modifier.testTag("settings_clear_cache"),
+                cardListPosition = CardListPosition.Head,
+                onClick = {
+                    runCatching {
+                        val loader = SingletonImageLoader.get(context)
+                        loader.memoryCache?.clear()
+                        loader.diskCache?.clear()
+                        context.cacheDir.resolve("live").deleteRecursively()
+                    }
+                    App.cache.clear()
+                    state.message = "已清理图片与内容缓存"
+                },
+            )
+            PreferenceDivider()
+            ArrowPreference(
+                title = "关于",
+                modifier = Modifier.testTag("settings_about"),
+                summary = "v${state.version} · 上游库与开源致谢",
+                cardListPosition = CardListPosition.Tail,
+                onClick = { nav.push(Route.About) },
+            )
+        }
+    }
+
+    // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起。
+    item {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+        ) {
+            if (state.guest) {
+                ArrowPreference(
+                    title = "退出纯本地模式",
+                    modifier = Modifier.testTag("settings_leave_local"),
+                    summary = "回到登录页，本地关注名单保留",
+                    cardListPosition = CardListPosition.Full,
+                    onClick = {
+                        App.settings.applyLocalMode(false)
+                        nav.reset(Route.Login())
+                    },
+                )
+            } else {
+                ArrowPreference(
+                    title = "退出登录",
+                    modifier = Modifier.testTag("settings_logout"),
+                    summary = "清除本地会话",
+                    cardListPosition = CardListPosition.Full,
+                    onClick = { state.logout = true },
+                )
+            }
+        }
+    }
+
+    if (state.message.isNotBlank()) {
+        item {
+            Text(
+                state.message,
+                fontSize = 12.sp,
+                color = COUITheme.colorScheme.onSurfaceSecondary,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsDialogs(
+    nav: NavState,
+    state: SettingsUiState,
+) {
+    val accounts = remember(state.localFollowUid) { App.store.accounts() }
+    val leftOptions = feedTabOptions(state.feedGroups, allowNone = true, current = if (state.guest) null else state.feedLeftTab)
+    val centerOptions = feedTabOptions(state.feedGroups, allowNone = false, current = if (state.guest) null else state.feedCenterTab)
+    val rightOptions = feedTabOptions(state.feedGroups, allowNone = true, current = if (state.guest) null else state.feedRightTab)
+
+    if (state.logout) {
         ConfirmDialog(
             title = "退出登录",
             message = "会清除本地保存的 Cookie，下次需要重新登录。",
             confirmText = "退出",
-            onDismiss = { logout = false },
+            onDismiss = { state.logout = false },
             onConfirm = {
-                logout = false
+                state.logout = false
                 CookieManager.getInstance().removeAllCookies(null)
                 CookieManager.getInstance().flush()
                 App.repo.logout()
@@ -703,129 +885,129 @@ fun SettingsScreen(nav: NavState) {
         )
     }
 
-    if (pickLocalFollow) {
+    if (state.pickLocalFollow) {
         LocalFollowPicker(
             accounts = accounts,
-            selectedUid = localFollowUid,
-            onDismiss = { pickLocalFollow = false },
+            selectedUid = state.localFollowUid,
+            onDismiss = { state.pickLocalFollow = false },
             onPick = { uid ->
                 App.settings.applyLocalFollowUid(uid)
-                localFollowUid = uid
-                pickLocalFollow = false
+                state.localFollowUid = uid
+                state.pickLocalFollow = false
             },
         )
     }
 
-    if (pickFeedLeft) {
+    if (state.pickFeedLeft) {
         FeedTabPicker(
             title = "微博左侧栏内容",
-            selected = feedLeftTab,
+            selected = state.feedLeftTab,
             options = leftOptions,
-            onDismiss = { pickFeedLeft = false },
+            onDismiss = { state.pickFeedLeft = false },
             onPick = { selection ->
                 App.settings.applyFeedLeftTab(selection)
-                feedLeftTab = selection
-                pickFeedLeft = false
+                state.feedLeftTab = selection
+                state.pickFeedLeft = false
             },
         )
     }
 
-    if (pickFeedCenter) {
+    if (state.pickFeedCenter) {
         FeedTabPicker(
             title = "微博中间栏内容",
-            selected = feedCenterTab,
+            selected = state.feedCenterTab,
             options = centerOptions,
-            onDismiss = { pickFeedCenter = false },
+            onDismiss = { state.pickFeedCenter = false },
             onPick = { selection ->
                 App.settings.applyFeedCenterTab(selection)
-                feedCenterTab = selection
-                pickFeedCenter = false
+                state.feedCenterTab = selection
+                state.pickFeedCenter = false
             },
         )
     }
 
-    if (pickFeedRight) {
+    if (state.pickFeedRight) {
         FeedTabPicker(
             title = "微博右侧栏内容",
-            selected = feedRightTab,
+            selected = state.feedRightTab,
             options = rightOptions,
-            onDismiss = { pickFeedRight = false },
+            onDismiss = { state.pickFeedRight = false },
             onPick = { selection ->
                 App.settings.applyFeedRightTab(selection)
-                feedRightTab = selection
-                pickFeedRight = false
+                state.feedRightTab = selection
+                state.pickFeedRight = false
             },
         )
     }
 
-    if (pickSearchPanelAnimation) {
+    if (state.pickSearchPanelAnimation) {
         OptionPicker(
             title = "搜索面板动画",
             options = SearchPanelAnimation.entries.map { it.key to it.label },
-            selectedKey = searchPanelAnimation.key,
+            selectedKey = state.searchPanelAnimation.key,
             tagPrefix = "search_panel_anim",
             groupKey = "search-panel-anim",
-            onDismiss = { pickSearchPanelAnimation = false },
+            onDismiss = { state.pickSearchPanelAnimation = false },
             onPick = { key ->
                 val picked = SearchPanelAnimation.fromKey(key)
                 App.settings.applySearchPanelAnimation(picked)
-                searchPanelAnimation = picked
-                pickSearchPanelAnimation = false
+                state.searchPanelAnimation = picked
+                state.pickSearchPanelAnimation = false
             },
         )
     }
 
-    if (pickBottomLeftAction) {
+    if (state.pickBottomLeftAction) {
         OptionPicker(
             title = "底栏左下角按钮",
             options = BottomLeftAction.entries.map { it.key to it.label },
             selectedKey = App.settings.bottomLeftAction.key,
             tagPrefix = "bottom_left_action",
             groupKey = "bottom-left-action",
-            onDismiss = { pickBottomLeftAction = false },
+            onDismiss = { state.pickBottomLeftAction = false },
             onPick = { key ->
                 val picked = BottomLeftAction.fromKey(key)
                 App.settings.applyBottomLeftAction(picked)
-                pickBottomLeftAction = false
+                state.pickBottomLeftAction = false
             },
         )
     }
 
-    if (pickImageBrowseQuality) {
+    if (state.pickImageBrowseQuality) {
         OptionPicker(
             title = "浏览图片",
             options = ImageBrowseQuality.entries.map { it.key to it.label },
             selectedKey = App.settings.imageBrowseQuality.key,
             tagPrefix = "image_browse_quality",
             groupKey = "image-browse-quality",
-            onDismiss = { pickImageBrowseQuality = false },
+            onDismiss = { state.pickImageBrowseQuality = false },
             onPick = { key ->
                 val picked = ImageBrowseQuality.fromKey(key)
                 App.settings.applyImageBrowseQuality(picked)
-                pickImageBrowseQuality = false
+                state.pickImageBrowseQuality = false
             },
         )
     }
 
-    if (pickHotBoards) {
+    if (state.pickHotBoards) {
         HotBoardPicker(
             selected = App.settings.hotBoards,
-            onDismiss = { pickHotBoards = false },
+            onDismiss = { state.pickHotBoards = false },
             onConfirm = { picked ->
                 App.settings.applyHotBoards(picked)
-                pickHotBoards = false
+                state.pickHotBoards = false
             },
         )
     }
 
-    if (pickAccentColor) {
+    if (state.pickAccentColor) {
         AccentColorPickerDialog(
-            currentArgb = accentColor,
-            onDismiss = { pickAccentColor = false },
+            currentArgb = state.accentColor,
+            onDismiss = { state.pickAccentColor = false },
             onConfirm = { picked ->
                 App.settings.applyAccentColor(picked)
-                accentColor = picked
-                pickAccentColor = false
+                state.accentColor = picked
+                state.pickAccentColor = false
             },
         )
     }

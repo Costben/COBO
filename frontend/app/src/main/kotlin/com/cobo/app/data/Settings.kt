@@ -276,6 +276,10 @@ class Settings(context: Context) {
     var profileTabAvatar by mutableStateOf(sp.getBoolean("profile_tab_avatar", true))
         private set
 
+    /** 「我」页面是否直接展示自己的全部微博；关闭时改造成个人互动中心与设置一级页面。 */
+    var profileShowStatuses by mutableStateOf(sp.getBoolean("profile_show_statuses", false))
+        private set
+
     /**
      * 首页信息流的微博是否保留最外层卡片外框。关掉后卡片背景与圆角去掉，正文横向撑到与顶栏
      * 按钮对齐；卡片内部的区块（转发块、投票卡、媒体、楼中楼）仍保留各自的外框。默认保留。
@@ -285,6 +289,18 @@ class Settings(context: Context) {
 
     /** 详情页主贴与热门评论是否保留最外层卡片外框。默认保留，与首页分开设置。 */
     var detailCardFrame by mutableStateOf(sp.getBoolean("detail_card_frame", true))
+        private set
+
+    /** 昵称旁是否显示 VIP / SVIP / VVIP 等级标识。默认开启。 */
+    var showVipLevel by mutableStateOf(sp.getBoolean("show_vip_level", true))
+        private set
+
+    /** 评论区昵称旁是否显示铁粉 / 金粉 / 钻粉等粉丝等级标识。默认开启。 */
+    var showFanLevel by mutableStateOf(sp.getBoolean("show_fan_level", true))
+        private set
+
+    /** 认证用户头像右下角是否显示金 V / 蓝 V 角标。默认开启。 */
+    var showVerifiedBadge by mutableStateOf(sp.getBoolean("show_verified_badge", true))
         private set
 
     /** 倒序浏览：刷新时停在原阅读位置，将新微博插入上方并支持断点补拉。默认关。 */
@@ -539,6 +555,11 @@ class Settings(context: Context) {
         sp.edit().putBoolean("profile_tab_avatar", value).apply()
     }
 
+    fun applyProfileShowStatuses(value: Boolean) {
+        profileShowStatuses = value
+        sp.edit().putBoolean("profile_show_statuses", value).apply()
+    }
+
     fun applyFeedCardFrame(value: Boolean) {
         feedCardFrame = value
         sp.edit().putBoolean("feed_card_frame", value).apply()
@@ -547,6 +568,21 @@ class Settings(context: Context) {
     fun applyDetailCardFrame(value: Boolean) {
         detailCardFrame = value
         sp.edit().putBoolean("detail_card_frame", value).apply()
+    }
+
+    fun applyShowVipLevel(value: Boolean) {
+        showVipLevel = value
+        sp.edit().putBoolean("show_vip_level", value).apply()
+    }
+
+    fun applyShowFanLevel(value: Boolean) {
+        showFanLevel = value
+        sp.edit().putBoolean("show_fan_level", value).apply()
+    }
+
+    fun applyShowVerifiedBadge(value: Boolean) {
+        showVerifiedBadge = value
+        sp.edit().putBoolean("show_verified_badge", value).apply()
     }
 
     fun applyReverseBrowse(value: Boolean) {

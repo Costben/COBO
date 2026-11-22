@@ -373,6 +373,8 @@ class Repo(private val context: Context, private val store: Store) {
         cachedHotspotTopics = emptyList()
         clientMobileRejectedSub = null
         clientMobileRejectedAt = 0L
+        hotflowCommentIds.clear()
+        hotflowReplyCids.clear()
     }
 
     /**
@@ -600,6 +602,8 @@ class Repo(private val context: Context, private val store: Store) {
         uploadedContainerMedia.clear()
         clientMobileRejectedSub = null
         clientMobileRejectedAt = 0L
+        hotflowCommentIds.clear()
+        hotflowReplyCids.clear()
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -1436,19 +1440,42 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     /**
-     * 搜索联想词。接口要 `X-XSRF-TOKEN` 和 cookie 配套，令牌取自 `/api/config`；
-     * 不带令牌只会回「请求失败」。
+     * 搜索联想词与推荐大V/官方号。
+     * 并行拉取联想词条（`page/get_search_suggest` 或 H5 `/api/search/suggest`）与用户检索，
+     * 返回关键词列表及最多 3 位匹配的认证大V/官方账号。
      */
-    suspend fun suggest(keyword: String): List<String> {
+    internal suspend fun suggestResult(keyword: String): SearchSuggestResult = coroutineScope {
+        val suggestDeferred = async { fetchRawSuggest(keyword) }
+        val usersDeferred = async {
+            if (keyword.isBlank()) emptyList()
+            else runCatching { searchUsers(keyword, page = 1, force = false) }.getOrDefault(emptyList())
+        }
+        val rawSuggest = suggestDeferred.await()
+        val searchedUsers = usersDeferred.await()
+        val matchedUsers = filterRecommendedSearchUsers(
+            query = keyword,
+            users = searchedUsers,
+            directRecommendations = rawSuggest.users,
+            limit = 3,
+        )
+        SearchSuggestResult(
+            keywords = rawSuggest.keywords,
+            users = matchedUsers,
+        )
+    }
+
+    suspend fun suggest(keyword: String): List<String> = suggestResult(keyword).keywords
+
+    private suspend fun fetchRawSuggest(keyword: String): SearchSuggestResult {
         if (isClientChannel()) {
             val raw = runCatching { containerGetRaw("page/get_search_suggest", mapOf("q" to keyword)) }.getOrNull()
             if (!raw.isNullOrBlank()) {
-                val list = ContainerApi.parseSearchSuggest(raw)
-                if (list.isNotEmpty()) return list
+                val parsed = ContainerApi.parseSearchSuggestResult(raw)
+                if (parsed.keywords.isNotEmpty() || parsed.users.isNotEmpty()) return parsed
             }
         }
         val url = Api.url("https://m.weibo.cn/api/search/suggest", mapOf("keyword" to keyword))
-        var cookie = cookie() ?: return emptyList()
+        var cookie = cookie() ?: return SearchSuggestResult(emptyList())
         var st = configFor(cookie).st
         var data: JSONObject? = null
         // 这接口会没头没脑地回 ok:0「请求失败」，同一组参数隔一会儿再问一次就出结果，
@@ -1459,18 +1486,18 @@ class Repo(private val context: Context, private val store: Store) {
                 data = Api.getWithSt(url, cookie, st).optJSONObject("data")
                 if (data != null) break
             } catch (e: ApiHttpException) {
-                if (e.code != 432 || session != null) return emptyList()
+                if (e.code != 432 || session != null) return SearchSuggestResult(emptyList())
                 cookie = visitorFor(stale = cookie)
                 st = configFor(cookie, force = true).st
             }
         }
-        val arr = data?.optJSONArray("suggestion") ?: return emptyList()
+        val arr = data?.optJSONArray("suggestion") ?: return SearchSuggestResult(emptyList())
         val out = ArrayList<String>(arr.length())
         for (i in 0 until arr.length()) {
             val text = arr.optJSONObject(i)?.str("suggestion").orEmpty()
             if (text.isNotBlank() && text !in out) out.add(text)
         }
-        return out
+        return SearchSuggestResult(out)
     }
 
     suspend fun superTopic(containerId: String, sinceId: String? = null): SuperTopicPage {
@@ -1795,6 +1822,98 @@ class Repo(private val context: Context, private val store: Store) {
         return fetchVote(voteId, force = true)
     }
 
+    private val hotflowCommentIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val hotflowReplyCids = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private suspend fun tryHotflowComments(
+        id: String,
+        mid: String,
+        maxId: String?,
+        maxIdType: Int,
+        force: Boolean,
+        cookie: String?,
+    ): CommentPage? {
+        if (cookie.isNullOrBlank() || !cookie.contains("SUB=") || isClientMobileRejected(cookie)) return null
+        val params = LinkedHashMap<String, String?>()
+        params["id"] = id
+        params["mid"] = mid.ifBlank { id }
+        if (maxId.isNullOrBlank()) {
+            params["max_id_type"] = "0"
+        } else {
+            params["max_id"] = maxId
+            params["max_id_type"] = maxIdType.toString()
+        }
+        val url = Api.url("https://m.weibo.cn/comments/hotflow", params)
+        val root = try {
+            Api.get(url, cookie, force)
+        } catch (e: ApiHttpException) {
+            if (e.code == 432) markClientMobileRejected(cookie)
+            return null
+        } catch (_: Throwable) {
+            return null
+        }
+        val ok = root.optInt("ok", 1)
+        if (ok == -100) {
+            markClientMobileRejected(cookie)
+            return null
+        }
+        if (ok != 1) return null
+        val data = root.optJSONObject("data") ?: return null
+        val arr = data.optJSONArray("data") ?: JSONArray()
+        val items = ArrayList<Comment>(arr.length())
+        for (i in 0 until arr.length()) {
+            Comment.from(arr.optJSONObject(i))?.let(items::add)
+        }
+        if (maxId.isNullOrBlank() && items.isEmpty()) return null
+        return CommentPage(
+            items = items,
+            maxId = data.str("max_id"),
+            maxIdType = data.int("max_id_type"),
+        )
+    }
+
+    private suspend fun tryHotflowReplies(
+        cid: String,
+        maxId: String?,
+        maxIdType: Int,
+        force: Boolean,
+        cookie: String?,
+    ): CommentPage? {
+        if (cookie.isNullOrBlank() || !cookie.contains("SUB=") || isClientMobileRejected(cookie)) return null
+        val params = LinkedHashMap<String, String?>()
+        params["cid"] = cid
+        params["max_id"] = maxId ?: "0"
+        params["max_id_type"] = maxIdType.toString()
+        val url = Api.url("https://m.weibo.cn/comments/hotFlowChild", params)
+        val root = try {
+            Api.get(url, cookie, force)
+        } catch (e: ApiHttpException) {
+            if (e.code == 432) markClientMobileRejected(cookie)
+            return null
+        } catch (_: Throwable) {
+            return null
+        }
+        val ok = root.optInt("ok", 1)
+        if (ok == -100) {
+            markClientMobileRejected(cookie)
+            return null
+        }
+        if (ok != 1) return null
+        val arr = root.optJSONArray("data") ?: JSONArray()
+        val items = ArrayList<Comment>(arr.length())
+        for (i in 0 until arr.length()) {
+            Comment.from(arr.optJSONObject(i), depth = 1)?.let(items::add)
+        }
+        if (maxId.isNullOrBlank() && items.isEmpty()) return null
+        val total = root.optInt("total_number", 0)
+        return CommentPage(
+            items = items,
+            maxId = root.str("max_id"),
+            maxIdType = root.int("max_id_type"),
+            nextPage = if (total > 0) total else 0,
+        )
+    }
+
     suspend fun comments(
         id: String,
         mid: String,
@@ -1824,6 +1943,16 @@ class Repo(private val context: Context, private val store: Store) {
                     maxIdType = 0,
                     nextPage = if (hasMore) curPage + 1 else 0,
                 )
+            }
+            // Share 3.9.6 客户端通道的 comments/build_comments 渠道较老，有时不返回铁粉/钻粉 comment_badge；
+            // 有可用 SUB Cookie 时优先走 H5 hotflow 拿完整粉丝标识，被拒或空结果立即回落容器通道。
+            if (maxId.isNullOrBlank() || hotflowCommentIds.contains(id)) {
+                val hotflowPage = tryHotflowComments(id, mid, maxId, maxIdType, force, cookie())
+                if (hotflowPage != null) {
+                    hotflowCommentIds.add(id)
+                    return hotflowPage
+                }
+                hotflowCommentIds.remove(id)
             }
             val params = LinkedHashMap<String, String?>()
             params["id"] = id
@@ -1910,6 +2039,14 @@ class Repo(private val context: Context, private val store: Store) {
         force: Boolean = false,
     ): CommentPage {
         if (isClientChannel()) {
+            if (maxId.isNullOrBlank() || hotflowReplyCids.contains(cid)) {
+                val hotflowPage = tryHotflowReplies(cid, maxId, maxIdType, force, cookie())
+                if (hotflowPage != null) {
+                    hotflowReplyCids.add(cid)
+                    return hotflowPage
+                }
+                hotflowReplyCids.remove(cid)
+            }
             val params = LinkedHashMap<String, String?>()
             params["id"] = cid
             params["is_show_bulletin"] = "2"
@@ -3309,6 +3446,80 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun favorites(cursor: String? = null, force: Boolean = false): FeedPage =
         FeedPage(store.favorites(), null)
 
+    /** 账号云端收藏：客户端通道走 `2/favorites`，桌面端走 `ajax/favorites/all_fav`，网页端走 `230267`。 */
+    suspend fun cloudFavorites(cursor: String? = null, force: Boolean = false): FeedPage {
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
+        val page = cursor?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        if (isClientChannel()) {
+            val root = containerGet("favorites", mapOf("page" to page.toString(), "count" to "20"))
+            return parseCloudFavoritesPayload(root, page)
+        }
+        val uid = ownUid()
+        if (session?.loginType == LOGIN_TYPE_CLIENT) {
+            val desk = desktopCookieOrNull()
+            if (desk != null) {
+                val root = Api.getDesktop(
+                    Api.url(
+                        "https://weibo.com/ajax/favorites/all_fav",
+                        mapOf("uid" to uid, "page" to page.toString(), "count" to "20"),
+                    ),
+                    desk,
+                )
+                return parseCloudFavoritesPayload(root, page)
+            }
+        }
+        return container("230267", cursor, force = force)
+    }
+
+    /** 我赞过的微博：从个人主页 `tabsInfo` 解析赞容器，或走桌面端 `ajax/statuses/mylike`。 */
+    suspend fun likedStatuses(uid: String, cursor: String? = null, force: Boolean = false): FeedPage {
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
+        if (isClientChannel()) {
+            val cid = runCatching {
+                extractLikeTabContainerId(containerGet("profile", mapOf("uid" to uid)))
+            }.getOrNull() ?: "230869${uid}_-_mix"
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = cid
+            params["count"] = "20"
+            if (!cursor.isNullOrBlank()) params["since_id"] = cursor
+            val root = containerGet("profile/statuses", params)
+            val parsed = parseContainerCards(root)
+            if (parsed.items.isNotEmpty() || root.optJSONArray("cards") != null) return parsed
+            val arr = root.optJSONArray("statuses")
+            return if (arr != null) FeedPage(statusesOf(arr), null) else parsed
+        }
+        if (session?.loginType == LOGIN_TYPE_CLIENT) {
+            val desktop = runCatching { desktopLikedStatuses(uid, cursor) }.getOrNull()
+            if (desktop != null) return desktop
+        }
+        val profileRoot = runCatching {
+            get(
+                Api.url("https://m.weibo.cn/api/container/getIndex", mapOf("type" to "uid", "value" to uid)),
+                cookie(),
+                force,
+            )
+        }.getOrNull()
+        val cid = extractLikeTabContainerId(profileRoot) ?: "230869${uid}_-_mix"
+        return container(cid, cursor, force = force)
+    }
+
+    private suspend fun desktopLikedStatuses(uid: String, cursor: String?): FeedPage? {
+        val desk = desktopCookieOrNull() ?: return null
+        val page = cursor?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val root = Api.getDesktop(
+            Api.url(
+                "https://weibo.com/ajax/statuses/mylike",
+                mapOf("uid" to uid, "page" to page.toString(), "feature" to "0"),
+            ),
+            desk,
+        )
+        if (root.optInt("ok", 0) != 1) return null
+        val list = root.optJSONObject("data")?.optJSONArray("list") ?: JSONArray()
+        val items = statusesOf(list)
+        val next = if (items.size >= 15) (page + 1).toString() else null
+        return FeedPage(items, next)
+    }
+
     /**
      * 附近 / 同城流。
      */
@@ -3430,6 +3641,48 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     fun clearLocalHistory() = store.clearHistory()
+}
+
+internal fun extractLikeTabContainerId(root: JSONObject?): String? {
+    val tabs = root?.optJSONObject("data")?.optJSONObject("tabsInfo")?.optJSONArray("tabs")
+        ?: root?.optJSONObject("tabsInfo")?.optJSONArray("tabs")
+        ?: return null
+    for (i in 0 until tabs.length()) {
+        val tab = tabs.optJSONObject(i) ?: continue
+        val cid = tab.str("containerid").ifBlank { tab.str("container_id") }
+        if (cid.isBlank()) continue
+        val tabKey = tab.str("tabKey")
+        val tabType = tab.str("tab_type")
+        val title = tab.str("title")
+        if (tabKey == "like" || tabType == "like" || title == "赞" || cid.startsWith("230869")) {
+            return cid
+        }
+    }
+    return null
+}
+
+internal fun parseCloudFavoritesPayload(root: JSONObject, page: Int, pageSize: Int = 20): FeedPage {
+    val payload = root.optJSONObject("data") ?: root
+    val items = ArrayList<Status>()
+    val favs = payload.optJSONArray("favorites")
+    if (favs != null) {
+        for (i in 0 until favs.length()) {
+            val entry = favs.optJSONObject(i) ?: continue
+            val statusObj = entry.optJSONObject("status") ?: entry
+            Status.from(statusObj)?.let(items::add)
+        }
+    } else {
+        val list = payload.optJSONArray("statuses") ?: payload.optJSONArray("list")
+        if (list != null) {
+            items.addAll(statusesOf(list))
+        }
+    }
+    val total = payload.int("total_number")
+    val hasMore = items.isNotEmpty() && (
+        items.size >= pageSize ||
+            (total > 0 && page * pageSize < total)
+        )
+    return FeedPage(items, if (hasMore) (page + 1).toString() else null)
 }
 
 /** 城市链接里的坐标：`qiehuan_8008631000000000000_121.47_31.23` 是 经度_纬度。 */

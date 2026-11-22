@@ -1,12 +1,16 @@
 package com.cobo.app.screen
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -67,6 +72,7 @@ import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -100,9 +106,15 @@ internal sealed interface FeedEntry {
     data class Gap(val gap: FeedGap) : FeedEntry {
         override val key: String get() = gapEntryKey(gap.id)
     }
+
+    data class ReadMarker(val beforeStatusId: String) : FeedEntry {
+        override val key: String get() = readMarkerEntryKey(beforeStatusId)
+    }
 }
 
 private fun gapEntryKey(gapId: String): String = "gap:$gapId"
+
+internal fun readMarkerEntryKey(beforeStatusId: String): String = "read_marker:$beforeStatusId"
 
 internal data class PrependAnchor(val key: String, val scrollOffset: Int)
 
@@ -141,6 +153,8 @@ class FeedStore(
 ) {
     val items = mutableStateListOf<Status>()
     val gaps = mutableStateListOf<FeedGap>()
+    var lastReadBeforeStatusId by mutableStateOf<String?>(null)
+        private set
     var sinceId by mutableStateOf<String?>(null)
         private set
     var loading by mutableStateOf(false)
@@ -187,20 +201,40 @@ class FeedStore(
         gapRestoreGeneration++
     }
 
-    internal fun entries(): List<FeedEntry> = buildList(items.size + gaps.size) {
+    internal fun entries(): List<FeedEntry> = buildList(items.size + gaps.size + 1) {
         val gapByBefore = gaps.associateBy { it.beforeStatusId }
+        val markerBefore = lastReadBeforeStatusId
         items.forEachIndexed { index, status ->
-            gapByBefore[status.id]?.let { add(FeedEntry.Gap(it)) }
+            val gap = gapByBefore[status.id]
+            if (gap != null) {
+                add(FeedEntry.Gap(gap))
+            } else if (index > 0 && status.id == markerBefore) {
+                add(FeedEntry.ReadMarker(status.id))
+            }
             add(FeedEntry.Post(status, index))
         }
     }
 
-    internal fun entryKeys(): List<String> = buildList(items.size + gaps.size) {
+    internal fun entryKeys(): List<String> = buildList(items.size + gaps.size + 1) {
         val gapByBefore = gaps.associateBy { it.beforeStatusId }
-        for (status in items) {
-            gapByBefore[status.id]?.let { add(gapEntryKey(it.id)) }
+        val markerBefore = lastReadBeforeStatusId
+        items.forEachIndexed { index, status ->
+            val gap = gapByBefore[status.id]
+            if (gap != null) {
+                add(gapEntryKey(gap.id))
+            } else if (index > 0 && status.id == markerBefore) {
+                add(readMarkerEntryKey(status.id))
+            }
             add(status.id)
         }
+    }
+
+    internal fun entryCount(): Int {
+        val markerBefore = lastReadBeforeStatusId
+        val hasMarker = markerBefore != null &&
+            gaps.none { it.beforeStatusId == markerBefore } &&
+            items.indexOfFirst { it.id == markerBefore } > 0
+        return items.size + gaps.size + if (hasMarker) 1 else 0
     }
 
     internal fun owner(): String = snapshotOwner()
@@ -244,6 +278,7 @@ class FeedStore(
         items.addAll(snapshot.items)
         gaps.clear()
         gaps.addAll(snapshot.gaps)
+        lastReadBeforeStatusId = snapshot.lastReadBeforeStatusId
         sinceId = snapshot.sinceId
         end = snapshot.end
         loaded = true
@@ -256,6 +291,7 @@ class FeedStore(
         val ownerId = snapshotOwner()
         val snapshotItems = items.toList()
         val snapshotGaps = gaps.toList()
+        val snapshotMarker = lastReadBeforeStatusId
         val cursor = sinceId
         val atEnd = end
         withContext(Dispatchers.IO) {
@@ -267,6 +303,7 @@ class FeedStore(
                     cursor,
                     atEnd,
                     snapshotGaps,
+                    snapshotMarker,
                 )
             }
         }
@@ -278,6 +315,17 @@ class FeedStore(
             .filter { it.id in deletedIds || (it.mid.isNotBlank() && it.mid in deletedIds) }
             .mapTo(HashSet()) { it.id }
         if (removedIds.isEmpty()) return
+        val marker = lastReadBeforeStatusId
+        if (marker != null && marker in removedIds) {
+            val markerIdx = items.indexOfFirst { it.id == marker }
+            lastReadBeforeStatusId = if (markerIdx >= 0) {
+                items.subList(markerIdx + 1, items.size)
+                    .firstOrNull { it.id !in removedIds }
+                    ?.id
+            } else {
+                null
+            }
+        }
         items.removeAll { it.id in removedIds }
         gaps.removeAll { it.beforeStatusId in removedIds }
     }
@@ -307,12 +355,20 @@ class FeedStore(
                 fetchReverse(force)
                 return
             }
+            val previousHeadId = items.firstOrNull()?.id
             val page = loader(null, force)
             val known = HashSet<String>()
             val unique = page.items.filter { !isStatusDeleted(it.id) && known.add(it.id) }
             gaps.clear()
             items.clear()
             items.addAll(unique)
+            lastReadBeforeStatusId = when {
+                previousHeadId == null -> null
+                unique.indexOfFirst { it.id == previousHeadId } > 0 -> previousHeadId
+                unique.firstOrNull()?.id == previousHeadId ->
+                    lastReadBeforeStatusId?.takeIf { id -> unique.indexOfFirst { it.id == id } > 0 }
+                else -> null
+            }
             sinceId = page.sinceId
             end = unique.isEmpty()
             loaded = true
@@ -401,6 +457,7 @@ class FeedStore(
         val anchor = scrollAnchorController?.captureForPrepend()
         val oldHeadId = items.first().id
         items.addAll(0, collected)
+        lastReadBeforeStatusId = oldHeadId
         if (!bridged && gapCursor != null) {
             gaps.add(0, FeedGap(id = nextGapId(), cursor = gapCursor, beforeStatusId = oldHeadId))
         }
@@ -514,11 +571,27 @@ class FeedStore(
  * 每一页的位置记忆。左右滑会把整页拆掉重装，滚动位置本身记在 `LazyListState` 里；这里只记
  * 这一格上一次交给的是哪个流，以及已经为哪一次刷新回到过顶部。
  */
-private class PageMemory {
+internal class PageMemory {
     var store: FeedStore? = null
     var generation = -1
     /** 这一格是不是已经装载过一次；第一次装载不算刷新，不该把人拉回顶部。 */
     var seen = false
+}
+
+/**
+ * 首页信息流各栏的滚动位置与页面记忆，提升到主壳里持有，切去「消息」「我」再切回主页时
+ * 保留原来的浏览位置，不再重新建在顶部。
+ */
+@Stable
+class TimelineScrollHolder {
+    private val listStates = HashMap<String, LazyListState>()
+    private val pageMemories = HashMap<String, PageMemory>()
+
+    internal fun listStateFor(slotKey: String): LazyListState =
+        listStates.getOrPut(slotKey) { LazyListState() }
+
+    internal fun memoryFor(slotKey: String): PageMemory =
+        pageMemories.getOrPut(slotKey) { PageMemory() }
 }
 
 @Composable
@@ -532,14 +605,20 @@ fun TimelineScreen(
     recommendStore: FeedStore,
     topInset: Dp,
     onScrollOffset: (Float) -> Unit,
+    slotKeys: List<String> = stores.indices.map { it.toString() },
+    scrollHolder: TimelineScrollHolder = remember { TimelineScrollHolder() },
 ) {
-    // The list states live here so the bottom accessory can send every page back to the top.
-    val listStates = remember(stores.size) { List(stores.size) { LazyListState() } }
+    // The list states live in scrollHolder so bottom-tab switches keep each page's position.
+    val listStates = stores.indices.map { index ->
+        scrollHolder.listStateFor(slotKeys.getOrElse(index) { index.toString() })
+    }
     val refreshScope = rememberCoroutineScope()
     val pullStates = remember(stores.size) {
         mutableStateListOf<FullPagePullToRefreshState?>().apply { repeat(stores.size) { add(null) } }
     }
-    val pageMemory = remember(stores.size) { List(stores.size) { PageMemory() } }
+    val pageMemory = stores.indices.map { index ->
+        scrollHolder.memoryFor(slotKeys.getOrElse(index) { index.toString() })
+    }
     // The header folds its title row away one pixel per pixel scrolled; past the first item the
     // row is already gone, so a large sentinel collapses it fully.
     // 左右那几页跟着当前页一起走，但只补第一行收进去的那一段：滑到多深，两边也只停在收满一行
@@ -785,7 +864,7 @@ private fun TimelinePage(
     SyncDeletedStatuses(store)
     LaunchedEffect(store.gapRestoreGeneration) {
         val restore = store.takePendingGapRestore() ?: return@LaunchedEffect
-        val total = store.items.size + store.gaps.size
+        val total = store.entryCount()
         if (restore.targetIndex in 0 until total) {
             listState.scrollToItem(restore.targetIndex, 0)
             listState.scrollBy(-restore.itemOffset.toFloat())
@@ -794,7 +873,7 @@ private fun TimelinePage(
     LaunchedEffect(listState, store) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
-                val total = store.items.size + store.gaps.size
+                val total = store.entryCount()
                 if (last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
             }
     }
@@ -807,7 +886,7 @@ private fun TimelinePage(
         if (store.resumed) memory.seen = true
         val target = store.takePendingScroll()
         if (target != null) {
-            val last = store.items.size + store.gaps.size - 1
+            val last = store.entryCount() - 1
             if (last >= 0) listState.scrollToItem(target.first.coerceIn(0, last), target.second)
         }
         scrollReady = true
@@ -854,12 +933,12 @@ private fun TimelinePage(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
             contentPadding = PaddingValues(
                 start = 12.dp,
                 top = topInset + 16.dp,
                 end = 12.dp,
-                bottom = 66.dp + navBottomPadding(),
+                bottom = 96.dp + navBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -879,13 +958,26 @@ private fun TimelinePage(
             items(
                 items = entries,
                 key = { it.key },
-                contentType = { if (it is FeedEntry.Gap) "gap" else "post" },
+                contentType = { entry ->
+                    when (entry) {
+                        is FeedEntry.Gap -> "gap"
+                        is FeedEntry.ReadMarker -> "read_marker"
+                        is FeedEntry.Post -> "post"
+                    }
+                },
             ) { entry ->
                 when (entry) {
                     is FeedEntry.Gap -> {
                         FeedGapCard(
                             gap = entry.gap,
                             onClick = { scope.launch { store.loadGap(entry.gap.id) } },
+                        )
+                    }
+                    is FeedEntry.ReadMarker -> {
+                        FeedReadMarker(
+                            keepFrame = App.settings.feedCardFrame,
+                            refreshing = store.refreshing,
+                            onClick = { scope.launch { store.refresh() } },
                         )
                     }
                     is FeedEntry.Post -> {
@@ -1024,6 +1116,82 @@ private fun FeedGapCard(
                     fontWeight = FontWeight.Medium,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 「上次阅读到这里，点击刷新」分割标记：
+ * - 关闭首页卡片外框时：复刻 Share 的直线分割样式（左右横线 + 居中文字，无外框）。
+ * - 开启首页卡片外框时：套一层单行 Card 外框，仅居中显示文字。
+ */
+@Composable
+private fun FeedReadMarker(
+    keepFrame: Boolean,
+    refreshing: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    val markerModifier = Modifier.fillMaxWidth().testTag("feed_read_marker")
+    if (keepFrame) {
+        Card(
+            modifier = markerModifier,
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            weight = CardDefaults.GroupWeight,
+            onClick = if (refreshing) null else onClick,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (refreshing) {
+                    CircularProgressIndicator(size = 16.dp, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "正在刷新…",
+                        color = scheme.onSurfaceSecondary,
+                        fontSize = 13.sp,
+                    )
+                } else {
+                    Text(
+                        text = "上次阅读到这里，点击刷新",
+                        color = scheme.primary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
+    } else {
+        val lineColor = scheme.primary.copy(alpha = 0.65f)
+        Row(
+            modifier = markerModifier
+                .clickable(enabled = !refreshing, onClick = onClick)
+                .padding(horizontal = 4.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f).height(1.dp).background(lineColor))
+            Spacer(Modifier.width(12.dp))
+            if (refreshing) {
+                CircularProgressIndicator(size = 14.dp, strokeWidth = 1.8.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "正在刷新…",
+                    color = scheme.onSurfaceSecondary,
+                    fontSize = 13.sp,
+                )
+            } else {
+                Text(
+                    text = "上次阅读到这里，点击刷新",
+                    color = scheme.primary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Box(Modifier.weight(1f).height(1.dp).background(lineColor))
         }
     }
 }

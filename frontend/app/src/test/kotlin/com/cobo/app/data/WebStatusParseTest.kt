@@ -3,6 +3,7 @@ package com.cobo.app.data
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -151,5 +152,35 @@ class WebStatusParseTest {
         assertEquals(ImageBrowseQuality.Default, ImageBrowseQuality.fromKey(null))
         assertEquals(ImageBrowseQuality.Default, ImageBrowseQuality.fromKey("default"))
         assertEquals(ImageBrowseQuality.Original, ImageBrowseQuality.fromKey("original"))
+    }
+
+    @Test
+    fun repostMovesQuotedVideoInsideRetweetedStatus() {
+        val status = JSONObject(
+            """
+            {
+              "id": "5200000000000001",
+              "text": "我修过仙，这个我熟。//@卤煮疫苗:太离谱了",
+              "page_info": {
+                "type": "video",
+                "page_title": "涨知识boss的微博视频",
+                "page_pic": { "url": "https://wx1.sinaimg.cn/orj480/video_cover.jpg" },
+                "media_info": {
+                  "stream_url": "https://f.video.weibocdn.com/o0/quoted.mp4"
+                }
+              },
+              "retweeted_status": {
+                "id": "5199999999999999",
+                "text": "中医鬼才：如何把精气神... http://t.cn/AXW1yiVP",
+                "user": { "id": "99", "screen_name": "阿南的茅草屋" }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsed = Status.from(status)!!
+        assertNull(parsed.video)
+        assertNotNull(parsed.retweeted?.video)
+        assertEquals("涨知识boss的微博视频", parsed.retweeted?.video?.title)
+        assertEquals("https://f.video.weibocdn.com/o0/quoted.mp4", parsed.retweeted?.video?.url)
     }
 }

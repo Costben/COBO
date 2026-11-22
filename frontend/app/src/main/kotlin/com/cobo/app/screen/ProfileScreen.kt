@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -73,11 +74,13 @@ import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
+import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.ProfileDetail
 import com.cobo.app.data.ProfileGroupSelection
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
+import com.cobo.app.data.Updater
 import com.cobo.app.data.User
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
@@ -101,16 +104,23 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
+import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.ProfileGroupDialog
 import com.cobo.app.ui.components.ProfileInfoDialog
 import com.cobo.app.ui.components.ProfileQrDialog
 import com.cobo.app.ui.components.StatusCard
+import com.cobo.app.ui.components.VerifiedBadge
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
+import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.ButtonDefaults
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.basic.CardListPosition
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -121,7 +131,9 @@ import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloatAsState
@@ -149,6 +161,13 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.cobo.app.ui.CoboIcons
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Edit
+import io.github.suqi8.coui.kmp.icon.extended.Notes
+import io.github.suqi8.coui.kmp.icon.extended.Settings
 import java.net.URLEncoder
 import kotlin.math.roundToInt
 
@@ -566,6 +585,22 @@ private fun reportUrl(uid: String): String {
         "?rid=$uid&from=10106&type=3&url=$target&bottomnav=1&wvr=5"
 }
 
+/**
+ * 个人主页内容状态，供主壳在切换底部 Tab 时保留已加载的资料与列表，避免切回时重置。
+ */
+@Stable
+class ProfileTabState {
+    var user by mutableStateOf<User?>(null)
+    val items = mutableStateListOf<Status>()
+    var sinceId by mutableStateOf<String?>(null)
+    var loading by mutableStateOf(false)
+    var refreshing by mutableStateOf(false)
+    var end by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+    var resolvedUid by mutableStateOf<String?>(null)
+    var loadedUid by mutableStateOf<String?>(null)
+}
+
 @Composable
 fun ProfileContent(
     nav: NavState,
@@ -574,78 +609,81 @@ fun ProfileContent(
     topInset: Dp = 0.dp,
     extraBottom: Dp = 0.dp,
     listState: LazyListState = rememberLazyListState(),
+    state: ProfileTabState? = null,
     onActiveCover: (String?) -> Unit = {},
     onUser: (User?) -> Unit = {},
 ) {
     BindScrollToTop(listState)
     val scope = rememberCoroutineScope()
-    var user by remember(uid) { mutableStateOf<User?>(null) }
-    val items = remember(uid) { mutableStateListOf<Status>() }
-    var sinceId by remember(uid) { mutableStateOf<String?>(null) }
-    var loading by remember(uid) { mutableStateOf(false) }
-    var refreshing by remember(uid) { mutableStateOf(false) }
-    var end by remember(uid) { mutableStateOf(false) }
-    var error by remember(uid) { mutableStateOf<String?>(null) }
-    var resolvedUid by remember(uid) { mutableStateOf<String?>(uid) }
+    val tabState = state ?: remember(uid) { ProfileTabState() }
     val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
     suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
-        val target = resolvedUid ?: return
-        if (loading) return
-        loading = true
-        if (reset && showRefresh) refreshing = true
+        val target = tabState.resolvedUid ?: return
+        if (tabState.loading) return
+        tabState.loading = true
+        if (reset && showRefresh) tabState.refreshing = true
         try {
-            val page = App.repo.userStatuses(target, if (reset) null else sinceId, force = force)
-            if (reset) items.clear()
-            val known = items.mapTo(HashSet()) { it.id }
-            page.items.forEach { if (known.add(it.id)) items.add(it) }
-            sinceId = page.sinceId
-            if (page.items.isEmpty()) end = true
-            error = null
+            val page = App.repo.userStatuses(target, if (reset) null else tabState.sinceId, force = force)
+            if (reset) {
+                tabState.items.clear()
+                tabState.end = false
+            }
+            val known = tabState.items.mapTo(HashSet()) { it.id }
+            page.items.forEach { if (known.add(it.id)) tabState.items.add(it) }
+            tabState.sinceId = page.sinceId
+            if (page.items.isEmpty()) tabState.end = true
+            tabState.error = null
+            tabState.loadedUid = target
         } catch (t: Throwable) {
-            error = t.message ?: "加载失败"
+            tabState.error = t.message ?: "加载失败"
         } finally {
-            loading = false
-            refreshing = false
+            tabState.loading = false
+            tabState.refreshing = false
         }
     }
 
-    SyncDeletedStatuses(items)
-    LaunchedEffect(uid) {
+    SyncDeletedStatuses(tabState.items)
+    LaunchedEffect(uid, tabState) {
         val target = uid ?: runCatching { App.repo.ownUid() }.getOrNull()
         if (target.isNullOrBlank()) {
-            error = "未登录"
+            tabState.error = "未登录"
             return@LaunchedEffect
         }
-        resolvedUid = target
-        user = runCatching { App.repo.profile(target) }.getOrNull()
+        tabState.resolvedUid = target
+        if (tabState.loadedUid == target && tabState.user != null) {
+            return@LaunchedEffect
+        }
+        tabState.user = runCatching { App.repo.profile(target) }.getOrNull()
         loadStatuses(true, force = false)
     }
 
     // 顶栏菜单要用头像和昵称，资料加载完就往上同步一份。
-    LaunchedEffect(user) { onUser(user) }
+    LaunchedEffect(tabState.user) { onUser(tabState.user) }
 
     // 服务端说这个人被设了特别关注、本机又没记过标记，就补一次初值；之后一律以本机为准。
-    LaunchedEffect(user?.id, user?.specialFollow) {
-        val loaded = user ?: return@LaunchedEffect
+    LaunchedEffect(tabState.user?.id, tabState.user?.specialFollow) {
+        val loaded = tabState.user ?: return@LaunchedEffect
         if (loaded.specialFollow && !FollowTags.has(loaded.id)) {
             FollowTags.set(loaded.id, FollowTag.Special)
         }
     }
 
-    LaunchedEffect(listState, items.size) {
+    LaunchedEffect(listState, tabState.items.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
-                if (last >= items.size && items.isNotEmpty() && !end) loadStatuses(false)
+                if (last >= tabState.items.size && tabState.items.isNotEmpty() && !tabState.end) {
+                    loadStatuses(false)
+                }
             }
     }
 
     FullPagePullToRefresh(
-        isRefreshing = refreshing,
+        isRefreshing = tabState.refreshing,
         onRefresh = {
             scope.launch {
-                resolvedUid?.let { user = runCatching { App.repo.profile(it, force = true) }.getOrNull() }
+                tabState.resolvedUid?.let { tabState.user = runCatching { App.repo.profile(it, force = true) }.getOrNull() }
                 loadStatuses(true, force = true, showRefresh = true)
             }
         },
@@ -666,6 +704,7 @@ fun ProfileContent(
             modifier = Modifier
                 .fillMaxSize()
                 .scrollEndHaptic()
+                .overScrollVertical()
                 .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) },
             // 封面从屏幕最顶上铺起，顶栏的玻璃直接压在封面上；顶栏的高度由封面自己让出来。
             contentPadding = PaddingValues(
@@ -675,24 +714,25 @@ fun ProfileContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                val tag = FollowTags[user?.id ?: uid]
+                val currentUser = tabState.user
+                val tag = FollowTags[currentUser?.id ?: uid]
                 ProfileHeader(
-                    user = user,
+                    user = currentUser,
                     tag = tag,
                     topInset = topInset,
                     pullState = pullState,
                     onActiveCover = onActiveCover,
                     onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
                     onRelations = { kind ->
-                        val target = user?.id ?: resolvedUid
+                        val target = currentUser?.id ?: tabState.resolvedUid
                         if (!target.isNullOrBlank()) nav.push(Route.Relations(target, kind))
                     },
                     followLabel = when {
                         App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
-                        user?.following == true -> "已关注"
+                        currentUser?.following == true -> "已关注"
                         else -> "关注"
                     },
-                    onFollow = user?.let { target ->
+                    onFollow = currentUser?.let { target ->
                         if (App.repo.guest) {
                             // 纯本地模式没有账号可关注，按钮直接切本机的「本地关注」标记。
                             {
@@ -708,7 +748,7 @@ fun ProfileContent(
                                 scope.launch {
                                     runCatching { App.repo.follow(target.id, !target.following) }
                                         .onSuccess {
-                                            user = target.copy(
+                                            tabState.user = target.copy(
                                                 following = !target.following,
                                                 followers = (target.followers +
                                                     if (target.following) -1 else 1).coerceAtLeast(0),
@@ -723,18 +763,18 @@ fun ProfileContent(
                     },
                 )
             }
-            if (items.isEmpty()) {
+            if (tabState.items.isEmpty()) {
                 item {
                     when {
-                        loading || refreshing -> LoadingState()
-                        error != null -> ErrorState(error!!) {
+                        tabState.loading || tabState.refreshing -> LoadingState()
+                        tabState.error != null -> ErrorState(tabState.error!!) {
                             scope.launch { loadStatuses(true, force = true, showRefresh = true) }
                         }
                         else -> EmptyState("还没有微博")
                     }
                 }
             }
-            itemsIndexed(items, key = { _, s -> s.id }) { index, status ->
+            itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
                 val origin = rememberExpandOrigin()
                 val topBar = LocalTopBarBounds.current
                 SideEffect {
@@ -753,7 +793,7 @@ fun ProfileContent(
                         scope.launch {
                             if (!App.confirmLike(status.liked)) return@launch
                             runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
-                                items[index] = status.copy(
+                                tabState.items[index] = status.copy(
                                     liked = !status.liked,
                                     attitudes = (status.attitudes + if (status.liked) -1 else 1)
                                         .coerceAtLeast(0),
@@ -769,10 +809,10 @@ fun ProfileContent(
                     },
                 )
             }
-            if (items.isNotEmpty()) {
+            if (tabState.items.isNotEmpty()) {
                 item {
-                    if (loading) LoadingState()
-                    else if (end) Text(
+                    if (tabState.loading) LoadingState()
+                    else if (tabState.end) Text(
                         "没有更多了",
                         fontSize = 12.sp,
                         color = COUITheme.colorScheme.onSurfaceSecondary,
@@ -782,6 +822,321 @@ fun ProfileContent(
             }
         }
     }
+}
+
+/**
+ * 「我」页面的一级功能与设置中心形态：保留顶部个人资料头，下方聚合我的微博、收藏、
+ * 赞过/收到的赞、发出/收到的评论、本机记录以及跳转各个设置分组二级页的入口。
+ */
+@Composable
+fun ProfileHubContent(
+    nav: NavState,
+    guest: Boolean,
+    modifier: Modifier = Modifier,
+    topInset: Dp = 0.dp,
+    extraBottom: Dp = 0.dp,
+    listState: LazyListState = rememberLazyListState(),
+    state: ProfileTabState = remember { ProfileTabState() },
+    onActiveCover: (String?) -> Unit = {},
+) {
+    BindScrollToTop(listState)
+    val scope = rememberCoroutineScope()
+    val pullState = rememberFullPagePullToRefreshState()
+    val scheme = COUITheme.colorScheme
+
+    LaunchedEffect(guest, state) {
+        if (guest) {
+            onActiveCover(null)
+            return@LaunchedEffect
+        }
+        val target = runCatching { App.repo.ownUid() }.getOrNull()
+        if (target.isNullOrBlank()) return@LaunchedEffect
+        state.resolvedUid = target
+        if (state.user == null || state.loadedUid != target) {
+            state.user = runCatching { App.repo.profile(target) }.getOrNull()
+            if (state.user != null) state.loadedUid = target
+        }
+    }
+
+    val content: @Composable () -> Unit = {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .scrollEndHaptic()
+                .overScrollVertical()
+                .let {
+                    if (guest) it else it.offset { IntOffset(0, -pullState.dragOffset.roundToInt()) }
+                },
+            contentPadding = PaddingValues(
+                top = if (guest) topInset + 14.dp else 0.dp,
+                bottom = 16.dp + navBottomPadding() + extraBottom,
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (guest) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        Text("纯本地模式", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "未登录账号，可通过底部入口、草稿、收藏与设置分组管理本机内容。",
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp,
+                            color = scheme.onSurfaceSecondary,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { nav.push(Route.Login()) },
+                            colors = ButtonDefaults.buttonColorsPrimary(),
+                            modifier = Modifier.fillMaxWidth().testTag("local_login"),
+                        ) {
+                            Text("登录微博账号")
+                        }
+                    }
+                }
+            } else {
+                item {
+                    val currentUser = state.user
+                    val targetUid = currentUser?.id ?: state.resolvedUid
+                    ProfileHeader(
+                        user = currentUser,
+                        tag = null,
+                        topInset = topInset,
+                        pullState = pullState,
+                        onActiveCover = onActiveCover,
+                        onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
+                        onStatusesClick = {
+                            if (!targetUid.isNullOrBlank()) nav.push(Route.Profile(targetUid))
+                        },
+                        onRelations = { kind ->
+                            if (!targetUid.isNullOrBlank()) nav.push(Route.Relations(targetUid, kind))
+                        },
+                        followLabel = "",
+                        onFollow = null,
+                    )
+                }
+
+                item {
+                    val currentUser = state.user
+                    val targetUid = currentUser?.id ?: state.resolvedUid
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(0.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        ArrowPreference(
+                            title = "我的微博",
+                            startAction = { HubRowIcon(COUIIcons.Notes) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Head,
+                            modifier = Modifier.testTag("hub_my_statuses"),
+                            onClick = {
+                                if (!targetUid.isNullOrBlank()) nav.push(Route.Profile(targetUid))
+                            },
+                        )
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "我的收藏",
+                            startAction = { HubRowIcon(CoboIcons.Star) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Middle,
+                            modifier = Modifier.testTag("hub_favorites"),
+                            onClick = { nav.push(Route.Favorites) },
+                        )
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "我赞过的",
+                            startAction = { HubRowIcon(CoboIcons.Heart) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Middle,
+                            modifier = Modifier.testTag("hub_my_likes"),
+                            onClick = { nav.push(Route.MyLikes) },
+                        )
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "收到的赞",
+                            startAction = { HubRowIcon(CoboIcons.ThumbUp) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Middle,
+                            modifier = Modifier.testTag("hub_received_likes"),
+                            onClick = { nav.push(Route.Notifications(NotificationTab.Like)) },
+                        )
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "收到的评论",
+                            startAction = { HubRowIcon(CoboIcons.Comment) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Middle,
+                            modifier = Modifier.testTag("hub_received_comments"),
+                            onClick = { nav.push(Route.Notifications(NotificationTab.Comment)) },
+                        )
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "发出的评论",
+                            startAction = { HubRowIcon(CoboIcons.WriteComment) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Tail,
+                            modifier = Modifier.testTag("hub_sent_comments"),
+                            onClick = { nav.push(Route.Notifications(NotificationTab.SentComment)) },
+                        )
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
+                    insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
+                ) {
+                    if (guest) {
+                        ArrowPreference(
+                            title = "本地收藏",
+                            startAction = { HubRowIcon(CoboIcons.Star) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Head,
+                            modifier = Modifier.testTag("local_favorites"),
+                            onClick = { nav.push(Route.Favorites) },
+                        )
+                        PreferenceDivider()
+                    }
+                    ArrowPreference(
+                        title = "草稿箱",
+                        startAction = { HubRowIcon(COUIIcons.Edit) },
+                        centerStartAction = true,
+                        cardListPosition = if (guest) CardListPosition.Middle else CardListPosition.Head,
+                        modifier = Modifier.testTag("hub_drafts"),
+                        onClick = { nav.push(Route.Drafts) },
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "浏览历史",
+                        startAction = { HubRowIcon(CoboIcons.History) },
+                        centerStartAction = true,
+                        cardListPosition = CardListPosition.Middle,
+                        modifier = Modifier.testTag("hub_history"),
+                        onClick = { nav.push(Route.History) },
+                    )
+                    PreferenceDivider()
+                    ArrowPreference(
+                        title = "话题 / 超话",
+                        startAction = { HubRowIcon(CoboIcons.Topic) },
+                        centerStartAction = true,
+                        cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.Middle,
+                        modifier = Modifier.testTag("hub_topic"),
+                        onClick = { nav.push(Route.Topic()) },
+                    )
+                    if (!guest) {
+                        PreferenceDivider()
+                        ArrowPreference(
+                            title = "附近",
+                            startAction = { HubRowIcon(CoboIcons.LocationOutline) },
+                            centerStartAction = true,
+                            cardListPosition = CardListPosition.Tail,
+                            modifier = Modifier.testTag("hub_nearby"),
+                            onClick = { nav.push(Route.Nearby) },
+                        )
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    cornerRadius = CardDefaults.GroupCornerRadius,
+                    insideMargin = PaddingValues(0.dp),
+                    weight = CardDefaults.GroupWeight,
+                ) {
+                    val groups = SettingsGroup.entries
+                    groups.forEachIndexed { index, group ->
+                        if (index > 0) PreferenceDivider()
+                        val pos = when (index) {
+                            0 -> CardListPosition.Head
+                            groups.lastIndex -> CardListPosition.Tail
+                            else -> CardListPosition.Middle
+                        }
+                        ArrowPreference(
+                            title = group.title,
+                            startAction = { HubRowIcon(group.hubIcon()) },
+                            centerStartAction = true,
+                            cardListPosition = pos,
+                            modifier = Modifier.testTag("hub_settings_${group.name.lowercase()}"),
+                            onClick = { nav.push(Route.SettingsDetail(group)) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (guest) {
+        Box(modifier) { content() }
+    } else {
+        FullPagePullToRefresh(
+            isRefreshing = state.refreshing,
+            onRefresh = {
+                scope.launch {
+                    state.refreshing = true
+                    try {
+                        val target = state.resolvedUid ?: runCatching { App.repo.ownUid() }.getOrNull()
+                        if (!target.isNullOrBlank()) {
+                            state.resolvedUid = target
+                            state.user = runCatching { App.repo.profile(target, force = true) }.getOrNull()
+                            state.loadedUid = target
+                        }
+                    } finally {
+                        state.refreshing = false
+                    }
+                }
+            },
+            modifier = modifier,
+            state = pullState,
+            contentPadding = PaddingValues(top = topInset),
+            colors = fullPagePullToRefreshColors(
+                backgroundColor = pageContainerColor(),
+                textColor = Color.Transparent,
+                indicatorColor = Color.Transparent,
+            ),
+            refreshTexts = FullPageRefreshTexts,
+            completeHoldDurationMillis = FullPageRefreshHoldMillis,
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun HubRowIcon(imageVector: ImageVector) {
+    Icon(
+        imageVector = imageVector,
+        contentDescription = null,
+        modifier = Modifier.size(24.dp),
+        tint = COUITheme.colorScheme.onBackground,
+    )
+}
+
+private fun SettingsGroup.hubIcon(): ImageVector = when (this) {
+    SettingsGroup.Display -> CoboIcons.TuneOutline
+    SettingsGroup.Feed -> CoboIcons.FeedOutline
+    SettingsGroup.AccountAndContent -> CoboIcons.ProfileOutline
+    SettingsGroup.Update -> CoboIcons.UpdateOutline
+    SettingsGroup.Other -> COUIIcons.Settings
 }
 
 private val ProfileAvatarRing = 68.dp
@@ -862,6 +1217,7 @@ private fun ProfileHeader(
     topInset: Dp = 0.dp,
     onActiveCover: (String?) -> Unit = {},
     onCover: (List<Pic>, Int) -> Unit = { _, _ -> },
+    onStatusesClick: (() -> Unit)? = null,
     onRelations: (RelationKind) -> Unit = {},
 ) {
     val scheme = COUITheme.colorScheme
@@ -989,14 +1345,23 @@ private fun ProfileHeader(
                     .padding(bottom = (ProfileAvatarRing * 0.5f) / 2),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(ProfileAvatarRing)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.9f))
-                        .padding(2.dp),
-                ) {
-                    Avatar(user?.avatar, 64.dp)
+                Box(modifier = Modifier.size(ProfileAvatarRing)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.9f))
+                            .padding(2.dp),
+                    ) {
+                        Avatar(user?.avatar, 64.dp)
+                    }
+                    if (user != null) {
+                        VerifiedBadge(
+                            kind = user.verifiedKind,
+                            size = 20.dp,
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                        )
+                    }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -1010,7 +1375,7 @@ private fun ProfileHeader(
                                 FollowTagBadge(tag)
                             }
                             if (membership != Membership.None) {
-                                MemberBadge(membership)
+                                MemberBadge(membership, rank = user?.mbrank ?: 0)
                             }
                         }
                         Spacer(Modifier.height(2.dp))
@@ -1060,7 +1425,7 @@ private fun ProfileHeader(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(26.dp),
             ) {
-                Stat("微博", user?.statuses ?: 0)
+                Stat("微博", user?.statuses ?: 0, testTag = "profile_statuses", onClick = onStatusesClick)
                 Stat("关注", user?.friends ?: 0, testTag = "profile_following") {
                     onRelations(RelationKind.Following)
                 }

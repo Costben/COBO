@@ -480,7 +480,7 @@ fun ComposerSuggestPanel(
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Avatar(user.avatar, 28.dp)
+                            Avatar(user.avatar, 28.dp, verifiedKind = user.verifiedKind)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -492,10 +492,6 @@ fun ComposerSuggestPanel(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                    if (user.verified) {
-                                        Spacer(Modifier.width(4.dp))
-                                        VerifiedBadge()
-                                    }
                                 }
                                 if (user.description.isNotBlank()) {
                                     Text(

@@ -548,4 +548,226 @@ object CoboIcons {
             }
         }.build()
     }
+
+    /** 收到的赞：线性大拇指轮廓。 */
+    val ThumbUp: ImageVector by lazy {
+        outline("ThumbUp") {
+            // 左侧袖口
+            moveTo(4.0f, 11.2f)
+            curveTo(4.0f, 10.4f, 4.6f, 9.8f, 5.4f, 9.8f)
+            horizontalLineTo(7.6f)
+            verticalLineTo(20.0f)
+            horizontalLineTo(5.4f)
+            curveTo(4.6f, 20.0f, 4.0f, 19.4f, 4.0f, 18.6f)
+            close()
+            // 右侧大拇指与手掌外框
+            moveTo(7.6f, 10.6f)
+            lineTo(11.3f, 4.4f)
+            curveTo(11.7f, 3.7f, 12.6f, 3.5f, 13.3f, 3.9f)
+            curveTo(13.9f, 4.3f, 14.2f, 5.0f, 14.0f, 5.7f)
+            lineTo(13.1f, 9.2f)
+            horizontalLineTo(18.1f)
+            curveTo(19.5f, 9.2f, 20.5f, 10.4f, 20.2f, 11.8f)
+            lineTo(18.9f, 18.0f)
+            curveTo(18.6f, 19.2f, 17.6f, 20.0f, 16.4f, 20.0f)
+            horizontalLineTo(7.6f)
+        }
+    }
+
+    /** 发出的评论：纸张与正在书写的笔（纯线性）。 */
+    val WriteComment: ImageVector by lazy {
+        outline("WriteComment") {
+            // 纸张外框（右下角为笔留出开口）
+            moveTo(15.2f, 8.2f)
+            verticalLineTo(5.6f)
+            curveTo(15.2f, 4.4f, 14.3f, 3.5f, 13.1f, 3.5f)
+            horizontalLineTo(6.1f)
+            curveTo(4.9f, 3.5f, 4.0f, 4.4f, 4.0f, 5.6f)
+            verticalLineTo(18.4f)
+            curveTo(4.0f, 19.6f, 4.9f, 20.5f, 6.1f, 20.5f)
+            horizontalLineTo(13.1f)
+            curveTo(14.3f, 20.5f, 15.2f, 19.6f, 15.2f, 18.4f)
+            verticalLineTo(16.6f)
+            // 纸面文字线
+            moveTo(7.0f, 8.2f)
+            horizontalLineTo(12.2f)
+            moveTo(7.0f, 11.8f)
+            horizontalLineTo(11.0f)
+            // 右侧斜笔在纸面书写
+            moveTo(18.8f, 7.6f)
+            lineTo(20.6f, 9.4f)
+            lineTo(13.4f, 16.6f)
+            lineTo(10.6f, 17.4f)
+            lineTo(11.4f, 14.6f)
+            close()
+        }
+    }
+
+    /** 浏览历史：线性时钟。 */
+    val History: ImageVector by lazy {
+        outline("History") {
+            moveTo(20.5f, 12.0f)
+            curveTo(20.5f, 16.69f, 16.69f, 20.5f, 12.0f, 20.5f)
+            curveTo(7.31f, 20.5f, 3.5f, 16.69f, 3.5f, 12.0f)
+            curveTo(3.5f, 7.31f, 7.31f, 3.5f, 12.0f, 3.5f)
+            curveTo(16.69f, 3.5f, 20.5f, 7.31f, 20.5f, 12.0f)
+            close()
+            moveTo(12.0f, 7.6f)
+            verticalLineTo(12.0f)
+            lineTo(15.2f, 13.9f)
+        }
+    }
+
+    /** 附近：线性定位标。 */
+    val LocationOutline: ImageVector by lazy {
+        outline("LocationOutline") {
+            moveTo(12.0f, 21.0f)
+            curveTo(12.0f, 21.0f, 18.5f, 14.9f, 18.5f, 9.8f)
+            curveTo(18.5f, 6.21f, 15.59f, 3.3f, 12.0f, 3.3f)
+            curveTo(8.41f, 3.3f, 5.5f, 6.21f, 5.5f, 9.8f)
+            curveTo(5.5f, 14.9f, 12.0f, 21.0f, 12.0f, 21.0f)
+            close()
+            moveTo(14.5f, 9.8f)
+            curveTo(14.5f, 11.18f, 13.38f, 12.3f, 12.0f, 12.3f)
+            curveTo(10.62f, 12.3f, 9.5f, 11.18f, 9.5f, 9.8f)
+            curveTo(9.5f, 8.42f, 10.62f, 7.3f, 12.0f, 7.3f)
+            curveTo(13.38f, 7.3f, 14.5f, 8.42f, 14.5f, 9.8f)
+            close()
+        }
+    }
+
+    /** 显示与交互：线性三滑块调节图标。 */
+    val TuneOutline: ImageVector by lazy {
+        outline("TuneOutline") {
+            // 第一行滑杆
+            moveTo(4.0f, 6.5f)
+            horizontalLineTo(12.5f)
+            moveTo(16.5f, 6.5f)
+            horizontalLineTo(20.0f)
+            moveTo(16.5f, 6.5f)
+            curveTo(16.5f, 7.6f, 15.6f, 8.5f, 14.5f, 8.5f)
+            curveTo(13.4f, 8.5f, 12.5f, 7.6f, 12.5f, 6.5f)
+            curveTo(12.5f, 5.4f, 13.4f, 4.5f, 14.5f, 4.5f)
+            curveTo(15.6f, 4.5f, 16.5f, 5.4f, 16.5f, 6.5f)
+            close()
+            // 第二行滑杆
+            moveTo(4.0f, 12.0f)
+            horizontalLineTo(7.5f)
+            moveTo(11.5f, 12.0f)
+            horizontalLineTo(20.0f)
+            moveTo(11.5f, 12.0f)
+            curveTo(11.5f, 13.1f, 10.6f, 14.0f, 9.5f, 14.0f)
+            curveTo(8.4f, 14.0f, 7.5f, 13.1f, 7.5f, 12.0f)
+            curveTo(7.5f, 10.9f, 8.4f, 10.0f, 9.5f, 10.0f)
+            curveTo(10.6f, 10.0f, 11.5f, 10.9f, 11.5f, 12.0f)
+            close()
+            // 第三行滑杆
+            moveTo(4.0f, 17.5f)
+            horizontalLineTo(13.5f)
+            moveTo(17.5f, 17.5f)
+            horizontalLineTo(20.0f)
+            moveTo(17.5f, 17.5f)
+            curveTo(17.5f, 18.6f, 16.6f, 19.5f, 15.5f, 19.5f)
+            curveTo(14.4f, 19.5f, 13.5f, 18.6f, 13.5f, 17.5f)
+            curveTo(13.5f, 16.4f, 14.4f, 15.5f, 15.5f, 15.5f)
+            curveTo(16.6f, 15.5f, 17.5f, 16.4f, 17.5f, 17.5f)
+            close()
+        }
+    }
+
+    /** 更新：线性圆环箭头。 */
+    val UpdateOutline: ImageVector by lazy {
+        outline("UpdateOutline") {
+            moveTo(20.0f, 12.0f)
+            curveTo(20.0f, 16.42f, 16.42f, 20.0f, 12.0f, 20.0f)
+            curveTo(7.58f, 20.0f, 4.0f, 16.42f, 4.0f, 12.0f)
+            curveTo(4.0f, 7.58f, 7.58f, 4.0f, 12.0f, 4.0f)
+            curveTo(16.42f, 4.0f, 20.0f, 7.58f, 20.0f, 12.0f)
+            close()
+            moveTo(12.0f, 15.6f)
+            verticalLineTo(8.4f)
+            moveTo(8.9f, 11.3f)
+            lineTo(12.0f, 8.2f)
+            lineTo(15.1f, 11.3f)
+        }
+    }
+
+    /** 链接前缀：线性图片框图标（圆角边框 + 山峰 + 太阳），用于「查看图片」。 */
+    val Image: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Image",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.65f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(5.8f, 4.4f)
+                horizontalLineTo(18.2f)
+                curveTo(19.64f, 4.4f, 20.8f, 5.56f, 20.8f, 7.0f)
+                verticalLineTo(17.0f)
+                curveTo(20.8f, 18.44f, 19.64f, 19.6f, 18.2f, 19.6f)
+                horizontalLineTo(5.8f)
+                curveTo(4.36f, 19.6f, 3.2f, 18.44f, 3.2f, 17.0f)
+                verticalLineTo(7.0f)
+                curveTo(3.2f, 5.56f, 4.36f, 4.4f, 5.8f, 4.4f)
+                close()
+                moveTo(3.6f, 16.5f)
+                lineTo(8.8f, 11.4f)
+                lineTo(13.2f, 15.6f)
+                lineTo(16.0f, 12.9f)
+                lineTo(20.5f, 17.2f)
+                moveTo(17.0f, 8.7f)
+                curveTo(17.0f, 9.47f, 16.37f, 10.1f, 15.6f, 10.1f)
+                curveTo(14.83f, 10.1f, 14.2f, 9.47f, 14.2f, 8.7f)
+                curveTo(14.2f, 7.93f, 14.83f, 7.3f, 15.6f, 7.3f)
+                curveTo(16.37f, 7.3f, 17.0f, 7.93f, 17.0f, 8.7f)
+                close()
+            }
+        }.build()
+    }
+
+    /** 链接前缀：线性微博眼睛与双波纹图标，用于「微博正文」。 */
+    val Weibo: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Weibo",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.65f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(10.5f, 19.6f)
+                curveTo(6.1f, 19.6f, 2.8f, 17.5f, 2.8f, 14.3f)
+                curveTo(2.8f, 12.1f, 4.7f, 9.4f, 7.6f, 7.7f)
+                curveTo(9.8f, 6.4f, 11.7f, 6.9f, 11.1f, 8.8f)
+                curveTo(10.8f, 9.6f, 11.4f, 10.0f, 12.4f, 9.6f)
+                curveTo(14.6f, 8.7f, 16.5f, 9.3f, 16.0f, 11.0f)
+                curveTo(15.8f, 11.7f, 16.2f, 12.1f, 17.0f, 12.5f)
+                curveTo(18.0f, 13.1f, 18.4f, 14.0f, 18.4f, 14.9f)
+                curveTo(18.4f, 17.7f, 14.9f, 19.6f, 10.5f, 19.6f)
+                close()
+                moveTo(12.4f, 14.7f)
+                curveTo(12.4f, 15.95f, 11.4f, 16.95f, 10.2f, 16.95f)
+                curveTo(9.0f, 16.95f, 8.0f, 15.95f, 8.0f, 14.7f)
+                curveTo(8.0f, 13.45f, 9.0f, 12.45f, 10.2f, 12.45f)
+                curveTo(11.4f, 12.45f, 12.4f, 13.45f, 12.4f, 14.7f)
+                close()
+                moveTo(15.2f, 6.7f)
+                curveTo(17.1f, 6.7f, 18.7f, 8.3f, 18.7f, 10.2f)
+                moveTo(15.4f, 3.8f)
+                curveTo(18.8f, 3.8f, 21.5f, 6.5f, 21.5f, 9.9f)
+            }
+        }.build()
+    }
 }

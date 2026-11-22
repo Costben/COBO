@@ -1,6 +1,7 @@
 package com.cobo.app.ui.components
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RichTextEmojiTest {
@@ -61,5 +62,12 @@ class RichTextEmojiTest {
             ),
             segments.emojis().map { it.first },
         )
+    }
+
+    @Test
+    fun selectsImageAndWeiboGlyphsForLinks() {
+        assertEquals(LinkGlyph.Image, glyphFor("https://m.weibo.cn/status/123", "查看图片"))
+        assertEquals(LinkGlyph.Weibo, glyphFor("https://m.weibo.cn/detail/123", "微博正文"))
+        assertNull(glyphFor("https://example.com", "网页链接"))
     }
 }

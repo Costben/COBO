@@ -188,7 +188,7 @@ fun VoteScreen(nav: NavState, voteId: String) {
                                             )
                                             if (author?.membership != null && author.membership != Membership.None) {
                                                 Spacer(Modifier.width(4.dp))
-                                                MemberBadge(author.membership, compact = true)
+                                                MemberBadge(author.membership, compact = true, rank = author.mbrank)
                                             }
                                         }
                                         Spacer(Modifier.height(3.dp))

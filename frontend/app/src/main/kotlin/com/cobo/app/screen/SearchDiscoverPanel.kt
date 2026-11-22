@@ -71,14 +71,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.HotItem
+import com.cobo.app.data.Membership
+import com.cobo.app.data.SearchSuggestEntry
+import com.cobo.app.data.User
+import com.cobo.app.data.buildSearchSuggestEntries
+import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.MemberBadge
+import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
 import io.github.suqi8.coui.kmp.basic.ChipColors
@@ -123,7 +131,7 @@ class SearchDiscoverState {
         private set
     var hotError by mutableStateOf<String?>(null)
         private set
-    var suggestions by mutableStateOf<List<String>>(emptyList())
+    var suggestions by mutableStateOf<List<SearchSuggestEntry>>(emptyList())
         internal set
     var editingHistoryItem by mutableStateOf<String?>(null)
 
@@ -189,7 +197,8 @@ fun BindSearchSuggestionsEffect(
         }
         delay(250)
         state.suggestions = try {
-            App.repo.suggest(keyword)
+            val result = App.repo.suggestResult(keyword)
+            buildSearchSuggestEntries(result.keywords, result.users)
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) {
@@ -215,12 +224,27 @@ fun LazyListScope.searchDiscoverItems(
     history: List<String>,
     onSelectKeyword: (String) -> Unit,
     onRetryHot: () -> Unit,
+    onSelectUser: (User) -> Unit = { onSelectKeyword(it.name) },
 ) {
     if (suggesting) {
-        itemsIndexed(state.suggestions, key = { index, term -> "${index}_$term" }) { _, term ->
-            SuggestionRow(term) {
-                state.clearEditing()
-                onSelectKeyword(term)
+        itemsIndexed(
+            state.suggestions,
+            key = { index, entry ->
+                when (entry) {
+                    is SearchSuggestEntry.Keyword -> "kw_${index}_${entry.term}"
+                    is SearchSuggestEntry.Account -> "user_${entry.user.id}"
+                }
+            },
+        ) { _, entry ->
+            when (entry) {
+                is SearchSuggestEntry.Keyword -> SuggestionRow(entry.term) {
+                    state.clearEditing()
+                    onSelectKeyword(entry.term)
+                }
+                is SearchSuggestEntry.Account -> SuggestedUserRow(entry.user) {
+                    state.clearEditing()
+                    onSelectUser(entry.user)
+                }
             }
         }
         return
@@ -371,6 +395,48 @@ fun SuggestionRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+/** 搜索联想第 5–7 位的推荐大V/官方号行：头像+认证标、昵称、会员标与粉丝数，点击直达主页。 */
+@Composable
+private fun SuggestedUserRow(
+    user: User,
+    horizontalPadding: Dp = searchHorizontalPadding(),
+    onClick: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = horizontalPadding, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Avatar(user.avatar, 28.dp, verifiedKind = user.verifiedKind)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = user.name,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = scheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (user.membership != Membership.None) {
+            Spacer(Modifier.width(5.dp))
+            MemberBadge(user.membership, compact = true, rank = user.mbrank)
+        }
+        if (user.followers > 0) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "粉丝: ${fmtCount(user.followers)}",
+                fontSize = 12.sp,
+                color = scheme.onSurfaceSecondary,
+                maxLines = 1,
+            )
+        }
     }
 }
 

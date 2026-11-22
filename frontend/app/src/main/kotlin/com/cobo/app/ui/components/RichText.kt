@@ -43,10 +43,28 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 
 private const val SuperTopicAlt = "◆"
 private const val VideoGlyph = "▶"
+private const val ImageGlyph = "[图]"
+private const val WeiboGlyph = "[博]"
 
-private enum class LinkGlyph {
+internal enum class LinkGlyph {
     SuperTopic,
     Video,
+    Image,
+    Weibo,
+}
+
+private class LinkGlyphSpec(
+    val tag: String,
+    val alt: String,
+    val icon: ImageVector,
+    val yOffset: Dp,
+)
+
+private fun glyphSpec(glyph: LinkGlyph): LinkGlyphSpec = when (glyph) {
+    LinkGlyph.SuperTopic -> LinkGlyphSpec("st", SuperTopicAlt, CoboIcons.SuperTopic, 0.dp)
+    LinkGlyph.Video -> LinkGlyphSpec("vid", VideoGlyph, CoboIcons.VideoCamera, (-0.5).dp)
+    LinkGlyph.Image -> LinkGlyphSpec("img", ImageGlyph, CoboIcons.Image, (-0.5).dp)
+    LinkGlyph.Weibo -> LinkGlyphSpec("wb", WeiboGlyph, CoboIcons.Weibo, (-0.5).dp)
 }
 
 /**
@@ -55,9 +73,11 @@ private enum class LinkGlyph {
  * - 超话: `https://m.weibo.cn/p/index?extparam=英超&containerid=1008086c62...`、`sinaweibo://pageinfo?...`
  *   以及 `m.weibo.cn/p/index?...`。普通话题链接走 `m.weibo.cn/search`，不加标记（跟微博一致）。
  * - 视频: `https://video.weibo.com/show?fid=...`、`m.weibo.cn/s/video/index?...`、`sinaweibo://video/...`。
+ * - 查看图片 / 微博正文: 链接文案为「查看图片」或地址指向 `photo.weibo.com`，以及链接文案为「微博正文」。
  */
-private fun glyphFor(url: String): LinkGlyph? {
+internal fun glyphFor(url: String, label: String): LinkGlyph? {
     val lower = url.lowercase()
+    val trimmed = label.trim()
     return when {
         lower.contains("100808") ||
             lower.contains("pageinfo") ||
@@ -69,6 +89,11 @@ private fun glyphFor(url: String): LinkGlyph? {
             lower.contains("video/index?") ||
             lower.startsWith("sinaweibo://video") ||
             lower.startsWith("intent://gotovideo") -> LinkGlyph.Video
+
+        trimmed == "查看图片" ||
+            lower.contains("photo.weibo.com") -> LinkGlyph.Image
+
+        trimmed == "微博正文" -> LinkGlyph.Weibo
 
         else -> null
     }
@@ -126,7 +151,7 @@ private fun parseWeiboContent(html: String): ParsedWeiboContent {
             .mapNotNull { span ->
                 val start = adjust(spanned.getSpanStart(span).coerceAtLeast(0))
                 val end = adjust(spanned.getSpanEnd(span).coerceAtMost(raw.length))
-                if (start >= end) null else ParsedLink(start, end, span.url, glyphFor(span.url))
+                if (start >= end) null else ParsedLink(start, end, span.url, glyphFor(span.url, plain.substring(start, end)))
             }
             .sortedBy { it.start }
         ParsedWeiboContent(plain, links)
@@ -189,42 +214,34 @@ private fun appendParsedWeibo(
             LinkAnnotation.Url(url = link.url, styles = styles)
         }
 
-        when (link.glyph) {
-            LinkGlyph.SuperTopic, LinkGlyph.Video -> {
-                val isSuperTopic = link.glyph == LinkGlyph.SuperTopic
-                val altText = if (isSuperTopic) SuperTopicAlt else VideoGlyph
-                val iconVector = if (isSuperTopic) CoboIcons.SuperTopic else CoboIcons.VideoCamera
-                val prefixTag = if (isSuperTopic) "st" else "vid"
-                // 图标作为独立 inline content 放在链接文本前，icon 自己接点击、文本接 addLink，
-                // 避免把占位符和文字塞进同一段 addLink 导致占位符挤偏命中范围。
-                if (inlineContent != null) {
-                    val id = "${inlineIdPrefix}${prefixTag}_${inlineIndex++}"
-                    builder.appendInlineContent(id, altText)
-                    inlineContent[id] = linkPrefixInlineContent(
-                        icon = iconVector,
-                        url = link.url,
-                        linkColor = linkColor,
-                        // 摄影机纵向上下对称，-0.5dp 刚好与文字中线重合；超话上宽下尖、视觉重心偏上，不额外上移。
-                        yOffset = if (isSuperTopic) 0.dp else (-0.5).dp,
-                        onLink = onLink,
-                    )
-                } else {
-                    val glyphStart = builder.length
-                    builder.append(altText)
-                    if (linkColor != null) {
-                        builder.addStyle(SpanStyle(color = linkColor), glyphStart, builder.length)
-                    }
+        val spec = link.glyph?.let { glyphSpec(it) }
+        if (spec != null) {
+            // 图标作为独立 inline content 放在链接文本前，icon 自己接点击、文本接 addLink，
+            // 避免把占位符和文字塞进同一段 addLink 导致占位符挤偏命中范围。
+            if (inlineContent != null) {
+                val id = "${inlineIdPrefix}${spec.tag}_${inlineIndex++}"
+                builder.appendInlineContent(id, spec.alt)
+                inlineContent[id] = linkPrefixInlineContent(
+                    icon = spec.icon,
+                    url = link.url,
+                    linkColor = linkColor,
+                    yOffset = spec.yOffset,
+                    onLink = onLink,
+                )
+            } else {
+                val glyphStart = builder.length
+                builder.append(spec.alt)
+                if (linkColor != null) {
+                    builder.addStyle(SpanStyle(color = linkColor), glyphStart, builder.length)
                 }
-                val textStart = builder.length
-                builder.append(plain.substring(link.start, link.end))
-                builder.addLink(annotation, textStart, builder.length)
             }
-
-            null -> {
-                val start = builder.length
-                builder.append(plain.substring(link.start, link.end))
-                builder.addLink(annotation, start, builder.length)
-            }
+            val textStart = builder.length
+            builder.append(plain.substring(link.start, link.end))
+            builder.addLink(annotation, textStart, builder.length)
+        } else {
+            val start = builder.length
+            builder.append(plain.substring(link.start, link.end))
+            builder.addLink(annotation, start, builder.length)
         }
         cursor = link.end
     }

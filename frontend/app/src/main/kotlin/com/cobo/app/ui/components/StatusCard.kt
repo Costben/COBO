@@ -65,6 +65,7 @@ import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.StatusVisibility
 import com.cobo.app.data.User
+import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.formatWeiboTime
@@ -290,6 +291,7 @@ fun StatusHeader(
         Avatar(
             url = user?.avatar,
             size = if (compact) 38.dp else 42.dp,
+            verifiedKind = user?.verifiedKind ?: VerifiedKind.None,
             modifier = Modifier.clickable { user?.let(onUser) },
         )
         Spacer(Modifier.width(10.dp))
@@ -318,16 +320,12 @@ fun StatusHeader(
                     val membership = user?.membership ?: Membership.None
                     if (membership != Membership.None) {
                         Spacer(Modifier.width(4.dp))
-                        MemberBadge(membership, compact = true)
+                        MemberBadge(membership, compact = true, rank = user?.mbrank ?: 0)
                     }
                     val tag = FollowTags[user?.id]
                     if (tag != null) {
                         Spacer(Modifier.width(4.dp))
                         FollowTagBadge(tag, compact = true)
-                    }
-                    if (user?.verified == true) {
-                        Spacer(Modifier.width(4.dp))
-                        VerifiedBadge()
                     }
                 }
                 if (showMore && (onToggleFavorite != null || onDelete != null)) {
@@ -497,11 +495,10 @@ fun StatusMedia(
     if (video != null && video.url.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
         VideoCard(video, compact, onVideo)
-        return
     }
     if (status.pics.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
-        ImageGrid(status.pics, compact, onImage)
+        ImageGrid(status.pics, compact, onImage, onVideo)
     }
     val bigPic = status.bigPic
     if (bigPic != null && bigPic.url.isNotBlank()) {
@@ -560,9 +557,11 @@ fun ImageGrid(
     pics: List<Pic>,
     compact: Boolean,
     onImage: (List<Pic>, Int) -> Unit,
+    onVideo: (VideoInfo) -> Unit = {},
 ) {
     val urls = pics.map { it.large }
-    // 长按任意一张缩略图就能弹出「保存原图 / 一键保存原图」，菜单由根节点统一承载。
+    val imageUrls = remember(pics) { pics.filterNot { it.isVideo }.map { it.large } }
+    // 长按任意一张图片缩略图就能弹出「保存原图 / 一键保存原图」，视频条目不走图片保存。
     val saver = LocalImageSaver.current
     val origins = LocalImageOrigins.current
     if (pics.size == 1) {
@@ -584,8 +583,18 @@ fun ImageGrid(
                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                 .preciseClickAnchor(precise)
                 .combinedClickable(
-                    onClick = { onImage(pics, 0) },
-                    onLongClick = { saver?.show(urls, 0, precise) },
+                    onClick = {
+                        if (pic.isVideo) {
+                            onVideo(VideoInfo(pic.videoTitle, pic.large.ifBlank { pic.thumb }, pic.videoUrl))
+                        } else {
+                            onImage(pics, 0)
+                        }
+                    },
+                    onLongClick = if (!pic.isVideo && imageUrls.isNotEmpty()) {
+                        { saver?.show(imageUrls, 0, precise) }
+                    } else {
+                        null
+                    },
                 ),
         ) {
             AsyncImage(
@@ -595,7 +604,18 @@ fun ImageGrid(
                 onSuccess = { state -> origins.putCacheKey(urls[0], state.result.memoryCacheKey) },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (pic.isLive) LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
+            when {
+                pic.isVideo -> {
+                    GridPlayBadge(46.dp, 26.dp, Modifier.align(Alignment.Center))
+                    if (pic.durationSec > 0) {
+                        VideoDurationBadge(
+                            seconds = pic.durationSec,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(SingleBadgeInset),
+                        )
+                    }
+                }
+                pic.isLive -> LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
+            }
         }
         return
     }
@@ -625,8 +645,21 @@ fun ImageGrid(
                                 .background(COUITheme.colorScheme.surfaceContainerHigh)
                                 .preciseClickAnchor(precise)
                                 .combinedClickable(
-                                    onClick = { onImage(pics, index) },
-                                    onLongClick = { saver?.show(urls, index, precise) },
+                                    onClick = {
+                                        if (pic.isVideo) {
+                                            onVideo(VideoInfo(pic.videoTitle, pic.large.ifBlank { pic.thumb }, pic.videoUrl))
+                                        } else {
+                                            onImage(pics, index)
+                                        }
+                                    },
+                                    onLongClick = if (!pic.isVideo && imageUrls.isNotEmpty()) {
+                                        {
+                                            val saveIdx = pics.take(index).count { !it.isVideo }
+                                            saver?.show(imageUrls, saveIdx, precise)
+                                        }
+                                    } else {
+                                        null
+                                    },
                                 ),
                         ) {
                             AsyncImage(
@@ -636,7 +669,18 @@ fun ImageGrid(
                                 onSuccess = { state -> origins.putCacheKey(urls[index], state.result.memoryCacheKey) },
                                 modifier = Modifier.fillMaxSize(),
                             )
-                            if (pic.isLive) LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
+                            when {
+                                pic.isVideo -> {
+                                    GridPlayBadge(34.dp, 18.dp, Modifier.align(Alignment.Center))
+                                    if (pic.durationSec > 0) {
+                                        VideoDurationBadge(
+                                            seconds = pic.durationSec,
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                                        )
+                                    }
+                                }
+                                pic.isLive -> LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
+                            }
                         }
                     } else {
                         Spacer(Modifier.weight(1f))
@@ -645,6 +689,49 @@ fun ImageGrid(
             }
         }
     }
+}
+
+@Composable
+private fun GridPlayBadge(
+    size: androidx.compose.ui.unit.Dp,
+    iconSize: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(COUIIcons.Play, "播放视频", Modifier.size(iconSize), tint = Color.White)
+    }
+}
+
+internal fun formatVideoDuration(seconds: Int): String {
+    val s = seconds.coerceAtLeast(0)
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) {
+        "%d:%02d:%02d".format(h, m, sec)
+    } else {
+        "%d:%02d".format(m, sec)
+    }
+}
+
+@Composable
+private fun VideoDurationBadge(seconds: Int, modifier: Modifier = Modifier) {
+    Text(
+        text = formatVideoDuration(seconds),
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.58f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }
 
 /** 多图格子里、单张大图上，实况标记各自离左下角的距离。 */

@@ -8,6 +8,7 @@ package com.cobo.app.screen
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
@@ -49,6 +50,8 @@ import com.cobo.app.ui.components.UserRow
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.resolveWeiboLink
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.ChipTabData
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
@@ -447,14 +450,15 @@ fun LazyListScope.searchResultsItems(
                     }
                 }
             } else {
-                itemsIndexed(state.weibo.items, key = { _, s -> "weibo_${s.id}" }) { index, status ->
+                itemsIndexed(state.weibo.items, key = { _, s -> "weibo_${s.id}" }) { idx, status ->
                     val origin = rememberExpandOrigin()
                     Box(Modifier.padding(horizontal = 12.dp)) {
                         StatusCard(
                             status = status,
                             modifier = Modifier
                                 .expandOrigin(origin)
-                                .testTag("search_card_$index"),
+                                .testTag("search_card_$idx"),
+                            keepFrame = App.settings.feedCardFrame,
                             onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
                             onDeleted = { state.weibo.items.removeAll { it.id == status.id } },
                             onOpenQuoted = { quoted, quotedOrigin ->
@@ -467,11 +471,15 @@ fun LazyListScope.searchResultsItems(
                                 scope.launch {
                                     if (!App.confirmLike(status.liked)) return@launch
                                     runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
-                                        state.weibo.items[index] = status.copy(
-                                            liked = !status.liked,
-                                            attitudes = (status.attitudes + if (status.liked) -1 else 1)
-                                                .coerceAtLeast(0),
-                                        )
+                                        val realIdx = state.weibo.items.indexOfFirst { it.id == status.id }
+                                        if (realIdx >= 0) {
+                                            val cur = state.weibo.items[realIdx]
+                                            state.weibo.items[realIdx] = cur.copy(
+                                                liked = !cur.liked,
+                                                attitudes = (cur.attitudes + if (cur.liked) -1 else 1)
+                                                    .coerceAtLeast(0),
+                                            )
+                                        }
                                     }
                                 }
                             },

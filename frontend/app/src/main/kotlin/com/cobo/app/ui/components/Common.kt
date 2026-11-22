@@ -1,5 +1,6 @@
 package com.cobo.app.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -36,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.data.Membership
+import com.cobo.app.data.VerifiedKind
 import io.github.suqi8.coui.kmp.basic.BasicComponentDefaults
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
@@ -53,74 +59,134 @@ import io.github.suqi8.coui.kmp.icon.extended.Back
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
 @Composable
-fun Avatar(url: String?, size: Dp, modifier: Modifier = Modifier) {
+fun Avatar(
+    url: String?,
+    size: Dp,
+    modifier: Modifier = Modifier,
+    verifiedKind: VerifiedKind = VerifiedKind.None,
+) {
     val scheme = COUITheme.colorScheme
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(scheme.surfaceContainerHigh),
-    ) {
-        if (!url.isNullOrBlank()) {
-            AsyncImage(
-                model = url,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+    Box(modifier = modifier.size(size)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(scheme.surfaceContainerHigh),
+        ) {
+            if (!url.isNullOrBlank()) {
+                AsyncImage(
+                    model = url,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        if (verifiedKind != VerifiedKind.None) {
+            val badgeSize = (size.value * 0.36f).coerceIn(10f, 20f).dp
+            VerifiedBadge(
+                kind = verifiedKind,
+                size = badgeSize,
+                modifier = Modifier.align(Alignment.BottomEnd),
             )
         }
     }
 }
 
-/** 昵称后面的认证勾。搜索结果的用户行和信息流共用同一个尺寸比例。 */
+private val VerifiedGoldBg = Color(0xFFFFA000)
+private val VerifiedBlueBg = Color(0xFF2B90FF)
+
+/** 微博蓝V / 金V 圆形认证角标：外圈留一圈浅色描边与头像隔开，内绘白色居中 V 字。 */
 @Composable
-fun VerifiedBadge(modifier: Modifier = Modifier, size: Dp = 14.dp) {
+fun VerifiedBadge(
+    modifier: Modifier = Modifier,
+    size: Dp = 14.dp,
+    kind: VerifiedKind = VerifiedKind.Gold,
+) {
+    val showVerified = runCatching { com.cobo.app.App.settings.showVerifiedBadge }.getOrDefault(true)
+    if (kind == VerifiedKind.None || !showVerified) return
     val scheme = COUITheme.colorScheme
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(scheme.primary),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("✓", fontSize = (size.value * 0.64f).sp, color = scheme.onPrimary)
+    val fill = if (kind == VerifiedKind.Blue) VerifiedBlueBg else VerifiedGoldBg
+    val ringColor = scheme.surfaceContainer
+    Canvas(modifier = modifier.size(size)) {
+        val radius = this.size.minDimension / 2f
+        drawCircle(color = ringColor, radius = radius)
+        val strokeRing = (this.size.minDimension * 0.08f).coerceAtLeast(1.dp.toPx())
+        drawCircle(color = fill, radius = (radius - strokeRing).coerceAtLeast(1f))
+        val w = this.size.width
+        val h = this.size.height
+        val vPath = Path().apply {
+            moveTo(w * 0.31f, h * 0.34f)
+            lineTo(w * 0.50f, h * 0.70f)
+            lineTo(w * 0.69f, h * 0.34f)
+        }
+        drawPath(
+            path = vPath,
+            color = Color.White,
+            style = Stroke(
+                width = (this.size.minDimension * 0.145f).coerceAtLeast(1.3.dp.toPx()),
+                cap = StrokeCap.Round,
+                join = StrokeJoin.Round,
+            ),
+        )
     }
 }
 
-/** 微博会员的红标：VIP / SVIP 两种，和微博客户端的两种标识一一对应。 */
+internal val CompactBadgeHeight = 14.dp
+internal val RegularBadgeHeight = 16.dp
+
+private data class MemberBadgeStyle(
+    val background: Color,
+    val content: Color,
+    val tag: String,
+    val prefix: String,
+)
+
+/** 微博会员标识：VIP / SVIP / VVIP，并附上实际等级数字（如 SVIP10、VVIP2、VIP3）。 */
 @Composable
 fun MemberBadge(
     membership: Membership,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    rank: Int = 0,
+    height: Dp = if (compact) CompactBadgeHeight else RegularBadgeHeight,
 ) {
-    if (membership == Membership.None) return
-    val svip = membership == Membership.Svip
+    val showVip = runCatching { com.cobo.app.App.settings.showVipLevel }.getOrDefault(true)
+    if (!showVip) return
+    val style = when (membership) {
+        Membership.None -> return
+        Membership.Vip -> MemberBadgeStyle(MemberVipRed, Color.White, "vip_badge_vip", "VIP")
+        Membership.Svip -> MemberBadgeStyle(MemberSvipRed, Color.White, "vip_badge_svip", "SVIP")
+        Membership.Vvip -> MemberBadgeStyle(MemberVvipBg, MemberVvipGold, "vip_badge_vvip", "VVIP")
+    }
+    val text = if (rank > 0) "${style.prefix}$rank" else style.prefix
     val shape = RoundedCornerShape(if (compact) 4.dp else 5.dp)
     Box(
         modifier = modifier
-            .height(if (compact) 15.dp else 16.dp)
+            .height(height)
             .clip(shape)
-            .background(if (svip) MemberSvipRed else MemberVipRed)
+            .background(style.background)
             .padding(horizontal = if (compact) 4.dp else 5.dp)
-            .testTag(if (svip) "vip_badge_svip" else "vip_badge_vip"),
+            .testTag(style.tag),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = if (svip) "SVIP" else "VIP",
+            text = text,
             fontSize = if (compact) 8.sp else 9.sp,
             lineHeight = if (compact) 8.sp else 9.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White,
+            color = style.content,
             maxLines = 1,
             softWrap = false,
         )
     }
 }
 
-/** 微博会员的品牌红；超级会员用更深的一档，两者并排也能一眼分开。 */
+/** 微博会员的品牌红；超级会员用更深的一档，VVIP 用黑金，三档并排一眼分开。 */
 private val MemberVipRed = Color(0xFFE6162D)
 private val MemberSvipRed = Color(0xFFC4000B)
+private val MemberVvipBg = Color(0xFF231F20)
+private val MemberVvipGold = Color(0xFFF5D17A)
 
 @Composable
 fun LoadingState(modifier: Modifier = Modifier) {

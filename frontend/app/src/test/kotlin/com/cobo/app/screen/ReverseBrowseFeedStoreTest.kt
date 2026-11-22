@@ -37,9 +37,10 @@ class ReverseBrowseFeedStoreTest {
 
         assertEquals(listOf("12", "11", "10", "9", "8"), store.items.map { it.id })
         assertTrue(store.gaps.isEmpty())
+        assertEquals("10", store.lastReadBeforeStatusId)
         assertEquals("bottom_7", store.sinceId)
         assertEquals("倒序增量刷新不该触发回顶 generation", initialGen, store.generation)
-        assertEquals(listOf("12", "11", "10", "9", "8"), store.entryKeys())
+        assertEquals(listOf("12", "11", "read_marker:10", "10", "9", "8"), store.entryKeys())
         assertEquals(PrependAnchor("9", 120), controller.restoredPrepend)
     }
 
@@ -132,11 +133,12 @@ class ReverseBrowseFeedStoreTest {
             store.entryKeys(),
         )
 
-        // 第二次补拉接上 10：插入 12 并移除断点卡片
+        // 第二次补拉接上 10：插入 12 并移除断点卡片，原边界转为「上次阅读到这里」标记
         store.loadGap(gap.id)
         assertTrue(store.gaps.isEmpty())
+        assertEquals("10", store.lastReadBeforeStatusId)
         assertEquals(
-            listOf("50", "49", "40", "39", "30", "29", "20", "19", "12", "10", "9"),
+            listOf("50", "49", "40", "39", "30", "29", "20", "19", "12", "read_marker:10", "10", "9"),
             store.entryKeys(),
         )
         assertEquals("bottom_8", store.sinceId)
@@ -255,6 +257,45 @@ class ReverseBrowseFeedStoreTest {
         store.loadGap(gapId)
         assertTrue("游标停滞时必须自动消除断点，避免死循环", store.gaps.isEmpty())
         assertEquals(listOf("30", "25", "22", "21", "10"), store.items.map { it.id })
+    }
+
+    @Test
+    fun normalRefreshMarksPreviousHeadAndSurvivesZeroNewRefresh() = runBlocking {
+        var round = 0
+        val store = FeedStore(
+            key = "friends",
+            supportsReverseBrowse = true,
+            reverseBrowseEnabled = { false },
+        ) { _, _ ->
+            when (round++) {
+                0 -> FeedPage(listOf(status("10"), status("9"), status("8")), sinceId = "c_7")
+                1 -> FeedPage(listOf(status("12"), status("11"), status("10"), status("9")), sinceId = "c_8")
+                2 -> FeedPage(listOf(status("12"), status("11"), status("10"), status("9")), sinceId = "c_8")
+                else -> FeedPage(listOf(status("20"), status("19")), sinceId = "c_18")
+            }
+        }
+
+        store.loadInitial()
+        assertNull(store.lastReadBeforeStatusId)
+
+        // 刷出 2 条新微博：10 退到第 3 位，在它前面挂「上次阅读到这里」
+        store.refresh()
+        assertEquals("10", store.lastReadBeforeStatusId)
+        assertEquals(listOf("12", "11", "read_marker:10", "10", "9"), store.entryKeys())
+
+        // 再刷一次没有新微博：标记保留
+        store.refresh()
+        assertEquals("10", store.lastReadBeforeStatusId)
+
+        // 删除被标记的那条微博：标记顺延到下一条存活微博 9
+        store.removeDeleted(mapOf("10" to true))
+        assertEquals("9", store.lastReadBeforeStatusId)
+        assertEquals(listOf("12", "11", "read_marker:9", "9"), store.entryKeys())
+
+        // 刷出跨一整页的新微博（旧头部完全不在首页内）：清空标记
+        store.refresh()
+        assertNull(store.lastReadBeforeStatusId)
+        assertEquals(listOf("20", "19"), store.entryKeys())
     }
 
     private fun status(id: String) = Status(

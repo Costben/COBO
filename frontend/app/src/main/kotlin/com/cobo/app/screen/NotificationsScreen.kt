@@ -48,6 +48,7 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.NotificationItem
 import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Status
+import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
@@ -187,11 +188,15 @@ private class NotificationTabState(private val tab: NotificationTab) {
 }
 
 @Composable
-fun NotificationsScreen(nav: NavState) {
+fun NotificationsScreen(
+    nav: NavState,
+    initialTab: NotificationTab = NotificationTab.AtWeibo,
+) {
     val scope = rememberCoroutineScope()
     val tabs = remember { NotificationTab.entries }
     val chipTabs = remember(tabs) { tabs.map { ChipTabData(label = it.label) } }
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
+    val initialPage = remember(initialTab, tabs) { tabs.indexOf(initialTab).coerceAtLeast(0) }
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { tabs.size })
     val states = remember { mutableStateMapOf<NotificationTab, NotificationTabState>() }
     val listStates = remember { mutableStateMapOf<NotificationTab, LazyListState>() }
     val backdrop = rememberLayerBackdrop()
@@ -455,6 +460,7 @@ private fun NotificationRow(
             Avatar(
                 url = user?.avatar,
                 size = 38.dp,
+                verifiedKind = user?.verifiedKind ?: VerifiedKind.None,
                 modifier = Modifier.clickable(enabled = !user?.id.isNullOrBlank()) {
                     onUser(user?.id.orEmpty())
                 },
@@ -477,7 +483,7 @@ private fun NotificationRow(
                     val membership = user?.membership ?: Membership.None
                     if (membership != Membership.None) {
                         Spacer(Modifier.width(4.dp))
-                        MemberBadge(membership, compact = true)
+                        MemberBadge(membership, compact = true, rank = user?.mbrank ?: 0)
                     }
                     Spacer(Modifier.weight(1f))
                     Text(

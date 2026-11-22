@@ -33,6 +33,7 @@ class FeedSnapshotJsonTest {
                 mbtype = 12,
                 mbrank = 5,
                 svip = true,
+                vvip = true,
             ),
             pics = listOf(
                 Pic(
@@ -82,7 +83,8 @@ class FeedSnapshotJsonTest {
         val restored = statusFromSnapshot(statusToSnapshot(original))
 
         assertEquals(original, restored)
-        assertEquals(Membership.Svip, restored?.user?.membership)
+        assertEquals(Membership.Vvip, restored?.user?.membership)
+        assertEquals(5, restored?.user?.mbrank)
         assertTrue(restored?.pics?.get(1)?.isLive == true)
         assertTrue(restored?.video?.url == original.video?.url)
         assertEquals(original.bigPic, restored?.bigPic)

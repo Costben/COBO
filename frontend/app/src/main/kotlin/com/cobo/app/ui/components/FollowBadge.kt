@@ -37,20 +37,22 @@ fun FollowTagBadge(tag: FollowTag, modifier: Modifier = Modifier, compact: Boole
     val shape = RoundedCornerShape(if (compact) 4.dp else 5.dp)
     Box(
         modifier = modifier
-            .height(if (compact) 15.dp else 16.dp)
+            .height(if (compact) CompactBadgeHeight else RegularBadgeHeight)
             .clip(shape)
             .background(colors.background)
-            .border(1.dp, colors.border, shape)
+            .border(if (compact) 0.75.dp else 1.dp, colors.border, shape)
             .padding(horizontal = if (compact) 4.dp else 5.dp)
             .testTag("follow_badge_${tag.key}"),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             tag.label,
-            fontSize = if (compact) 9.sp else 10.sp,
-            lineHeight = if (compact) 9.sp else 10.sp,
+            fontSize = if (compact) 8.sp else 9.sp,
+            lineHeight = if (compact) 8.sp else 9.sp,
             fontWeight = FontWeight.Medium,
             color = colors.content,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

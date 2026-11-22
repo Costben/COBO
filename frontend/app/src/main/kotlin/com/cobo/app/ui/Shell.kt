@@ -127,12 +127,16 @@ import com.cobo.app.screen.FeedStore
 import com.cobo.app.screen.LocalHome
 import com.cobo.app.screen.LocalMessagesPlaceholder
 import com.cobo.app.screen.MessagesScreen
+import com.cobo.app.screen.MessagesTabState
 import com.cobo.app.screen.ProfileContent
+import com.cobo.app.screen.ProfileHubContent
+import com.cobo.app.screen.ProfileTabState
 import com.cobo.app.screen.SearchDiscoverState
 import com.cobo.app.screen.SearchFilterMenu
 import com.cobo.app.screen.SearchResultsState
 import com.cobo.app.screen.SearchTab
 import com.cobo.app.screen.TimelineScreen
+import com.cobo.app.screen.TimelineScrollHolder
 import com.cobo.app.screen.dismissHistoryEditingOnTap
 import com.cobo.app.screen.rememberCoverContrast
 import com.cobo.app.screen.rememberSearchDiscoverState
@@ -193,7 +197,6 @@ import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
-import io.github.suqi8.coui.kmp.utils.rememberGalleryDensity
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
@@ -204,6 +207,7 @@ import kotlinx.coroutines.launch
 
 internal sealed class FeedTabSpec {
     abstract val key: String
+    abstract val position: String
     abstract val label: String
     abstract val tag: String
     abstract val emptyText: String
@@ -212,7 +216,7 @@ internal sealed class FeedTabSpec {
     /** 只有中间栏带「更多」菜单：它列的就是「微博中间栏内容」那份选项。 */
     abstract val isCenter: Boolean
 
-    data class Custom(val selection: FeedTabSelection, val position: String, val guest: Boolean) : FeedTabSpec() {
+    data class Custom(val selection: FeedTabSelection, override val position: String, val guest: Boolean) : FeedTabSpec() {
         override val key: String get() = "${position}_${selection.key}"
         override val label: String get() = selection.label
         override val tag: String get() = if (selection.isGroup) {
@@ -240,7 +244,7 @@ internal sealed class FeedTabSpec {
         }
     }
 
-    data class Follow(val filter: FeedFilter, val guest: Boolean, val position: String = "center") : FeedTabSpec() {
+    data class Follow(val filter: FeedFilter, val guest: Boolean, override val position: String = "center") : FeedTabSpec() {
         override val key: String get() = if (position == "center") "follow" else "${position}_follow"
         override val label: String get() = if (guest) "本地关注" else filter.label
         override val tag: String get() = "feed_tab_follow"
@@ -428,8 +432,9 @@ fun MainShell(nav: NavState) {
     }
 
     val feedHasTabs = feedTabs.size > 1
-    val galleryDensity = rememberGalleryDensity()
-    val barTitleHeightPx = with(galleryDensity) { FeedTitleRowHeight.toPx() }
+    val feedSlotKeys = feedTabs.map { it.position }
+    val barDensity = rememberBarDensity()
+    val barTitleHeightPx = with(barDensity) { FeedTitleRowHeight.toPx() }
     // The top bar floats over the lists; the first row starts below it and later rows scroll under.
     // 栏钉在自己的密度上，页面按系统密度排版，所以这里要按像素换算回当前密度。
     // 消息 and 我 wear the feed's title row alone, so their bar is exactly one row tall.
@@ -442,13 +447,16 @@ fun MainShell(nav: NavState) {
         topBarHeight
     }
     var feedCollapse by remember { mutableFloatStateOf(0f) }
+    val timelineScrollHolder = remember { TimelineScrollHolder() }
+    val messagesState = remember { MessagesTabState() }
+    val profileTabState = remember { ProfileTabState() }
     val profileListState = rememberLazyListState()
     var profileActiveCover by remember { mutableStateOf<String?>(null) }
-    val profileScrolledPast by remember(profileListState, galleryDensity) {
+    val profileScrolledPast by remember(profileListState, barDensity) {
         derivedStateOf {
             val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
             else profileListState.firstVisibleItemScrollOffset.toFloat()
-            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, galleryDensity) >= 0.45f
+            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, barDensity) >= 0.45f
         }
     }
     val isTopRoute = rememberIsTopRoute(nav)
@@ -664,16 +672,28 @@ fun MainShell(nav: NavState) {
                                     recommendStore = recommendStore,
                                     topInset = feedTopBarHeight,
                                     onScrollOffset = { feedCollapse = it },
+                                    slotKeys = feedSlotKeys,
+                                    scrollHolder = timelineScrollHolder,
                                 )
                                 1 -> if (guest) {
                                     LocalMessagesPlaceholder(nav, topBarHeight)
                                 } else {
-                                    MessagesScreen(nav, topBarHeight)
+                                    MessagesScreen(nav, topBarHeight, state = messagesState)
                                 }
-                                else -> if (guest) LocalHome(
+                                else -> if (!App.settings.profileShowStatuses) ProfileHubContent(
+                                    nav = nav,
+                                    guest = guest,
+                                    modifier = Modifier.fillMaxSize(),
+                                    topInset = topBarHeight,
+                                    extraBottom = FloatingBarContentGap,
+                                    listState = profileListState,
+                                    state = profileTabState,
+                                    onActiveCover = { profileActiveCover = it },
+                                ) else if (guest) LocalHome(
                                     nav = nav,
                                     topInset = topBarHeight,
                                     extraBottom = FloatingBarContentGap,
+                                    listState = profileListState,
                                 ) else ProfileContent(
                                     nav = nav,
                                     uid = null,
@@ -681,6 +701,7 @@ fun MainShell(nav: NavState) {
                                     topInset = topBarHeight,
                                     extraBottom = FloatingBarContentGap,
                                     listState = profileListState,
+                                    state = profileTabState,
                                     onActiveCover = { profileActiveCover = it },
                                 )
                             }
@@ -743,7 +764,7 @@ fun MainShell(nav: NavState) {
                         openFeedSearch()
                     }
                     BottomLeftAction.Favorites -> {
-                        nav.push(Route.Container("230267", "收藏"))
+                        nav.push(Route.Favorites)
                     }
                 }
             }
@@ -937,7 +958,7 @@ private suspend fun originalFeed(cursor: String?, force: Boolean): FeedPage {
     return FeedPage(emptyList(), next)
 }
 
-private val FloatingBarContentGap = 50.dp
+private val FloatingBarContentGap = 80.dp
 
 /** Cross-fade length for a bottom-bar tab switch. */
 private const val MainTabFadeMillis = 220
@@ -1210,6 +1231,7 @@ private fun HomeSearchOverlay(
                                 history = history.toList(),
                                 onSelectKeyword = activeSelectKeyword,
                                 onRetryHot = onRetryHot,
+                                onSelectUser = { user -> nav.push(Route.Profile(user.id)) },
                             )
                         } else if (resultsVisible) {
                             searchResultsItems(
@@ -1276,7 +1298,7 @@ private fun MainTitleRow(
                     if (!guest) {
                         SearchBarActionButton(
                             text = "通知",
-                            onClick = { nav.push(Route.Notifications) },
+                            onClick = { nav.push(Route.Notifications()) },
                             modifier = Modifier.testTag("top_notice"),
                         )
                     }

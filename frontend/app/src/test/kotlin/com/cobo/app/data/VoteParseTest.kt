@@ -139,4 +139,29 @@ class VoteParseTest {
         assertTrue(status!!.isVote)
         assertEquals("2026_10794768_-_8ecd76", status.voteId)
     }
+
+    @Test
+    fun pageInfoType23SuperTopicIsNotMisparsedAsVote() {
+        val statusJson = JSONObject(
+            """
+            {
+                "id": "5360117360888599",
+                "mid": "5360117360888599",
+                "text": "💎Bin哥厉害1109",
+                "created_at": "Sun Nov 09 12:00:00 +0800 2026",
+                "page_info": {
+                    "type": "23",
+                    "object_type": "webpage",
+                    "page_id": "100808abcdef123456",
+                    "page_url": "https://m.weibo.cn/p/index?containerid=100808abcdef123456"
+                }
+            }
+            """.trimIndent()
+        )
+
+        val status = Status.from(statusJson)
+        assertNotNull(status)
+        assertFalse(status!!.isVote)
+        assertNull(status.voteId)
+    }
 }

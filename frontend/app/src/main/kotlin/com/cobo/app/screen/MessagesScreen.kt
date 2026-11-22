@@ -15,11 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -56,21 +57,29 @@ import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
-@Composable
-fun MessagesScreen(nav: NavState, topInset: Dp) {
-    val scope = rememberCoroutineScope()
-    val items = remember { mutableStateListOf<MessageItem>() }
-    var page by remember { mutableIntStateOf(1) }
-    var loading by remember { mutableStateOf(false) }
-    var refreshing by remember { mutableStateOf(false) }
-    var end by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-    BindScrollToTop(listState)
-    val pullState = rememberFullPagePullToRefreshState()
+/**
+ * 消息页的列表与滚动状态，提升到主壳里持有，切去「微博」「我」再切回来时保留原位置与已加载内容。
+ */
+@Stable
+class MessagesTabState {
+    val listState = LazyListState()
+    val items = mutableStateListOf<MessageItem>()
+    var page by mutableIntStateOf(1)
+        internal set
+    var loading by mutableStateOf(false)
+        internal set
+    var refreshing by mutableStateOf(false)
+        internal set
+    var end by mutableStateOf(false)
+        internal set
+    var error by mutableStateOf<String?>(null)
+        internal set
+    var loaded by mutableStateOf(false)
+        internal set
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
     suspend fun load(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
@@ -88,6 +97,7 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
             }
             page = nextPage + 1
             if (list.isEmpty()) end = true
+            loaded = true
         } catch (t: Throwable) {
             error = t.message ?: "加载失败"
         } finally {
@@ -95,27 +105,40 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
             refreshing = false
         }
     }
+}
 
-    // 进入消息页静默取最新数据：只换内容，不播放下拉动画。
-    LaunchedEffect(Unit) {
-        load(true, force = true)
+@Composable
+fun MessagesScreen(
+    nav: NavState,
+    topInset: Dp,
+    state: MessagesTabState = remember { MessagesTabState() },
+) {
+    val scope = rememberCoroutineScope()
+    val items = state.items
+    val listState = state.listState
+    BindScrollToTop(listState)
+    val pullState = rememberFullPagePullToRefreshState()
+
+    // 首次进入消息页静默取最新数据：只换内容，不播放下拉动画；切回时保留已读位置。
+    LaunchedEffect(state) {
+        if (!state.loaded) state.load(true, force = true)
     }
     // 底栏刷新键属于用户主动触发，才播放与下拉一致的气泡动画。
-    LaunchedEffect(Unit) {
+    LaunchedEffect(state) {
         App.messagesTopEvents.collect {
-            pullState.startRefresh { scope.launch { load(true, force = true, showRefresh = true) } }
+            pullState.startRefresh { scope.launch { state.load(true, force = true, showRefresh = true) } }
         }
     }
     LaunchedEffect(listState, items.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
-                if (last >= items.size - 2 && items.isNotEmpty() && !end) load(false)
+                if (last >= items.size - 2 && items.isNotEmpty() && !state.end) state.load(false)
             }
     }
 
     FullPagePullToRefresh(
-        isRefreshing = refreshing,
-        onRefresh = { scope.launch { load(true, force = true, showRefresh = true) } },
+        isRefreshing = state.refreshing,
+        onRefresh = { scope.launch { state.load(true, force = true, showRefresh = true) } },
         modifier = Modifier.fillMaxSize(),
         state = pullState,
         contentPadding = PaddingValues(top = topInset),
@@ -125,19 +148,19 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+            modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
             contentPadding = PaddingValues(
                 top = topInset + 14.dp,
-                bottom = 66.dp + navBottomPadding(),
+                bottom = 96.dp + navBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             if (items.isEmpty()) {
                 item {
                     when {
-                        loading || refreshing -> LoadingState()
-                        error != null -> ErrorState(error!!) {
-                            scope.launch { load(true, force = true, showRefresh = true) }
+                        state.loading || state.refreshing -> LoadingState()
+                        state.error != null -> ErrorState(state.error!!) {
+                            scope.launch { state.load(true, force = true, showRefresh = true) }
                         }
                         else -> EmptyState("还没有私信")
                     }
@@ -165,8 +188,8 @@ fun MessagesScreen(nav: NavState, topInset: Dp) {
             }
             if (items.isNotEmpty()) {
                 item {
-                    if (loading) LoadingState()
-                    else if (end) Text(
+                    if (state.loading) LoadingState()
+                    else if (state.end) Text(
                         "没有更多了",
                         fontSize = 12.sp,
                         color = COUITheme.colorScheme.onSurfaceSecondary,

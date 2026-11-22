@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -68,7 +69,12 @@ fun LocalMessagesPlaceholder(nav: NavState, topInset: Dp) {
  * 本地关注的人、浏览历史，以及登录入口。
  */
 @Composable
-fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
+fun LocalHome(
+    nav: NavState,
+    topInset: Dp,
+    extraBottom: Dp,
+    listState: LazyListState = rememberLazyListState(),
+) {
     val scheme = COUITheme.colorScheme
     val uids = FollowTags.uids(FollowTag.Local)
     // 标记表只有 uid，昵称和头像现取；主页接口有缓存，来回切页不会重复打。
@@ -81,7 +87,6 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
         }
     }
 
-    val listState = rememberLazyListState()
     BindScrollToTop(listState)
     LazyColumn(
         state = listState,
@@ -163,7 +168,7 @@ fun LocalHome(nav: NavState, topInset: Dp, extraBottom: Dp) {
                     modifier = Modifier.testTag("local_favorites"),
                     summary = "${App.repo.localFavoriteIds.size} 条收藏",
                     cardListPosition = CardListPosition.Middle,
-                    onClick = { nav.push(Route.Container("230267", "收藏")) },
+                    onClick = { nav.push(Route.Favorites) },
                 )
                 PreferenceDivider()
                 ArrowPreference(

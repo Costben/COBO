@@ -31,8 +31,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
+import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.RelationKind
+import com.cobo.app.screen.SettingsGroup
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.utils.PredictiveBackMotionDefaults
 import kotlinx.coroutines.CoroutineScope
@@ -191,7 +193,7 @@ sealed interface Route {
     data class Relations(val uid: String, val kind: RelationKind) : Route
     data class Publish(val draft: String = "") : Route
     data class Chat(val uid: String = "", val name: String, val gid: String = "") : Route
-    data object Notifications : Route
+    data class Notifications(val initialTab: NotificationTab = NotificationTab.AtWeibo) : Route
     data class Web(val url: String, val title: String) : Route
     data class Container(val cid: String, val title: String) : Route
     data class SuperTopic(val containerId: String, val fallbackUrl: String) : Route
@@ -199,7 +201,10 @@ sealed interface Route {
     data object Drafts : Route
     data object History : Route
     data object Accounts : Route
+    data object Favorites : Route
+    data object MyLikes : Route
     data object Settings : Route
+    data class SettingsDetail(val group: SettingsGroup) : Route
     data object PredictiveBackSettings : Route
     data object About : Route
     data object Changelog : Route

@@ -106,7 +106,7 @@ class UiSmokeTest : UiE2eTest() {
         // 徽标挂在昵称后面，属于卡片正文，会随卡片一起出现。
         val deadline = System.currentTimeMillis() + UI_WAIT
         while (System.currentTimeMillis() < deadline) {
-            if (existsTag("vip_badge_vip", 0) || existsTag("vip_badge_svip", 0)) return
+            if (existsTag("vip_badge_vip", 0) || existsTag("vip_badge_svip", 0) || existsTag("vip_badge_vvip", 0)) return
             Thread.sleep(200)
         }
         throw AssertionError("推荐流里有会员账号，但界面上没有会员徽标\n${dump()}")

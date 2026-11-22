@@ -99,6 +99,30 @@ class FeedSnapshotStoreTest {
     }
 
     @Test
+    fun saveThenLoadPreservesReadMarkerAndIgnoresOrphanedOne() {
+        val items = listOf(status("12"), status("10"), status("5"))
+        store.save(
+            Owner,
+            "friends",
+            items,
+            sinceId = "1",
+            end = false,
+            lastReadBeforeStatusId = "10",
+        )
+        assertEquals("10", store.load(Owner, "friends")?.lastReadBeforeStatusId)
+
+        store.save(
+            Owner,
+            "friends",
+            items,
+            sinceId = "1",
+            end = false,
+            lastReadBeforeStatusId = "999",
+        )
+        assertNull(store.load(Owner, "friends")?.lastReadBeforeStatusId)
+    }
+
+    @Test
     fun saveKeepsAtMostOneFilePerStreamAndAccount() {
         store.save(Owner, "friends", listOf(status("1")), sinceId = null, end = false)
         store.save(Owner, "friends", listOf(status("1"), status("2")), sinceId = null, end = true)
@@ -114,6 +138,35 @@ class FeedSnapshotStoreTest {
         assertEquals("scroll_v2_1000000001_friends", scopedFeedScrollPrefKey("1000000001", "friends"))
         assertEquals("scroll_v2_1000000002_friends", scopedFeedScrollPrefKey("1000000002", "friends"))
         assertEquals("scroll_v2_guest_friends", scopedFeedScrollPrefKey("", "friends"))
+    }
+
+    @Test
+    fun roundTripPreservesMixedMediaVideoPic() {
+        val original = status("m1").copy(
+            pics = listOf(
+                Pic(thumb = "https://img/t1.jpg", large = "https://img/l1.jpg", width = 400, height = 400),
+                Pic(
+                    thumb = "https://img/vcover.jpg",
+                    large = "https://img/vcover.jpg",
+                    width = 720,
+                    height = 1280,
+                    videoUrl = "https://video/v1.mp4",
+                    videoTitle = "clip 1",
+                    durationSec = 78,
+                ),
+            ),
+        )
+
+        store.save(Owner, "home", listOf(original), sinceId = null, end = false)
+        val loaded = store.load(Owner, "home")!!
+        val pics = loaded.items.single().pics
+        assertEquals(2, pics.size)
+        assertEquals(false, pics[0].isVideo)
+        assertEquals(true, pics[1].isVideo)
+        assertEquals("https://video/v1.mp4", pics[1].videoUrl)
+        assertEquals("clip 1", pics[1].videoTitle)
+        assertEquals("https://img/vcover.jpg", pics[1].thumb)
+        assertEquals(78, pics[1].durationSec)
     }
 
     private fun status(id: String) = Status(

@@ -33,7 +33,7 @@ fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifier) {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(user.avatar, 46.dp)
+        Avatar(user.avatar, 46.dp, verifiedKind = user.verifiedKind)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -47,11 +47,7 @@ fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifier) {
                 )
                 if (user.membership != Membership.None) {
                     Spacer(Modifier.width(4.dp))
-                    MemberBadge(user.membership, compact = true)
-                }
-                if (user.verified) {
-                    Spacer(Modifier.width(4.dp))
-                    VerifiedBadge()
+                    MemberBadge(user.membership, compact = true, rank = user.mbrank)
                 }
             }
             if (user.description.isNotBlank()) {

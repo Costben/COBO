@@ -32,6 +32,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -115,6 +116,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp as colorLerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.Shape
@@ -132,6 +135,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -176,15 +180,19 @@ import com.cobo.app.App
 import com.cobo.app.data.Api
 import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.Pic
+import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.ExpandEasing
 import com.cobo.app.ui.ImageOrigins
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalRouteTransition
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.Route
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.openExternalUrl
 import com.cobo.app.ui.ThumbBounds
+import com.cobo.app.ui.unwrapSinaUrl
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.extractIntentFallbackUrl
 import com.cobo.app.ui.components.originalSize
@@ -193,10 +201,14 @@ import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
+import io.github.suqi8.coui.kmp.basic.materialShadowEdge
 import io.github.suqi8.coui.kmp.basic.GlassContainer
+import io.github.suqi8.coui.kmp.basic.IntentSlider
+import io.github.suqi8.coui.kmp.basic.IntentSliderPlaybackState
+import io.github.suqi8.coui.kmp.basic.IntentSliderSize
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
-import io.github.suqi8.coui.kmp.basic.Slider
 import io.github.suqi8.coui.kmp.basic.couiGlassSurface
 import io.github.suqi8.coui.kmp.basic.rememberGlassHighlight
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -535,9 +547,10 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                     .fillMaxSize()
                     .preciseClickAnchor(precise),
             ) {
+                val pagePic = pics[page]
                 ZoomableImage(
                     url = urls[page],
-                    live = pics[page].live,
+                    live = if (pagePic.isVideo) "" else pagePic.live,
                     thumbModel = origins.modelOf(urls[page]),
                     thumbCacheKey = origins.cacheKeyOf(urls[page]),
                     original = original,
@@ -557,7 +570,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                     chromeVisible = chrome && !frame.dismiss.dragging && !frame.dismiss.exiting,
                     onTap = { if (!frame.dismiss.exiting) chrome = !chrome },
                     onLongPress = {
-                        if (!saver.saving && !frame.dismiss.exiting && !frame.dismiss.active) {
+                        if (!pagePic.isVideo && !saver.saving && !frame.dismiss.exiting && !frame.dismiss.active) {
                             menu = true
                             chrome = true
                         }
@@ -575,6 +588,26 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                         )
                     },
                 )
+                if (pagePic.isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .clickable {
+                                nav.push(Route.Video(pagePic.videoUrl, pagePic.videoTitle))
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = COUIIcons.Play,
+                            contentDescription = "播放视频",
+                            modifier = Modifier.size(34.dp),
+                            tint = Color.White,
+                        )
+                    }
+                }
             }
         }
 
@@ -636,40 +669,42 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
-                                .height(BarHeight)
-                                .clickable {
-                                    if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                        original = !original
-                                        saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                    if (currentPic?.isVideo != true) {
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
+                                    .height(BarHeight)
+                                    .clickable {
+                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                            original = !original
+                                            saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                                        }
                                     }
-                                }
-                                .padding(horizontal = 14.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "原图",
-                                color = if (original) COUITheme.colorScheme.primary else ink,
-                                fontSize = 13.sp,
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        ViewerGlyph(
-                            plate = plate,
-                            alpha = plateAlpha,
-                            onClick = {
-                                if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                    saver.saveOne(current)
-                                }
-                            },
-                        ) {
-                            Icon(COUIIcons.Download, "保存原图", Modifier.size(19.dp), tint = ink)
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "原图",
+                                    color = if (original) COUITheme.colorScheme.primary else ink,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            ViewerGlyph(
+                                plate = plate,
+                                alpha = plateAlpha,
+                                onClick = {
+                                    if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                        saver.saveOne(current)
+                                    }
+                                },
+                            ) {
+                                Icon(COUIIcons.Download, "保存原图", Modifier.size(19.dp), tint = ink)
+                            }
                         }
                     }
                 }
@@ -2130,8 +2165,6 @@ internal fun calculateHorizontalScrubTargetMs(
     return (startPosMs + deltaMs).coerceIn(0L, durationMs)
 }
 
-private val SpeedPanel = Color(0xFF2A2A2A).copy(alpha = 0.94f)
-
 private fun speedLabel(value: Float): String = when (value) {
     1f -> "1.0×"
     1.25f -> "1.25×"
@@ -2140,10 +2173,74 @@ private fun speedLabel(value: Float): String = when (value) {
     else -> "3.0×"
 }
 
+/** 与 [HighlightedIconButton] 共用同一套配色、边缘描边与按压缩放的胶囊按钮，用于视频倍速切换。 */
+@Composable
+private fun VideoSpeedPill(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = COUITheme.colorScheme
+    val isDark = scheme.background.luminance() < 0.5f
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val press by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = HighlightedIconButtonDefaults.PressSpring,
+        label = "videoSpeedPress",
+    )
+    val brighten = HighlightedIconButtonDefaults.PressedFillBrighten * press
+    Box(
+        modifier = modifier
+            .height(VideoTopBarButtonHeight)
+            .graphicsLayer {
+                val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .drawBehind {
+                drawRect(
+                    Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0f to colorLerp(HighlightedIconButtonDefaults.fillCenter(isDark), Color.White, brighten)
+                                .copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
+                            HighlightedIconButtonDefaults.FillEdgeStop to colorLerp(
+                                HighlightedIconButtonDefaults.fillEdge(isDark),
+                                Color.White,
+                                brighten,
+                            ).copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
+                        ),
+                        center = center,
+                        radius = size.maxDimension / 2f,
+                    ),
+                )
+            }
+            .materialShadowEdge(stroke = HighlightedIconButtonDefaults.stroke(isDark))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = colorLerp(scheme.onBackground, Color.White, HighlightedIconButtonDefaults.PressedContentBrighten * press),
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 fun VideoScreen(nav: NavState, url: String, title: String) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val browserFallbackUrl = remember(url) { unwrapSinaUrl(url) ?: url }
     var resolved by remember(url) {
         mutableStateOf<ResolvedVideo?>(
             if (isDirectVideoStream(url)) {
@@ -2232,7 +2329,8 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                 }
                 Row(
                     modifier = Modifier
-                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
                         .statusBarsPadding()
                         .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2247,13 +2345,26 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                         fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
                     )
+                    if (browserFallbackUrl.startsWith("http://", true) || browserFallbackUrl.startsWith("https://", true)) {
+                        HighlightedIconButton(
+                            onClick = { openExternalUrl(context, browserFallbackUrl) },
+                            size = VideoTopBarButtonHeight,
+                        ) {
+                            Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
+                        }
+                    }
                 }
             }
         }
 
         is ResolvedVideo.DirectStream -> {
             val effectiveTitle = current.title?.takeIf { it.isNotBlank() } ?: title
+            val externalTarget = when {
+                browserFallbackUrl.startsWith("http://", true) || browserFallbackUrl.startsWith("https://", true) -> browserFallbackUrl
+                else -> current.url
+            }
             DirectVideoPlayer(
                 nav = nav,
                 streamUrl = current.url,
@@ -2262,6 +2373,7 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                 hud = hud,
                 flash = ::flash,
                 onDownload = { startVideoDownload(current.url, current.referer) },
+                onOpenInBrowser = { openExternalUrl(context, externalTarget) },
             )
         }
 
@@ -2273,6 +2385,7 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                 hud = hud,
                 flash = ::flash,
                 onDownload = { detectedUrl -> startVideoDownload(detectedUrl, current.url) },
+                onOpenInBrowser = { targetUrl -> openExternalUrl(context, targetUrl) },
             )
         }
     }
@@ -2287,6 +2400,7 @@ private fun DirectVideoPlayer(
     hud: String,
     flash: (String) -> Unit,
     onDownload: () -> Unit,
+    onOpenInBrowser: () -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -2323,8 +2437,10 @@ private fun DirectVideoPlayer(
 
     var controlsVisible by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
+    var bufferedPositionMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
     var speed by remember { mutableFloatStateOf(1f) }
@@ -2332,7 +2448,9 @@ private fun DirectVideoPlayer(
 
     fun syncPlayerState() {
         isPlaying = player.isPlaying
+        isBuffering = player.playbackState == Player.STATE_BUFFERING
         durationMs = player.duration.coerceAtLeast(0L)
+        bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
         if (!isScrubbing) {
             positionMs = player.currentPosition.coerceAtLeast(0L)
         }
@@ -2608,22 +2726,11 @@ private fun DirectVideoPlayer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
-                HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
-                    Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(6.dp))
                 Box {
-                    Box(
-                        modifier = Modifier
-                            .height(VideoTopBarButtonHeight)
-                            .clip(RoundedCornerShape(VideoTopBarButtonHeight / 2))
-                            .background(SpeedPanel)
-                            .clickable { speedMenu = !speedMenu }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(text = speedLabel(speed), color = Color.White, fontSize = 13.sp)
-                    }
+                    VideoSpeedPill(
+                        text = speedLabel(speed),
+                        onClick = { speedMenu = !speedMenu },
+                    )
                     OverlayListPopup(
                         show = speedMenu,
                         popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
@@ -2648,6 +2755,14 @@ private fun DirectVideoPlayer(
                             }
                         }
                     }
+                }
+                Spacer(Modifier.width(6.dp))
+                HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
+                    Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                HighlightedIconButton(onClick = onOpenInBrowser, size = VideoTopBarButtonHeight) {
+                    Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
             }
         }
@@ -2729,12 +2844,19 @@ private fun DirectVideoPlayer(
                         fontSize = 12.sp,
                         modifier = Modifier.widthIn(min = 44.dp),
                     )
-                    Slider(
+                    val intentState = when {
+                        durationMs <= 0L -> IntentSliderPlaybackState.LoadingInitial
+                        isBuffering -> IntentSliderPlaybackState.LoadingBuffering
+                        isPlaying -> IntentSliderPlaybackState.Playing
+                        else -> IntentSliderPlaybackState.Paused
+                    }
+                    IntentSlider(
                         value = displayPos.coerceIn(0L, effectiveDur).toFloat(),
                         onValueChange = { next ->
                             isScrubbing = true
                             scrubPositionMs = next.roundToLong()
                         },
+                        secondaryValue = bufferedPositionMs.coerceIn(0L, effectiveDur).toFloat(),
                         onValueChangeFinished = {
                             player.seekTo(scrubPositionMs)
                             positionMs = scrubPositionMs
@@ -2742,7 +2864,12 @@ private fun DirectVideoPlayer(
                         },
                         valueRange = 0f..effectiveDur.toFloat(),
                         enabled = durationMs > 0L,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        followSystemTheme = false,
+                        conicLight = true,
+                        showThumb = false,
+                        playbackState = intentState,
+                        size = IntentSliderSize.Default,
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                     )
                     Text(
                         text = formatVideoTime(durationMs),
@@ -2811,6 +2938,7 @@ private fun WebVideoPlayer(
     hud: String,
     flash: (String) -> Unit,
     onDownload: (String) -> Unit,
+    onOpenInBrowser: (String) -> Unit,
 ) {
     var sniffedMp4 by remember(pageUrl) { mutableStateOf<String?>(null) }
     var sniffedM3u8 by remember(pageUrl) { mutableStateOf<String?>(null) }
@@ -2885,6 +3013,18 @@ private fun WebVideoPlayer(
                     },
                 ) {
                     Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                HighlightedIconButton(
+                    size = VideoTopBarButtonHeight,
+                    onClick = {
+                        val liveUrl = webView?.url?.takeIf {
+                            it.startsWith("http://", true) || it.startsWith("https://", true)
+                        } ?: pageUrl
+                        onOpenInBrowser(liveUrl)
+                    },
+                ) {
+                    Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
             }
 

@@ -74,15 +74,18 @@ import com.cobo.app.screen.ContainerScreen
 import com.cobo.app.screen.DetailScreen
 import com.cobo.app.screen.DraftsScreen
 import com.cobo.app.screen.EditHistoryScreen
+import com.cobo.app.screen.FavoritesScreen
 import com.cobo.app.screen.HistoryScreen
 import com.cobo.app.screen.ImageViewerScreen
 import com.cobo.app.screen.LoginScreen
+import com.cobo.app.screen.MyLikesScreen
 import com.cobo.app.screen.NearbyScreen
 import com.cobo.app.screen.NotificationsScreen
 import com.cobo.app.screen.PredictiveBackSettingsScreen
 import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
+import com.cobo.app.screen.SettingsGroupScreen
 import com.cobo.app.screen.SettingsScreen
 import com.cobo.app.screen.SmsLoginScreen
 import com.cobo.app.screen.TopicFeedScreen
@@ -809,14 +812,21 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
         is Route.Publish -> PublishScreen(nav, route.draft)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
-        Route.Notifications -> NotificationsScreen(nav)
+        is Route.Notifications -> NotificationsScreen(nav, route.initialTab)
         is Route.Web -> WebScreen(nav, route.url, route.title)
-        is Route.Container -> ContainerScreen(nav, route.cid, route.title)
+        is Route.Container -> if (route.cid == "230267") {
+            FavoritesScreen(nav)
+        } else {
+            ContainerScreen(nav, route.cid, route.title)
+        }
         is Route.SuperTopic -> SuperTopicScreen(nav, route.containerId, route.fallbackUrl)
         Route.Drafts -> DraftsScreen(nav)
         Route.History -> HistoryScreen(nav)
         Route.Accounts -> AccountsScreen(nav)
+        Route.Favorites -> FavoritesScreen(nav)
+        Route.MyLikes -> MyLikesScreen(nav)
         Route.Settings -> SettingsScreen(nav)
+        is Route.SettingsDetail -> SettingsGroupScreen(nav, route.group)
         Route.PredictiveBackSettings -> PredictiveBackSettingsScreen(nav)
         Route.About -> AboutScreen(nav)
         Route.Changelog -> ChangelogScreen(nav)

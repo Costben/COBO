@@ -1,7 +1,9 @@
 package com.cobo.app.data
 
+import com.cobo.app.screen.shouldShowCommentMemberBadge
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -104,5 +106,102 @@ class CommentPicsTest {
             "https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_7_bigfan2_4.png",
             comment.badges[0].pic,
         )
+    }
+
+    @Test
+    fun readsFanBadgeFromUserAndFanTierFallback() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "id": "5000000000000005",
+                  "text": "支持",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "user": {
+                    "id": 2,
+                    "screen_name": "铁粉用户",
+                    "comment_badge": [
+                      {
+                        "pic_url": "//h5.sinaimg.cn/upload/114/962/2022/07/08/member_0_bigfan2_3.png",
+                        "name": "loyal_fans"
+                      }
+                    ]
+                  },
+                  "comment_bubble": {
+                    "id": "tie_0001",
+                    "name": "铁粉专属"
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, comment.badges.size)
+        assertEquals(
+            "https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_0_bigfan2_3.png",
+            comment.badges[0].pic,
+        )
+        assertEquals("铁粉", comment.fanTier)
+    }
+
+    @Test
+    fun readsUserIconsAndCustomFanTierNames() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "id": "5000000000000006",
+                  "text": "支持",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "user": {
+                    "id": 3,
+                    "screen_name": "粉丝用户",
+                    "icons": [
+                      {
+                        "type": "loyal_fans",
+                        "hide": 0,
+                        "url": "https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_4_bigfan3_1.png",
+                        "actionlog": {"ext": "status:fans"}
+                      },
+                      {
+                        "type": "gongyi",
+                        "hide": 0,
+                        "url": "https://h5.sinaimg.cn/upload/other.png"
+                      }
+                    ]
+                  },
+                  "comment_bubble": {
+                    "id": "custom_0001",
+                    "obtain_type": 3,
+                    "name": "挚爱粉专属"
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, comment.badges.size)
+        assertEquals(
+            "https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_4_bigfan3_1.png",
+            comment.badges[0].pic,
+        )
+        assertEquals("挚爱粉", comment.fanTier)
+    }
+
+    @Test
+    fun hidesSeparateMemberBadgeWhenCrownFanBadgeIsShown() {
+        val crownBadge = listOf(
+            CommentBadge("https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_5_bigfan3_2.png"),
+        )
+        val nonVipBadge = listOf(
+            CommentBadge("https://h5.sinaimg.cn/upload/114/962/2022/07/08/member_0_bigfan2_3.png"),
+        )
+
+        assertFalse(shouldShowCommentMemberBadge(Membership.Vip, crownBadge, showFanLevel = true))
+        assertFalse(shouldShowCommentMemberBadge(Membership.Svip, crownBadge, showFanLevel = true))
+        assertTrue(shouldShowCommentMemberBadge(Membership.Svip, crownBadge, showFanLevel = false))
+        assertTrue(shouldShowCommentMemberBadge(Membership.Vip, emptyList(), showFanLevel = true))
+        assertTrue(shouldShowCommentMemberBadge(Membership.Vip, nonVipBadge, showFanLevel = true))
+        assertFalse(shouldShowCommentMemberBadge(Membership.None, emptyList(), showFanLevel = true))
     }
 }

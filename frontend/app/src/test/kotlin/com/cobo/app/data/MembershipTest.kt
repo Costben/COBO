@@ -21,6 +21,7 @@ class MembershipTest {
     fun mbtypeTwo_isExpired() {
         assertEquals(Membership.None, User("1", "甲", "", mbtype = 2, mbrank = 3).membership)
         assertEquals(Membership.None, User("1", "甲", "", mbtype = 2, mbrank = 3, svip = true).membership)
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 2, mbrank = 3, svip = true, vvip = true).membership)
     }
 
     @Test
@@ -40,6 +41,12 @@ class MembershipTest {
     }
 
     @Test
+    fun vvipTakesPrecedenceOverSvipWhenActive() {
+        assertEquals(Membership.Vvip, User("1", "甲", "", mbtype = 12, mbrank = 2, svip = true, vvip = true).membership)
+        assertEquals(Membership.None, User("1", "甲", "", mbtype = 0, svip = true, vvip = true).membership)
+    }
+
+    @Test
     fun parseReadsVipFields() {
         val user = User.from(
             JSONObject(
@@ -49,7 +56,28 @@ class MembershipTest {
         assertEquals(12, user.mbtype)
         assertEquals(4, user.mbrank)
         assertTrue(user.svip)
+        assertFalse(user.vvip)
         assertEquals(Membership.Svip, user.membership)
+    }
+
+    @Test
+    fun parseReadsVvipFromTopLevelOrIconList() {
+        val top = User.from(
+            JSONObject(
+                """{"id":1727858283,"screen_name":"宝玉xp","mbtype":12,"mbrank":2,"svip":1,"vvip":1}""",
+            ),
+        )!!
+        assertEquals(Membership.Vvip, top.membership)
+        assertEquals(2, top.mbrank)
+        assertTrue(top.vvip)
+
+        val iconOnly = User.from(
+            JSONObject(
+                """{"id":1727858284,"screen_name":"乙","icon_list":[{"type":"vip","data":{"mbtype":12,"mbrank":10,"svip":1,"vvip":1}}]}""",
+            ),
+        )!!
+        assertEquals(Membership.Vvip, iconOnly.membership)
+        assertEquals(10, iconOnly.mbrank)
     }
 
     @Test
@@ -58,6 +86,7 @@ class MembershipTest {
         assertEquals(0, user.mbtype)
         assertEquals(0, user.mbrank)
         assertFalse(user.svip)
+        assertFalse(user.vvip)
         assertEquals(Membership.None, user.membership)
     }
 }

@@ -412,16 +412,36 @@ object ContainerApi {
         return UploadedMedia(fid = fid, md5 = md5Hex, bypass = discovery.bypass)
     }
 
-    /** `page/get_search_suggest` 返回顶层数组：`["关键词", [{"card": {"desc_dark": "..."}}, ...]]`。 */
-    fun parseSearchSuggest(rawText: String): List<String> {
-        val root = runCatching { JSONArray(rawText) }.getOrNull() ?: return emptyList()
-        val arr = root.optJSONArray(1) ?: return emptyList()
-        val out = ArrayList<String>(arr.length())
+    /**
+     * `page/get_search_suggest` 返回顶层数组：`["关键词", [{"card": {...}}, ...]]`。
+     * 兼容普通词条（`desc_dark` / `desc`）以及内嵌大V卡片（`card.user` / `card.users`）。
+     */
+    internal fun parseSearchSuggestResult(rawText: String): SearchSuggestResult {
+        val root = runCatching { JSONArray(rawText) }.getOrNull() ?: return SearchSuggestResult(emptyList())
+        val arr = root.optJSONArray(1) ?: return SearchSuggestResult(emptyList())
+        val keywords = ArrayList<String>(arr.length())
+        val directUsers = LinkedHashMap<String, User>()
         for (i in 0 until arr.length()) {
-            val card = arr.optJSONObject(i)?.optJSONObject("card") ?: continue
-            val word = card.str("desc_dark").ifBlank { card.str("desc") }.trim()
-            if (word.isNotBlank() && word !in out) out.add(word)
+            val item = arr.optJSONObject(i) ?: continue
+            val card = item.optJSONObject("card") ?: item
+            val embeddedUser = User.from(card.optJSONObject("user") ?: item.optJSONObject("user"))
+            if (embeddedUser != null) {
+                directUsers.putIfAbsent(embeddedUser.id, embeddedUser)
+            }
+            card.optJSONArray("users")?.let { arrUsers ->
+                for (j in 0 until arrUsers.length()) {
+                    User.from(arrUsers.optJSONObject(j))?.let { directUsers.putIfAbsent(it.id, it) }
+                }
+            }
+            if (embeddedUser == null) {
+                val word = card.str("desc_dark").ifBlank { card.str("desc") }.trim()
+                if (word.isNotBlank() && word !in keywords) keywords.add(word)
+            }
         }
-        return out
+        return SearchSuggestResult(keywords = keywords, users = directUsers.values.toList())
     }
+
+    /** `page/get_search_suggest` 词条快捷解析（保留供现有调用/测试复用）。 */
+    fun parseSearchSuggest(rawText: String): List<String> =
+        parseSearchSuggestResult(rawText).keywords
 }

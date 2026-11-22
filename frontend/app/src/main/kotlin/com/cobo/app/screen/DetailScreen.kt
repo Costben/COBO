@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -91,6 +92,7 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
+import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.NavState
@@ -183,6 +185,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     // 从评论菜单进来的转发：带上这条评论，composer 预填成引用它。
     var repostComment by remember { mutableStateOf<Comment?>(null) }
     var commentDialog by remember { mutableStateOf(false) }
+    var activeCommentDetail by remember(id) { mutableStateOf<Comment?>(null) }
     val listState = rememberLazyListState()
     BindScrollToTop(listState)
     // The bar floats over this list too, so the quoted post inside the card below has to be able to
@@ -483,6 +486,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         replyTag = Modifier.testTag("comment_reply_$index"),
                         readOnly = readOnly,
                         keepFrame = keepCardFrame,
+                        onOpenDetail = { activeCommentDetail = comment },
                         onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
                         onRepost = { repostComment = it },
                         onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
@@ -634,6 +638,23 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 }
             }
         }
+
+        CommentDetailOverlay(
+            root = activeCommentDetail,
+            statusId = effectiveId(),
+            mid = effectiveMid(),
+            readOnly = readOnly,
+            keepFrame = keepCardFrame,
+            onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
+            onRepost = { repostComment = it },
+            onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
+            onSyncComment = { updated ->
+                val idx = comments.indexOfFirst { it.id == updated.id }
+                if (idx >= 0) comments[idx] = updated
+                if (activeCommentDetail?.id == updated.id) activeCommentDetail = updated
+            },
+            onClose = { activeCommentDetail = null },
+        )
     }
 
     if (repostDialog || repostComment != null || commentDialog) {
@@ -694,7 +715,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
 }
 
 /** 去掉外框后补在列表 12dp 内边距上的横向留白，合计 16dp，与顶栏按钮外框对齐。 */
-private val FlatCommentInset = 4.dp
+internal val FlatCommentInset = 4.dp
 
 /** 网页版举报入口：`type=2` 是举报评论，`url` 指向它所在的那条微博。 */
 private fun commentReportUrl(mid: String, cid: String): String {
@@ -710,7 +731,7 @@ private const val PreviewReplies = 1
  * 高度固定，单图按原比例收在 72–200dp；多图一律正方形，跟信息流的九宫格区分开。
  */
 @Composable
-private fun CommentThumbnails(
+internal fun CommentThumbnails(
     pics: List<Pic>,
     height: Dp,
     onImage: (List<Pic>, Int) -> Unit,
@@ -748,19 +769,89 @@ private fun CommentThumbnails(
     }
 }
 
-/** 评论 ID 后面那串粉丝标识（铁粉 / 钻粉…）：接口直接给小图，按图渲染，不同等级是不同图。 */
+/** 评论 ID 后面那串粉丝标识（铁粉 / 钻粉…）：接口给小图时按比例铺开；没给小图但带粉丝气泡时用简洁胶囊兜底。 */
 @Composable
-private fun CommentBadges(badges: List<CommentBadge>, height: Dp) {
+internal fun CommentBadges(
+    badges: List<CommentBadge>,
+    height: Dp,
+    fanTier: String = "",
+    showFanLevel: Boolean = runCatching { App.settings.showFanLevel }.getOrDefault(true),
+) {
+    if (!showFanLevel) return
+    if (badges.isEmpty() && fanTier.isNotBlank()) {
+        Spacer(Modifier.width(4.dp))
+        val (bg, fg) = when {
+            fanTier.contains("钻") -> Color(0xFFEEE6FF) to Color(0xFF6B3FD9)
+            fanTier.contains("金") -> Color(0xFFFFF1D6) to Color(0xFFB45309)
+            fanTier.contains("挚爱") || fanTier.contains("真爱") -> Color(0xFFFFE6EE) to Color(0xFFC2185B)
+            else -> Color(0xFFE0F0FF) to Color(0xFF1D6FD8)
+        }
+        Box(
+            modifier = Modifier
+                .height(height)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bg)
+                .padding(horizontal = 4.dp)
+                .testTag("comment_badge"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = fanTier,
+                fontSize = 8.sp,
+                lineHeight = 8.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = fg,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+        return
+    }
     badges.forEach { badge ->
         Spacer(Modifier.width(3.dp))
+        // AsyncImage 在 Row 里仅限高、不设宽时首帧可能为 0 宽；按图集原比例（110x42≈2.62）预留并在成功回调校准。
+        var ratio by remember(badge.pic) { mutableFloatStateOf(2.62f) }
         AsyncImage(
             model = badge.pic,
             contentDescription = "粉丝标识",
             contentScale = ContentScale.Fit,
+            onSuccess = { state ->
+                val size = state.painter.intrinsicSize
+                if (size.width > 0f && size.height > 0f) {
+                    ratio = (size.width / size.height).coerceIn(0.8f, 5.0f)
+                }
+            },
             modifier = Modifier
+                .width(height * ratio)
                 .height(height)
                 .testTag("comment_badge"),
         )
+    }
+}
+
+/** 评论原生粉丝小图已带皇冠与 VIP 等级数字时，不再重复叠一颗独立的 VIP/SVIP/VVIP 胶囊。 */
+internal fun shouldShowCommentMemberBadge(
+    membership: Membership,
+    badges: List<CommentBadge>,
+    showFanLevel: Boolean,
+): Boolean {
+    if (membership == Membership.None) return false
+    if (showFanLevel && badges.any { !it.pic.contains("member_0_") }) return false
+    return true
+}
+
+@Composable
+internal fun CommentHeaderBadges(
+    comment: Comment,
+    height: Dp,
+) {
+    val showFan = runCatching { App.settings.showFanLevel }.getOrDefault(true)
+    CommentBadges(comment.badges, height, fanTier = comment.fanTier, showFanLevel = showFan)
+    val user = comment.user
+    val membership = user?.membership ?: Membership.None
+    if (shouldShowCommentMemberBadge(membership, comment.badges, showFan)) {
+        Spacer(Modifier.width(4.dp))
+        MemberBadge(membership, compact = true, rank = user?.mbrank ?: 0, height = height)
     }
 }
 
@@ -777,7 +868,7 @@ private data class CommentMenuEntry(
  * 只读流（本地关注、纯本地模式）没有账号可写，「转发」「回复」变灰不可点，复制和投诉照常。
  */
 @Composable
-private fun CommentMoreButton(
+internal fun CommentMoreButton(
     comment: Comment,
     readOnly: Boolean,
     compact: Boolean = false,
@@ -875,6 +966,7 @@ private fun CommentCard(    comment: Comment,
     readOnly: Boolean = false,
     /** 是否保留评论卡片外框；详情页设为去掉外框时，评论同样铺满整行。 */
     keepFrame: Boolean = true,
+    onOpenDetail: () -> Unit = {},
     onImage: (List<Pic>, Int) -> Unit,
     onRepost: (Comment) -> Unit,
     onReport: (Comment) -> Unit,
@@ -969,68 +1061,16 @@ private fun CommentCard(    comment: Comment,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Row(
-                modifier = replyTag
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(
-                        scheme.onSurface.copy(
-                            alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
-                        )
-                    )
-                    .then(
-                        if (readOnly) Modifier.alpha(0.38f)
-                        else Modifier.clickable { replyTarget = comment },
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = CoboIcons.Comment,
-                    contentDescription = "回复",
-                    modifier = Modifier.size(13.dp),
-                    tint = scheme.onSurfaceSecondary,
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    "回复",
-                    fontSize = 12.sp,
-                    color = scheme.onSurfaceSecondary,
-                )
-            }
-            Spacer(Modifier.width(4.dp))
-            // scheme.background on a card is only ~1.1:1, too faint to read as a badge;
-            // a tinted ink chip keeps the two-colour palette and still stands out. The
-            // badge stays visible at zero so the count is never missing.
-            Row(
-                modifier = likeTag
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(
-                        if (comment.liked) scheme.primary.copy(alpha = 0.16f)
-                        else scheme.onSurface.copy(
-                            alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
-                        )
-                    )
-                    .then(
-                        if (readOnly) Modifier.alpha(0.38f)
-                        else Modifier.clickable(onClick = onLike),
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = if (comment.liked) CoboIcons.HeartFill else CoboIcons.Heart,
-                    contentDescription = if (comment.liked) "取消点赞" else "点赞",
-                    modifier = Modifier.size(13.dp),
-                    tint = if (comment.liked) scheme.primary else scheme.onSurface,
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = fmtCount(comment.likes),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (comment.liked) scheme.primary else scheme.onSurface,
-                )
-            }
+            CommentActionButtons(
+                likes = comment.likes,
+                liked = comment.liked,
+                enabled = !readOnly,
+                compact = false,
+                replyModifier = replyTag,
+                likeModifier = likeTag,
+                onReply = { replyTarget = comment },
+                onLike = onLike,
+            )
         }
     }
 
@@ -1038,32 +1078,43 @@ private fun CommentCard(    comment: Comment,
         Row(
             Modifier
                 .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onOpenDetail,
+                )
                 .padding(
                     horizontal = if (keepFrame) 14.dp else FlatCommentInset,
                     vertical = 12.dp,
                 )
         ) {
-            Avatar(comment.user?.avatar, 34.dp)
+            Avatar(
+                url = comment.user?.avatar,
+                size = 34.dp,
+                verifiedKind = comment.user?.verifiedKind ?: VerifiedKind.None,
+            )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        comment.user?.name.orEmpty(),
-                        fontSize = 15.sp,
-                        // 跟楼中楼的 ID 同一档灰：评论正文才是主内容，ID 往后退一格。
-                        color = scheme.onSurfaceSecondary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    CommentBadges(comment.badges, 14.dp)
-                    val membership = comment.user?.membership ?: Membership.None
-                    if (membership != Membership.None) {
-                        Spacer(Modifier.width(4.dp))
-                        MemberBadge(membership, compact = true)
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            comment.user?.name.orEmpty(),
+                            fontSize = 15.sp,
+                            // 跟楼中楼的 ID 同一档灰：评论正文才是主内容，ID 往后退一格。
+                            color = scheme.onSurfaceSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        CommentHeaderBadges(comment, 14.dp)
                     }
-                    Spacer(Modifier.weight(1f))
                     CommentMoreButton(
                         comment = comment,
                         readOnly = readOnly,
@@ -1126,6 +1177,7 @@ private fun CommentCard(    comment: Comment,
                                 onLike = { likeReply(reply) },
                                 onReply = { replyTarget = reply },
                                 enabled = !readOnly,
+                                keepFrame = keepFrame,
                                 showActions = expanded,
                                 onImage = onImage,
                                 onRepost = onRepost,
@@ -1161,10 +1213,7 @@ private fun CommentCard(    comment: Comment,
                                 color = scheme.primary,
                                 modifier = Modifier
                                     .testTag("comment_replies")
-                                    .clickable {
-                                        expanded = true
-                                        if (replies.size < total) loadMoreReplies()
-                                    }
+                                    .clickable(onClick = onOpenDetail)
                                     .padding(vertical = 4.dp),
                             )
                         }
@@ -1211,11 +1260,12 @@ private fun CommentCard(    comment: Comment,
 }
 
 @Composable
-private fun ReplyRow(
+internal fun ReplyRow(
     reply: Comment,
     onLike: () -> Unit,
     onReply: () -> Unit,
     enabled: Boolean = true,
+    keepFrame: Boolean = true,
     /** 楼中楼收起、只做预览时不渲染「回复」「点赞」两个按钮。 */
     showActions: Boolean = true,
     onImage: (List<Pic>, Int) -> Unit = { _, _ -> },
@@ -1224,27 +1274,33 @@ private fun ReplyRow(
 ) {
     val scheme = COUITheme.colorScheme
     Row(Modifier.padding(vertical = 3.dp)) {
-        Avatar(reply.user?.avatar, 22.dp)
+        Avatar(
+            url = reply.user?.avatar,
+            size = 22.dp,
+            verifiedKind = reply.user?.verifiedKind ?: VerifiedKind.None,
+        )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    reply.user?.name.orEmpty(),
-                    fontSize = 14.sp,
-                    color = scheme.onSurfaceSecondary,
-                    fontWeight = FontWeight.Medium,
-                )
-                CommentBadges(reply.badges, 12.dp)
-                val membership = reply.user?.membership ?: Membership.None
-                if (membership != Membership.None) {
-                    Spacer(Modifier.width(4.dp))
-                    MemberBadge(membership, compact = true)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        reply.user?.name.orEmpty(),
+                        fontSize = 14.sp,
+                        color = scheme.onSurfaceSecondary,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    CommentHeaderBadges(reply, 13.dp)
                 }
                 if (showActions) {
-                    Spacer(Modifier.weight(1f))
                     CommentMoreButton(
                         comment = reply,
                         readOnly = !enabled,
@@ -1276,69 +1332,84 @@ private fun ReplyRow(
                     modifier = Modifier.weight(1f),
                 )
                 if (showActions) {
-                    Row(
-                        modifier = Modifier
-                            .testTag("reply_reply")
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                scheme.onSurface.copy(
-                                    alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
-                                )
-                            )
-                            .then(
-                                if (enabled) Modifier.clickable(onClick = onReply)
-                                else Modifier.alpha(0.38f),
-                            )
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = CoboIcons.Comment,
-                            contentDescription = "回复",
-                            modifier = Modifier.size(11.dp),
-                            tint = scheme.onSurfaceSecondary,
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            "回复",
-                            fontSize = 11.sp,
-                            color = scheme.onSurfaceSecondary,
-                        )
-                    }
-                    Spacer(Modifier.width(2.dp))
-                    Row(
-                        modifier = Modifier
-                            .testTag("reply_like")
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (reply.liked) scheme.primary.copy(alpha = 0.16f)
-                                else scheme.onSurface.copy(
-                                    alpha = if (scheme.background.luminance() < 0.5f) 0.20f else 0.12f
-                                )
-                            )
-                            .then(
-                                if (enabled) Modifier.clickable(onClick = onLike)
-                                else Modifier.alpha(0.38f),
-                            )
-                            .padding(horizontal = 7.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = if (reply.liked) CoboIcons.HeartFill else CoboIcons.Heart,
-                            contentDescription = if (reply.liked) "取消点赞" else "点赞",
-                            modifier = Modifier.size(11.dp),
-                            tint = if (reply.liked) scheme.primary else scheme.onSurface,
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            text = fmtCount(reply.likes),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = if (reply.liked) scheme.primary else scheme.onSurface,
-                        )
-                    }
+                    CommentActionButtons(
+                        likes = reply.likes,
+                        liked = reply.liked,
+                        enabled = enabled,
+                        compact = true,
+                        replyModifier = Modifier.testTag("reply_reply"),
+                        likeModifier = Modifier.testTag("reply_like"),
+                        onReply = onReply,
+                        onLike = onLike,
+                    )
                 }
             }
+        }
+    }
+}
+
+/** 评论 / 楼中楼右侧的「回复」与「点赞」动作组：统一纯图标无底框，点赞数为 0 时仅保留心形图标。 */
+@Composable
+internal fun CommentActionButtons(
+    likes: Int,
+    liked: Boolean,
+    enabled: Boolean,
+    compact: Boolean = false,
+    replyModifier: Modifier = Modifier,
+    likeModifier: Modifier = Modifier,
+    onReply: () -> Unit,
+    onLike: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    val cornerRadius = if (compact) 10.dp else 11.dp
+    val iconSize = if (compact) 12.dp else 14.dp
+    val fontSize = if (compact) 11.sp else 12.sp
+    val iconGap = if (compact) 3.dp else 4.dp
+    val verticalPad = if (compact) 2.dp else 4.dp
+    val likeTint = if (liked) scheme.primary else scheme.onSurfaceSecondary
+
+    Box(
+        modifier = replyModifier
+            .clip(RoundedCornerShape(cornerRadius))
+            .then(
+                if (enabled) Modifier.clickable(onClick = onReply)
+                else Modifier.alpha(0.38f),
+            )
+            .padding(horizontal = 4.dp, vertical = verticalPad),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = CoboIcons.Comment,
+            contentDescription = "回复",
+            modifier = Modifier.size(iconSize),
+            tint = scheme.onSurfaceSecondary,
+        )
+    }
+    Spacer(Modifier.width(if (compact) 4.dp else 6.dp))
+    Row(
+        modifier = likeModifier
+            .clip(RoundedCornerShape(cornerRadius))
+            .then(
+                if (enabled) Modifier.clickable(onClick = onLike)
+                else Modifier.alpha(0.38f),
+            )
+            .padding(horizontal = 4.dp, vertical = verticalPad),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (liked) CoboIcons.HeartFill else CoboIcons.Heart,
+            contentDescription = if (liked) "取消点赞" else "点赞",
+            modifier = Modifier.size(iconSize),
+            tint = likeTint,
+        )
+        if (likes > 0) {
+            Spacer(Modifier.width(iconGap))
+            Text(
+                text = fmtCount(likes),
+                fontSize = fontSize,
+                fontWeight = FontWeight.Medium,
+                color = likeTint,
+            )
         }
     }
 }
@@ -1353,24 +1424,43 @@ private fun SortSwitch(
     onSelect: (CommentSort) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    CompactSortSwitch(
+        entries = SortEntries,
+        selected = selected,
+        onSelect = onSelect,
+        testTagOf = { if (it == CommentSort.Hot) "comment_sort_hot" else "comment_sort_time" },
+        modifier = modifier,
+    )
+}
+
+/** 微博正文 / 楼中楼详情共用的紧凑分段排序胶囊：点击或横向拖动切换，带弹性滑块与文字渐变。 */
+@Composable
+internal fun <T> CompactSortSwitch(
+    entries: List<Pair<String, T>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    testTagOf: ((T) -> String)? = null,
+) {
+    if (entries.isEmpty()) return
     val scheme = COUITheme.colorScheme
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
     val labelStyle = remember { TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium) }
     // Both labels are measured at the heavier weight so the pill never clips a label as the
     // selected side swaps in, and so the control grows with the user's font scale.
-    val labelSize = remember(measurer, labelStyle) {
-        val sizes = SortEntries.map { measurer.measure(it.first, labelStyle).size }
+    val labelSize = remember(entries, measurer, labelStyle) {
+        val sizes = entries.map { measurer.measure(it.first, labelStyle).size }
         sizes.maxOf { it.width } to sizes.maxOf { it.height }
     }
     val segmentWidth = with(density) { labelSize.first.toDp() } + 20.dp
     val segmentHeight = with(density) { labelSize.second.toDp() } + 8.dp
     val segmentWidthPx = with(density) { segmentWidth.toPx() }
-    val selectedIndex = SortEntries.indexOfFirst { it.second == selected }.coerceAtLeast(0)
+    val selectedIndex = entries.indexOfFirst { it.second == selected }.coerceAtLeast(0)
     val indicator = remember { Animatable(selectedIndex.toFloat()) }
     var dragValue by remember { mutableStateOf<Float?>(null) }
     val scope = rememberCoroutineScope()
-    val interactions = remember { List(SortEntries.size) { MutableInteractionSource() } }
+    val interactions = remember(entries.size) { List(entries.size) { MutableInteractionSource() } }
     val pressed = interactions.map { it.collectIsPressedAsState() }
     val dark = scheme.background.luminance() < 0.5f
 
@@ -1386,21 +1476,21 @@ private fun SortSwitch(
             .background(scheme.onSurface.copy(alpha = if (dark) 0.16f else 0.11f))
             .selectableGroup()
             .padding(2.dp)
-            .pointerInput(segmentWidthPx, selectedIndex) {
+            .pointerInput(entries, segmentWidthPx, selectedIndex) {
                 detectHorizontalDragGestures(
                     onDragStart = { dragValue = indicator.value },
                     onHorizontalDrag = { change, delta ->
                         change.consume()
                         dragValue = ((dragValue ?: indicator.value) + delta / segmentWidthPx)
-                            .coerceIn(0f, (SortEntries.size - 1).toFloat())
+                            .coerceIn(0f, (entries.size - 1).toFloat())
                     },
                     onDragEnd = {
                         val start = dragValue ?: indicator.value
-                        val target = start.roundToInt().coerceIn(0, SortEntries.size - 1)
+                        val target = start.roundToInt().coerceIn(0, entries.size - 1)
                         scope.launch {
                             indicator.snapTo(start)
                             dragValue = null
-                            if (target != selectedIndex) onSelect(SortEntries[target].second)
+                            if (target != selectedIndex) onSelect(entries[target].second)
                             else indicator.animateTo(target.toFloat(), SortSpring)
                         }
                     },
@@ -1424,7 +1514,7 @@ private fun SortSwitch(
                 .background(if (dark) scheme.surfaceContainerHigh else scheme.surfaceContainer),
         )
         Row(Modifier.height(segmentHeight)) {
-            SortEntries.forEachIndexed { index, (label, entrySort) ->
+            entries.forEachIndexed { index, (label, entrySort) ->
                 val proximity = (1f - abs(value - index)).coerceIn(0f, 1f)
                 val labelScale by animateFloatAsState(
                     targetValue = if (pressed[index].value) 0.94f else 1f,
@@ -1446,9 +1536,10 @@ private fun SortSwitch(
                             role = Role.RadioButton,
                             onClick = { onSelect(entrySort) },
                         )
-                        .testTag(
-                            if (entrySort == CommentSort.Hot) "comment_sort_hot" else "comment_sort_time"
-                        ),
+                        .let { mod ->
+                            val tag = testTagOf?.invoke(entrySort)
+                            if (tag != null) mod.testTag(tag) else mod
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

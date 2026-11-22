@@ -72,12 +72,14 @@ fun chatPlainText(html: String?): String {
 }
 
 /**
- * 微博会员。接口给的三个字段：`mbtype`（0 从未开通，2 开通过但已过期，大于 2 为在期（实测 11 / 12，12 是年费））、
- * `mbrank`（会员等级 1–9）、`svip`（1 = 超级会员）。
- * 判定照抄 m.weibo.cn 前端：`mbtype > 2 && mbrank > 0` 才算在期，`svip` 只决定标成 SVIP 还是 VIP；
- * 不在期时 `svip` 一律不看。年费在界面上不单独标，这里也照办。
+ * 微博会员。接口给的四个字段：`mbtype`（0 从未开通，2 开通过但已过期，大于 2 为在期（实测 11 / 12，12 是年费））、
+ * `mbrank`（会员等级，1 起步，常见 1–10+）、`svip`（1 = 超级会员）、`vvip`（1 = 黑金/VVIP，优先级高于 svip）。
+ * 判定：`mbtype > 2 && mbrank > 0` 才算在期；不在期时 `svip` / `vvip` 一律不看。
  */
-enum class Membership { None, Vip, Svip }
+enum class Membership { None, Vip, Svip, Vvip }
+
+/** 微博账号认证类型：未认证、金V（个人大V，verified_type 0 等）、蓝V（官方/机构，verified_type 1..8）。 */
+enum class VerifiedKind { None, Gold, Blue }
 
 /** 主页上的两种关系列表：关注了谁、谁在关注。 */
 enum class RelationKind { Following, Followers }
@@ -87,6 +89,7 @@ data class User(
     val name: String,
     val avatar: String,
     val verified: Boolean = false,
+    val verifiedType: Int = -1,
     val following: Boolean = false,
     val description: String = "",
     val followers: Int = 0,
@@ -99,12 +102,21 @@ data class User(
     val mbtype: Int = 0,
     val mbrank: Int = 0,
     val svip: Boolean = false,
+    val vvip: Boolean = false,
 ) {
     val membership: Membership
         get() = when {
             mbtype <= 2 || mbrank <= 0 -> Membership.None
+            vvip -> Membership.Vvip
             svip -> Membership.Svip
             else -> Membership.Vip
+        }
+
+    val verifiedKind: VerifiedKind
+        get() = when {
+            !verified -> VerifiedKind.None
+            verifiedType in 1..8 -> VerifiedKind.Blue
+            else -> VerifiedKind.Gold
         }
 
     companion object {
@@ -112,6 +124,11 @@ data class User(
             if (o == null) return null
             val id = o.str("id")
             if (id.isBlank()) return null
+            val vipData = vipIconDataOf(o)
+            val mbtype = o.int("mbtype").let { if (it > 0) it else vipData?.int("mbtype") ?: 0 }
+            val mbrank = o.int("mbrank").let { if (it > 0) it else vipData?.int("mbrank") ?: 0 }
+            val svip = o.int("svip") > 0 || (vipData?.int("svip") ?: 0) > 0
+            val vvip = o.int("vvip") > 0 || (vipData?.int("vvip") ?: 0) > 0
             return User(
                 id = id,
                 name = o.str("screen_name").ifBlank { o.str("name") },
@@ -122,6 +139,7 @@ data class User(
                     .ifBlank { o.str("round_avatar_large") }
                     .ifBlank { o.str("round_profile_image_url") },
                 verified = o.optBoolean("verified", false),
+                verifiedType = o.optInt("verified_type", -1),
                 following = o.optBoolean("following", false),
                 description = o.str("description"),
                 followers = o.count("followers_count", o.count("followers_count_str")),
@@ -129,12 +147,22 @@ data class User(
                 statuses = o.count("statuses_count"),
                 covers = coverUrls(o.str("cover_image_phone")),
                 specialFollow = o.optBoolean("special_follow", false),
-                mbtype = o.int("mbtype"),
-                mbrank = o.int("mbrank"),
-                svip = o.int("svip") > 0,
+                mbtype = mbtype,
+                mbrank = mbrank,
+                svip = svip,
+                vvip = vvip,
             )
         }
     }
+}
+
+private fun vipIconDataOf(o: JSONObject): JSONObject? {
+    val arr = o.optJSONArray("icon_list") ?: return null
+    for (i in 0 until arr.length()) {
+        val item = arr.optJSONObject(i) ?: continue
+        if (item.str("type") == "vip") return item.optJSONObject("data")
+    }
+    return null
 }
 
 private val CoverCrop = Regex("""^(https?://[^/]+)/crop\.[^/]+/(.+)$""")
@@ -160,8 +188,14 @@ data class Pic(
      * 地址可能是 `video.weibo.com/media/play?livephoto=` 这种播放页，真正的 mov 在参数里。
      */
     val live: String = "",
+    /** 混排图集（`mix_media_info`）里的内嵌视频地址；非空时缩略图按九宫格占位，点开按视频播放。 */
+    val videoUrl: String = "",
+    val videoTitle: String = "",
+    /** 视频时长（秒），> 0 时在混排缩略图右下角显示时长角标。 */
+    val durationSec: Int = 0,
 ) {
     val isLive: Boolean get() = live.isNotBlank()
+    val isVideo: Boolean get() = videoUrl.isNotBlank()
 }
 
 // 实况视频地址：m.weibo.cn 放在 videoSrc，weibo.com 的 pic_infos 放在 video。
@@ -224,21 +258,139 @@ private fun picOf(p: JSONObject): Pic? {
     val url = p.str("url")
         .ifBlank { thumbObj?.str("url").orEmpty() }
         .ifBlank { large?.str("url").orEmpty() }
-    if (url.isBlank() && large == null) return null
+    val videoInfo = if (p.str("type").equals("video", ignoreCase = true)) {
+        p.optJSONObject("video_info")?.let { extractVideoInfo(it) } ?: run {
+            val rawVideo = p.str("videoSrc").ifBlank { p.str("video") }.ifBlank { p.str("video_hd") }
+            val normalized = if (rawVideo.startsWith("//")) "https:$rawVideo" else rawVideo
+            if (normalized.isNotBlank()) {
+                VideoInfo(
+                    title = p.str("title"),
+                    cover = url,
+                    url = normalized,
+                    durationSec = videoDurationSec(p, p.optJSONObject("media_info")),
+                )
+            } else {
+                null
+            }
+        }
+    } else {
+        null
+    }
+    val thumbUrl = url.ifBlank { videoInfo?.cover.orEmpty() }
+    val largeUrl = large?.str("url")?.ifBlank { thumbUrl } ?: thumbUrl
+    if (thumbUrl.isBlank() && large == null && videoInfo == null) return null
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
     return Pic(
-        thumb = url,
-        large = large?.str("url")?.ifBlank { url } ?: url,
+        thumb = thumbUrl,
+        large = largeUrl,
         width = geo?.int("width") ?: large?.int("width") ?: p.int("width"),
         height = geo?.int("height") ?: large?.int("height") ?: p.int("height"),
-        live = liveVideoUrl(p),
+        live = if (videoInfo == null) liveVideoUrl(p) else "",
+        videoUrl = videoInfo?.url.orEmpty(),
+        videoTitle = videoInfo?.title.orEmpty(),
+        durationSec = videoInfo?.durationSec ?: 0,
     )
+}
+
+/**
+ * 解析混排图集 `mix_media_info.items`（同时包含图片与视频的九宫格/多图微博）。
+ * 返回 `null` 表示该条微博未携带 `mix_media_info`，交由传统 `pics` + `page_info` 流程处理。
+ */
+internal fun mixMediaPicsOf(o: JSONObject): List<Pic>? {
+    val items = o.optJSONObject("mix_media_info")?.optJSONArray("items") ?: return null
+    if (items.length() == 0) return null
+    val out = ArrayList<Pic>(items.length())
+    for (i in 0 until items.length()) {
+        val entry = items.optJSONObject(i) ?: continue
+        val type = entry.str("type")
+        val data = entry.optJSONObject("data") ?: continue
+        when {
+            type.equals("video", ignoreCase = true) -> videoGridPicOf(data)?.let(out::add)
+            else -> picOf(data)?.let(out::add)
+        }
+    }
+    return out.takeIf { it.isNotEmpty() }
+}
+
+private fun videoGridPicOf(data: JSONObject): Pic? {
+    val info = extractVideoInfo(data) ?: return null
+    val media = data.optJSONObject("media_info")
+    val pagePic = data.optJSONObject("page_pic")
+    val picBig = media?.optJSONObject("pic_info")?.optJSONObject("pic_big")
+    val w = pagePic?.int("width")?.takeIf { it > 0 }
+        ?: picBig?.int("width")?.takeIf { it > 0 }
+        ?: media?.int("video_width") ?: 0
+    val h = pagePic?.int("height")?.takeIf { it > 0 }
+        ?: picBig?.int("height")?.takeIf { it > 0 }
+        ?: media?.int("video_height") ?: 0
+    return Pic(
+        thumb = info.cover,
+        large = info.cover,
+        width = w,
+        height = h,
+        videoUrl = info.url,
+        videoTitle = info.title,
+        durationSec = info.durationSec,
+    )
+}
+
+internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyList()): VideoInfo? {
+    val media = page.optJSONObject("media_info")
+    val urlsObj = page.optJSONObject("urls")
+    val directUrl = media?.str("stream_url_hd")
+        ?.ifBlank { media.str("stream_url") }
+        ?.ifBlank { media.str("mp4_720p_mp4") }
+        ?.ifBlank { media.str("mp4_hd_url") }
+        ?.ifBlank { media.str("mp4_sd_url") }
+        .orEmpty()
+        .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
+        .ifBlank { urlsObj?.str("mp4_720p_mp4").orEmpty() }
+        .ifBlank { urlsObj?.str("mp4_hd_mp4").orEmpty() }
+        .ifBlank { urlsObj?.str("mp4_ld_mp4").orEmpty() }
+        .ifBlank { urlsObj?.str("hevc_mp4_hd").orEmpty() }
+        .ifBlank { urlsObj?.str("stream_url_hd").orEmpty() }
+        .ifBlank { urlsObj?.str("stream_url").orEmpty() }
+    val fallbackPageUrl = media?.str("h5_url").orEmpty()
+        .ifBlank { page.str("page_url") }
+        .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
+        .ifBlank {
+            page.str("object_id").takeIf { it.isNotBlank() }
+                ?.let { "https://video.weibo.com/show?fid=$it" }
+                .orEmpty()
+        }
+    val resolvedUrl = directUrl.ifBlank {
+        com.cobo.app.ui.unwrapSinaUrl(fallbackPageUrl) ?: fallbackPageUrl
+    }
+    if (resolvedUrl.isBlank()) return null
+    val title = page.str("page_title")
+        .ifBlank { page.str("title") }
+        .ifBlank { page.str("content1") }
+        .ifBlank { media?.str("kol_title").orEmpty() }
+        .ifBlank { media?.str("next_title").orEmpty() }
+    return VideoInfo(
+        title = title,
+        cover = videoCoverUrl(page, media, fallbackPics),
+        url = resolvedUrl,
+        durationSec = videoDurationSec(page, media),
+    )
+}
+
+private fun videoDurationSec(page: JSONObject, media: JSONObject?): Int {
+    val candidates = listOf(
+        media?.optDouble("duration", 0.0) ?: 0.0,
+        media?.optDouble("video_duration", 0.0) ?: 0.0,
+        page.optDouble("duration", 0.0),
+        page.optDouble("video_duration", 0.0),
+    )
+    val raw = candidates.firstOrNull { !it.isNaN() && it > 0.0 } ?: return 0
+    return raw.roundToInt().coerceAtLeast(1)
 }
 
 data class VideoInfo(
     val title: String,
     val cover: String,
     val url: String,
+    val durationSec: Int = 0,
 )
 
 data class BigPicInfo(
@@ -447,44 +599,27 @@ data class Status(
             val id = o.str("idstr").ifBlank { o.str("id") }.ifBlank { o.str("mid") }
             if (id.isBlank()) return null
 
-            val pics = picsOf(o)
+            val mixPics = mixMediaPicsOf(o)
+            var pics = mixPics ?: picsOf(o)
 
             var video: VideoInfo? = null
             val page = o.optJSONObject("page_info")
-            // m.weibo.cn 把视频标成 type=video；weibo.com 网页版（关注分组那条流）给的是
-            // type=11 + object_type=video，只认 type 会把视频当成纯文字。
-            if (page != null && (page.str("type") == "video" || page.str("object_type") == "video")) {
-                val media = page.optJSONObject("media_info")
-                val urlsObj = page.optJSONObject("urls")
-                val directUrl = media?.str("stream_url_hd")
-                    ?.ifBlank { media.str("stream_url") }
-                    ?.ifBlank { media.str("mp4_720p_mp4") }
-                    ?.ifBlank { media.str("mp4_hd_url") }
-                    ?.ifBlank { media.str("mp4_sd_url") }
-                    .orEmpty()
-                    .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
-                    .ifBlank { urlsObj?.str("mp4_720p_mp4").orEmpty() }
-                    .ifBlank { urlsObj?.str("mp4_hd_mp4").orEmpty() }
-                    .ifBlank { urlsObj?.str("mp4_ld_mp4").orEmpty() }
-                    .ifBlank { urlsObj?.str("hevc_mp4_hd").orEmpty() }
-                    .ifBlank { urlsObj?.str("stream_url_hd").orEmpty() }
-                    .ifBlank { urlsObj?.str("stream_url").orEmpty() }
-                val fallbackPageUrl = media?.str("h5_url").orEmpty()
-                    .ifBlank { page.str("page_url") }
-                    .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
-                    .ifBlank {
-                        page.str("object_id").takeIf { it.isNotBlank() }
-                            ?.let { "https://video.weibo.com/show?fid=$it" }
-                            .orEmpty()
-                    }
-                val resolvedUrl = directUrl.ifBlank {
-                    com.cobo.app.ui.unwrapSinaUrl(fallbackPageUrl) ?: fallbackPageUrl
+            if (mixPics != null) {
+                // 混排仅含一条视频时仍按普通单视频大卡呈现；多条（含图片+视频混排）全部进缩略图网格。
+                if (mixPics.size == 1 && mixPics[0].isVideo) {
+                    val only = mixPics[0]
+                    video = VideoInfo(
+                        title = only.videoTitle,
+                        cover = only.large.ifBlank { only.thumb },
+                        url = only.videoUrl,
+                        durationSec = only.durationSec,
+                    )
+                    pics = emptyList()
                 }
-                video = VideoInfo(
-                    title = page.str("page_title").ifBlank { page.str("content1") },
-                    cover = videoCoverUrl(page, media, pics),
-                    url = resolvedUrl,
-                )
+            } else if (page != null && (page.str("type") == "video" || page.str("object_type") == "video")) {
+                // m.weibo.cn 把视频标成 type=video；weibo.com 网页版（关注分组那条流）给的是
+                // type=11 + object_type=video，只认 type 会把视频当成纯文字。
+                video = extractVideoInfo(page, pics)
             } else if (page != null && pics.isEmpty()) {
                 val pageUrlRaw = page.str("page_url")
                     .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
@@ -499,6 +634,12 @@ data class Status(
                 }
             }
 
+            val retweetedObj = o.optJSONObject("retweeted_status")
+            var retweeted = if (depth < 2) parse(retweetedObj, depth + 1) else null
+
+            val rawText = o.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
+                ?: o.str("text")
+
             var bigPic: BigPicInfo? = null
             if (page != null && (page.str("type") == "bigPic" || page.str("object_type") == "bigPic")) {
                 val pagePic = page.optJSONObject("page_pic")
@@ -509,7 +650,38 @@ data class Status(
                 }
             }
 
-            val retweeted = if (depth < 2) parse(o.optJSONObject("retweeted_status"), depth + 1) else null
+            // 微博转发带视频的原博时，接口常把原博的 page_info 挂在外层转发体上而 retweeted_status 里没有；
+            // 转发本身不能附带视频，把被拉出来的外层视频（及大图卡片）回嵌进被转发正文，避免浮在转发框外面。
+            if (retweeted != null && (video != null || bigPic != null)) {
+                val outerOwnsMedia = outerOwnsPageMedia(rawText, page, retweetedObj)
+                if (!outerOwnsMedia) {
+                    if (video != null) {
+                        if (retweeted.video == null && retweeted.pics.none { it.isVideo }) {
+                            retweeted = retweeted.copy(video = video)
+                        }
+                        video = null
+                    }
+                    if (bigPic != null) {
+                        if (retweeted.bigPic == null) {
+                            retweeted = retweeted.copy(bigPic = bigPic)
+                        }
+                        bigPic = null
+                    }
+                }
+            }
+
+            // 兼容同时返回 pics 与单条 page_info 视频的接口形态：把视频作为封面缩略图拼进网格。
+            if (mixPics == null && pics.isNotEmpty() && video != null && video.url.isNotBlank() && pics.none { it.isVideo }) {
+                val cover = video.cover.ifBlank { pics.first().thumb }
+                pics = pics + Pic(
+                    thumb = cover,
+                    large = cover,
+                    videoUrl = video.url,
+                    videoTitle = video.title,
+                    durationSec = video.durationSec,
+                )
+                video = null
+            }
 
             var voteId: String? = null
             if (page != null) {
@@ -517,6 +689,9 @@ data class Status(
                 val voteObj = cardInfo?.optJSONObject("vote_object")
                 voteId = voteObj?.str("id")?.takeIf { it.isNotBlank() }
                     ?: extractVoteId(page.str("page_url"))
+                    ?: extractVoteId(page.str("page_id"))
+                    ?: extractVoteId(page.str("object_id"))
+                    ?: extractVoteId(page.optJSONObject("page_pic")?.str("scheme"))
             }
             if (voteId == null) {
                 voteId = extractVoteIdFromUrlStruct(o.optJSONArray("url_struct"))
@@ -525,13 +700,13 @@ data class Status(
                 voteId = extractVoteId(o.str("text"))
             }
 
+            // 注意：page_info.type == "23" 在微博里也是超话/网页等通用 H5 卡片类型，不能单独当作投票，
+            // 否则所有带超话卡片的微博都会误显示「暂未获取到投票详情」。
             val isVote = o.int("is_vote") == 1 ||
                 page?.str("object_type") == "hudongvote" ||
-                page?.str("type") == "23" ||
+                page?.optJSONObject("card_info")?.optJSONObject("vote_object") != null ||
                 voteId != null
 
-            val rawText = o.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
-                ?: o.str("text")
             val htmlText = formatContainerTextToHtml(
                 rawText,
                 o.optJSONArray("url_struct"),
@@ -809,6 +984,8 @@ data class Comment(
     val pics: List<Pic> = emptyList(),
     /** ID 后面那串粉丝标识（铁粉 / 钻粉…）。接口给的是现成的小图，直接按图渲染。 */
     val badges: List<CommentBadge> = emptyList(),
+    /** 接口没给 `comment_badge` 小图但给了 `comment_bubble` / `comment_dynamic_message` 时的粉丝等级兜底（如「铁粉」「金粉」「钻粉」）。 */
+    val fanTier: String = "",
     val reply: Comment? = null,
     /** The replies Weibo inlines under a comment, oldest first. */
     val replies: List<Comment> = emptyList(),
@@ -844,6 +1021,7 @@ data class Comment(
                 liked = o.optBoolean("liked"),
                 pics = commentPicsOf(o),
                 badges = commentBadgesOf(o),
+                fanTier = commentFanTierOf(o),
                 reply = if (depth < 1) from(o.optJSONObject("reply"), depth + 1) else null,
                 replies = replies,
                 replyCount = o.optInt("total_number", replies.size),
@@ -869,26 +1047,129 @@ private fun commentPicsOf(o: JSONObject): List<Pic> {
 }
 
 /**
- * 评论 ID 后面的粉丝标识。`comment_badge` 里每条就是一个现成的小图：
+ * 评论 ID 后面的粉丝标识。`comment_badge`（H5 / 网页）与 `user.icons`（客户端通道）里放的都是现成小图：
  * `{"pic_url": ".../member_7_bigfan2_4.png", "name": "loyal_fans", "type_and_level": "2_4"}`。
- * 不同等级是不同图，照着渲染即可，不需要自己拼文案。
+ * 兼容放在 `comment` 或 `user` 下、单对象或数组、`icons` 里的粉丝勋章，以及 `//` 协议相对地址。
  */
 private fun commentBadgesOf(o: JSONObject): List<CommentBadge> {
-    val arr = o.optJSONArray("comment_badge") ?: return emptyList()
+    val userObj = o.optJSONObject("user")
+    val badgeArrays = listOfNotNull(
+        o.optJSONArray("comment_badge"),
+        userObj?.optJSONArray("comment_badge"),
+    )
+    val singleObjects = listOfNotNull(
+        o.optJSONObject("comment_badge"),
+        userObj?.optJSONObject("comment_badge"),
+    )
+    val iconArrays = listOfNotNull(
+        o.optJSONArray("icons"),
+        userObj?.optJSONArray("icons"),
+    )
     return buildList {
-        for (i in 0 until arr.length()) {
-            val b = arr.optJSONObject(i) ?: continue
-            val pic = b.str("pic_url").ifBlank { b.str("url") }
-            if (pic.isBlank()) continue
-            add(CommentBadge(pic = pic, name = b.str("name")))
+        val seen = HashSet<String>()
+        fun addBadge(b: JSONObject?, requireFansIcon: Boolean) {
+            if (b == null) return
+            if (b.int("hide") == 1) return
+            val rawPic = b.str("pic_url")
+                .ifBlank { b.str("url") }
+                .ifBlank { b.str("pic") }
+                .ifBlank { b.str("icon_url") }
+                .ifBlank { b.str("icon") }
+                .trim()
+            if (rawPic.isBlank()) return
+            val pic = if (rawPic.startsWith("//")) "https:$rawPic" else rawPic
+            if (requireFansIcon && !isFansIconObject(b, pic)) return
+            val name = b.str("type").ifBlank { b.str("name") }
+            if (seen.add(pic)) add(CommentBadge(pic = pic, name = name))
+        }
+        for (arr in badgeArrays) {
+            for (i in 0 until arr.length()) addBadge(arr.optJSONObject(i), requireFansIcon = false)
+        }
+        for (obj in singleObjects) addBadge(obj, requireFansIcon = false)
+        for (arr in iconArrays) {
+            for (i in 0 until arr.length()) addBadge(arr.optJSONObject(i), requireFansIcon = true)
         }
     }
+}
+
+private fun isFansIconObject(b: JSONObject, picUrl: String): Boolean {
+    val type = b.str("type").lowercase()
+    val name = b.str("name").lowercase()
+    val ext = b.optJSONObject("actionlog")?.str("ext").orEmpty().lowercase()
+    val scheme = b.str("scheme").lowercase()
+    val lowerUrl = picUrl.lowercase()
+    return type in FANS_ICON_NAMES ||
+        name in FANS_ICON_NAMES ||
+        ext == "status:fans" ||
+        scheme.contains("bigfans") ||
+        lowerUrl.contains("bigfan") ||
+        lowerUrl.contains("loyal_fans")
+}
+
+private val FANS_ICON_NAMES = setOf(
+    "loyal_fans",
+    "diamond_fans",
+    "gold_fans",
+    "iron_fans",
+    "super_fans",
+    "fans",
+)
+
+private fun commentFanTierOf(o: JSONObject): String {
+    fun extract(obj: JSONObject?): String {
+        if (obj == null) return ""
+        val obtainType = obj.optInt("obtain_type", -1)
+        val id = obj.str("id").trim()
+        val rawName = (obj.optJSONObject("name")?.str("zh_CN")?.takeIf { it.isNotBlank() }
+            ?: obj.str("name"))
+            .trim()
+        val idLower = id.lowercase()
+        val isFanBubble = obtainType == 3 ||
+            rawName.endsWith("专属") ||
+            rawName.contains("粉") ||
+            idLower.startsWith("tie") ||
+            idLower.startsWith("jin") ||
+            idLower.startsWith("zuan") ||
+            idLower.startsWith("zhiai") ||
+            idLower.startsWith("fan")
+        if (!isFanBubble) return ""
+        val cleaned = rawName.removeSuffix("专属").trim()
+        if (cleaned.isNotBlank() && cleaned != "会员") return cleaned
+        return when {
+            idLower.startsWith("zuan") -> "钻粉"
+            idLower.startsWith("jin") -> "金粉"
+            idLower.startsWith("tie") -> "铁粉"
+            idLower.startsWith("zhiai") -> "挚爱粉"
+            else -> ""
+        }
+    }
+    return extract(o.optJSONObject("comment_bubble"))
+        .ifBlank { extract(o.optJSONObject("comment_dynamic_message")) }
+}
+
+private fun outerOwnsPageMedia(
+    outerRawText: String,
+    page: JSONObject?,
+    retweetedObj: JSONObject?,
+): Boolean {
+    if (retweetedObj == null) return true
+    val retweetText = retweetedObj.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
+        ?: retweetedObj.str("text")
+    val outerHasUrl = outerRawText.contains("http://") || outerRawText.contains("https://")
+    val retweetHasUrl = retweetText.contains("http://") || retweetText.contains("https://")
+    if (!outerHasUrl || retweetHasUrl) return false
+    val pageUrl = page?.str("page_url").orEmpty()
+    return pageUrl.isBlank() || outerRawText.contains(pageUrl)
 }
 
 /** 评论 ID 后面的一枚粉丝标识，比如「铁粉」「钻粉」。 */
 data class CommentBadge(val pic: String, val name: String = "")
 
-data class FeedPage(val items: List<Status>, val sinceId: String?)
+data class FeedPage(
+    val items: List<Status>,
+    val sinceId: String?,
+    val recommendedUsers: List<User> = emptyList(),
+)
 
 /** How the detail page orders its comments: the hot list, or every comment in time order. */
 enum class CommentSort { Hot, Time }
@@ -1166,11 +1447,16 @@ data class Session(
 
 data class Config(val uid: String, val st: String, val loggedIn: Boolean)
 
+fun parseWeiboTimeMillis(raw: String?): Long {
+    if (raw.isNullOrBlank()) return 0L
+    return runCatching {
+        SimpleDateFormat("EEE MMM dd HH:mm:ss Z yyyy", Locale.US).parse(raw)?.time
+    }.getOrNull() ?: raw.toLongOrNull() ?: 0L
+}
+
 fun formatWeiboTime(raw: String?): String {
     if (raw.isNullOrBlank()) return ""
-    val millis = runCatching {
-        SimpleDateFormat("EEE MMM dd HH:mm:ss Z yyyy", Locale.US).parse(raw)?.time
-    }.getOrNull() ?: raw.toLongOrNull() ?: return raw
+    val millis = parseWeiboTimeMillis(raw).takeIf { it > 0L } ?: return raw
 
     val diff = System.currentTimeMillis() - millis
     if (diff < 60_000L) return "刚刚"
@@ -1251,24 +1537,105 @@ fun parseContainerCards(root: JSONObject?): FeedPage =
 
 private fun parseCardsFromData(data: JSONObject?): FeedPage {
     val items = ArrayList<Status>()
+    val recommended = LinkedHashMap<String, User>()
+
+    fun collectCardUsers(obj: JSONObject) {
+        searchUserOf(obj)?.let { if (it.id !in recommended) recommended[it.id] = it }
+        val userArr = obj.optJSONArray("users") ?: return
+        for (k in 0 until userArr.length()) {
+            val uObj = userArr.optJSONObject(k) ?: continue
+            val u = User.from(uObj) ?: continue
+            if (u.id !in recommended) recommended[u.id] = u
+        }
+    }
+
     val cards: JSONArray? = data?.optJSONArray("cards")
     if (cards != null) {
         for (i in 0 until cards.length()) {
             val card = cards.optJSONObject(i) ?: continue
             card.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
                 ?.let { Status.from(it)?.let(items::add) }
+            collectCardUsers(card)
             val group = card.optJSONArray("card_group")
             if (group != null) {
                 for (j in 0 until group.length()) {
-                    group.optJSONObject(j)?.optJSONObject("mblog")
+                    val g = group.optJSONObject(j) ?: continue
+                    g.optJSONObject("mblog")
                         ?.takeUnless { it.isPromotedStatus() }
                         ?.let { Status.from(it)?.let(items::add) }
+                    collectCardUsers(g)
                 }
             }
         }
     }
     val since = data?.optJSONObject("cardlistInfo")?.str("since_id")?.ifBlank { null }
-    return FeedPage(items, since)
+    return FeedPage(items, since, recommended.values.toList())
+}
+
+/**
+ * 搜索联想列表里的单项：普通关键词建议，或第 5–7 位的大V/官方号直达项。
+ */
+sealed interface SearchSuggestEntry {
+    data class Keyword(val term: String) : SearchSuggestEntry
+    data class Account(val user: User) : SearchSuggestEntry
+}
+
+data class SearchSuggestResult(
+    val keywords: List<String>,
+    val users: List<User> = emptyList(),
+)
+
+/**
+ * 若命中推荐大V/官方号，将其放在第 5、6、7 位（1-based，最多 3 个），其余关键词顺延且去重；
+ * 未命中或不足时有几个显示几个，无命中则全部正常显示关键词。
+ */
+fun buildSearchSuggestEntries(
+    keywords: List<String>,
+    users: List<User>,
+): List<SearchSuggestEntry> {
+    val recs = users.distinctBy { it.id }.take(3)
+    if (recs.isEmpty()) return keywords.map { SearchSuggestEntry.Keyword(it) }
+    val head = keywords.take(4).map { SearchSuggestEntry.Keyword(it) }
+    val recNames = recs.mapTo(HashSet()) { it.name.lowercase() }
+    val tail = keywords.drop(4)
+        .filterNot { it.lowercase() in recNames }
+        .map { SearchSuggestEntry.Keyword(it) }
+    return head + recs.map { SearchSuggestEntry.Account(it) } + tail
+}
+
+/**
+ * 为搜索联想第 5、6、7 位筛选命中的大V/官方推荐账号（最多 3 个）：
+ * - 优先采纳联想接口直接带回的认证/高粉账号；
+ * - 再用 `searchUsers` 顶部搜索结果补充：要求是认证账号（官方蓝V / 个人大V）或 10 万+ 粉丝大V，
+ *   且昵称/简介与关键词相关（或首位 5 万+ 粉丝认证号，兼容拼音/英文检索如 xiaomi -> 小米公司）。
+ */
+internal fun filterRecommendedSearchUsers(
+    query: String,
+    users: List<User>,
+    directRecommendations: List<User> = emptyList(),
+    limit: Int = 3,
+): List<User> {
+    val q = query.trim().removePrefix("@").trim()
+    if (q.isEmpty() || limit <= 0) return emptyList()
+    val picked = LinkedHashMap<String, User>()
+    for (u in directRecommendations) {
+        if (picked.size >= limit) break
+        if (u.verified || u.followers >= 10_000) {
+            picked[u.id] = u
+        }
+    }
+    users.forEachIndexed { index, u ->
+        if (picked.size >= limit) return@forEachIndexed
+        val isBigVOrOfficial = u.verified || u.followers >= 100_000
+        if (!isBigVOrOfficial) return@forEachIndexed
+        val nameMatches = u.name.contains(q, ignoreCase = true) || q.contains(u.name, ignoreCase = true)
+        val descMatches = u.verified && u.description.contains(q, ignoreCase = true)
+        val topVerifiedLead = index == 0 && u.verified && u.followers >= 50_000
+        if (nameMatches || descMatches || topVerifiedLead) {
+            picked.putIfAbsent(u.id, u)
+        }
+    }
+    return picked.values.take(limit)
 }
 
 /**
