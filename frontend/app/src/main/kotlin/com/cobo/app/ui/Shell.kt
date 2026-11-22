@@ -119,6 +119,7 @@ import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.SearchPanelAnimation
+import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.feedTabOptions
 import com.cobo.app.data.nearbyCoords
 import com.cobo.app.screen.BindSearchSuggestionsEffect
@@ -147,6 +148,7 @@ import com.cobo.app.screen.searchHorizontalPadding
 import com.cobo.app.screen.searchResultsItems
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.ProfileEditDialog
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
@@ -187,7 +189,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.basic.ExpandableIndicator
 import io.github.suqi8.coui.kmp.icon.extended.Add
-import io.github.suqi8.coui.kmp.icon.extended.Favorites
+import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.GridView
 import io.github.suqi8.coui.kmp.icon.extended.Messages
 import io.github.suqi8.coui.kmp.icon.extended.Refresh
@@ -450,6 +452,7 @@ fun MainShell(nav: NavState) {
     val timelineScrollHolder = remember { TimelineScrollHolder() }
     val messagesState = remember { MessagesTabState() }
     val profileTabState = remember { ProfileTabState() }
+    var editProfileOpen by remember { mutableStateOf(false) }
     val profileListState = rememberLazyListState()
     var profileActiveCover by remember { mutableStateOf<String?>(null) }
     val profileScrolledPast by remember(profileListState, barDensity) {
@@ -792,6 +795,14 @@ fun MainShell(nav: NavState) {
                 )
             }
         }
+        LaunchedEffect(activeUid, guest) {
+            if (guest || activeUid.isBlank()) return@LaunchedEffect
+            App.profileUpdatedEvents.collect { updated ->
+                if (updated.id == activeUid && updated.avatar.isNotBlank()) {
+                    profileAvatarUrl = updated.avatar
+                }
+            }
+        }
         CompositionLocalProvider(
             LocalBackdrop provides if (blur) backdrop else null,
             // 窗口级材质在弹层开合引起外层 backdrop 录制切换时会丢帧导致底栏闪烁，
@@ -900,6 +911,7 @@ fun MainShell(nav: NavState) {
                     resultsState = homeResultsState,
                     panelAlpha = { panelAlpha.value },
                     onFilterMenuOpen = { searchFilterMenuOpen = true },
+                    onEditProfile = { editProfileOpen = true },
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                 )
                 // 筛选行左侧四宫格圆钮的菜单：菜单渲染在根 Scaffold，锚点按筛选行的行高与
@@ -938,6 +950,14 @@ fun MainShell(nav: NavState) {
         }
     }
     key(feedSearchExpanded, inHomeSearchResults) { CoboPredictiveBackHandler(nav) }
+
+    if (editProfileOpen) {
+        ProfileEditDialog(
+            user = profileTabState.user,
+            onOpenWeb = { nav.push(Route.Web(WEIBO_PROFILE_EDIT_URL, "编辑资料")) },
+            onDismiss = { editProfileOpen = false },
+        )
+    }
 }
 
 /**
@@ -1268,6 +1288,7 @@ private fun MainTitleRow(
     resultsState: SearchResultsState,
     panelAlpha: () -> Float,
     onFilterMenuOpen: () -> Unit,
+    onEditProfile: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Crossfade(
@@ -1309,11 +1330,76 @@ private fun MainTitleRow(
                 title = "我",
                 titleColor = meTitleColor,
                 actions = {
-                    HighlightedIconButton(
-                        onClick = { nav.push(Route.Settings) },
-                        modifier = Modifier.couiTopAppBarActionItem().testTag("top_settings"),
-                    ) {
-                        Icon(COUIIcons.Settings, "设置", Modifier.size(24.dp))
+                    if (guest) {
+                        HighlightedIconButton(
+                            onClick = { nav.push(Route.Settings) },
+                            modifier = Modifier.couiTopAppBarActionItem().testTag("top_settings"),
+                        ) {
+                            Icon(COUIIcons.Settings, "设置", Modifier.size(24.dp))
+                        }
+                    } else {
+                        var meMenuExpanded by remember { mutableStateOf(false) }
+                        val menuScheme = COUITheme.colorScheme
+                        Box {
+                            HighlightedIconButton(
+                                onClick = { meMenuExpanded = true },
+                                modifier = Modifier.couiTopAppBarActionItem().testTag("top_me_menu"),
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                    modifier = Modifier.semantics { contentDescription = "更多" },
+                                ) {
+                                    repeat(3) {
+                                        Box(
+                                            Modifier
+                                                .size(3.5.dp)
+                                                .clip(CircleShape)
+                                                .background(meTitleColor),
+                                        )
+                                    }
+                                }
+                            }
+                            OverlayCascadingListPopup(
+                                show = meMenuExpanded,
+                                entries = listOf(
+                                    DropdownEntry(
+                                        items = listOf(
+                                            DropdownItem(
+                                                text = "设置",
+                                                icon = { iconModifier ->
+                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = COUIIcons.Settings,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(18.dp),
+                                                            tint = menuScheme.onSurfaceContainer,
+                                                        )
+                                                    }
+                                                },
+                                                onClick = { nav.push(Route.Settings) },
+                                            ),
+                                            DropdownItem(
+                                                text = "编辑资料",
+                                                icon = { iconModifier ->
+                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = COUIIcons.Edit,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(18.dp),
+                                                            tint = menuScheme.onSurfaceContainer,
+                                                        )
+                                                    }
+                                                },
+                                                onClick = onEditProfile,
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                                popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                                onDismissRequest = { meMenuExpanded = false },
+                            )
+                        }
                     }
                 },
             )
@@ -1444,7 +1530,7 @@ private fun FeedTitleRow(
                                 false
                             }
                         },
-                    placeholder = "搜索微博 / 用户 / 话题",
+                    placeholder = "搜索微博 / 图片 / 视频 / 用户 / 超话",
                     cancelText = "取消",
                     onSearch = onSearchSubmit,
                     onCancel = onSearchCancel,
@@ -2166,7 +2252,7 @@ private fun ProfileQuickSwitchMenu(
 private fun bottomLeftActionIcon(action: BottomLeftAction): ImageVector = when (action) {
     BottomLeftAction.Refresh -> COUIIcons.Refresh
     BottomLeftAction.Search -> COUIIcons.Search
-    BottomLeftAction.Favorites -> COUIIcons.Favorites
+    BottomLeftAction.Favorites -> CoboIcons.Star
 }
 
 private fun bottomLeftPopupPositionProvider(): PopupPositionProvider =

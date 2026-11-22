@@ -540,6 +540,26 @@ object Api {
         executeContainerShare(request)
     }
 
+    suspend fun containerPostFileShare(
+        path: String,
+        query: Map<String, String?>,
+        form: Map<String, String>,
+        fileField: String,
+        fileName: String,
+        bytes: ByteArray,
+        mimeType: String = "image/jpeg",
+        headers: Map<String, String> = emptyMap(),
+        ua: String = clientHeaderUa(),
+    ): ContainerResponse = withContext(Dispatchers.IO) {
+        val target = url("https://api.weibo.cn/2/$path", query)
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            form.forEach { (key, value) -> addFormDataPart(key, value) }
+            addFormDataPart(fileField, fileName, bytes.toRequestBody(mimeType.toMediaType()))
+        }.build()
+        val request = buildContainerShareRequest(target, headers, ua) { post(body) }
+        executeContainerShare(request)
+    }
+
     suspend fun containerUrlGetShare(
         fullUrl: String,
         query: Map<String, String?>,

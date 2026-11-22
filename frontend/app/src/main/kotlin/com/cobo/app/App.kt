@@ -21,6 +21,7 @@ import com.cobo.app.data.Settings
 import com.cobo.app.data.Store
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
+import com.cobo.app.data.User
 import com.cobo.app.data.WeiboEmojiBitmaps
 
 class CoboApplication : Application() {
@@ -178,12 +179,24 @@ object App {
     val feedRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val feedTopEvents = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     val messagesTopEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val detailRefreshEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val followEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val profileUpdatedEvents = MutableSharedFlow<User>(extraBufferCapacity = 4)
+    var profileRenameVersion by mutableIntStateOf(0)
+        private set
 
     fun isReverseBrowseEnabled(): Boolean = this::settings.isInitialized && settings.reverseBrowse
 
     fun notifyFollowChanged() {
         followEvents.tryEmit(Unit)
+    }
+
+    fun notifyProfileUpdated(user: User) {
+        profileUpdatedEvents.tryEmit(user)
+    }
+
+    fun notifyProfileRenameUpdated() {
+        profileRenameVersion++
     }
 
     fun notifyPublished() {
@@ -200,6 +213,10 @@ object App {
 
     fun requestMessagesTop() {
         messagesTopEvents.tryEmit(Unit)
+    }
+
+    fun requestDetailRefresh(statusId: String) {
+        if (statusId.isNotBlank()) detailRefreshEvents.tryEmit(statusId)
     }
 
     fun toast(message: String) {

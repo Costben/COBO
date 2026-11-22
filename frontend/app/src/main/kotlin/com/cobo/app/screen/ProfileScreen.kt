@@ -1,5 +1,6 @@
 package com.cobo.app.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -42,8 +46,11 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -52,6 +59,7 @@ import android.graphics.Bitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.core.view.WindowCompat
 import coil3.BitmapImage
 import coil3.imageLoader
@@ -64,7 +72,11 @@ import io.github.suqi8.coui.kmp.theme.LocalContentColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -78,10 +90,14 @@ import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.ProfileDetail
 import com.cobo.app.data.ProfileGroupSelection
+import com.cobo.app.data.ProfileRenameRecord
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.Updater
 import com.cobo.app.data.User
+import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
+import com.cobo.app.data.computeProfileRenameStatus
+import com.cobo.app.ui.MeIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
@@ -105,6 +121,7 @@ import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.PreferenceDivider
+import com.cobo.app.ui.components.ProfileEditDialog
 import com.cobo.app.ui.components.ProfileGroupDialog
 import com.cobo.app.ui.components.ProfileInfoDialog
 import com.cobo.app.ui.components.ProfileQrDialog
@@ -120,6 +137,8 @@ import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
+import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.basic.CardListPosition
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownItem
@@ -136,7 +155,18 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.offset
@@ -162,12 +192,10 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.cobo.app.ui.CoboIcons
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.icon.COUIIcons
-import io.github.suqi8.coui.kmp.icon.extended.Edit
-import io.github.suqi8.coui.kmp.icon.extended.Notes
-import io.github.suqi8.coui.kmp.icon.extended.Settings
+import io.github.suqi8.coui.kmp.icon.extended.Ok
+import io.github.suqi8.coui.kmp.icon.extended.Undo
 import java.net.URLEncoder
 import kotlin.math.roundToInt
 
@@ -404,6 +432,7 @@ private fun ProfileMoreAction(
     var infoLoading by remember(uid) { mutableStateOf(false) }
     var qrOpen by remember(uid) { mutableStateOf(false) }
     var blockOpen by remember(uid) { mutableStateOf(false) }
+    var editOpen by remember(uid) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val guest = App.repo.guest
@@ -489,11 +518,21 @@ private fun ProfileMoreAction(
                 )
                 add(
                     DropdownEntry(
-                        items = listOf(
-                            DropdownItem(text = "基本资料", onClick = { infoOpen = true }),
-                            DropdownItem(text = "复制链接", onClick = { copyLink() }),
-                            DropdownItem(text = "二维码", onClick = { qrOpen = true }),
-                        ),
+                        items = buildList {
+                            if (self) {
+                                add(DropdownItem(text = "设置", onClick = { nav.push(Route.Settings) }))
+                                add(DropdownItem(text = "编辑资料", onClick = { editOpen = true }))
+                                add(
+                                    DropdownItem(
+                                        text = "网页端编辑资料",
+                                        onClick = { nav.push(Route.Web(WEIBO_PROFILE_EDIT_URL, "编辑资料")) },
+                                    ),
+                                )
+                            }
+                            add(DropdownItem(text = "基本资料", onClick = { infoOpen = true }))
+                            add(DropdownItem(text = "复制链接", onClick = { copyLink() }))
+                            add(DropdownItem(text = "二维码", onClick = { qrOpen = true }))
+                        },
                     )
                 )
                 if (canManage) {
@@ -549,7 +588,16 @@ private fun ProfileMoreAction(
             user = user,
             detail = info,
             loading = infoLoading,
+            onEdit = if (self) ({ editOpen = true }) else null,
             onDismiss = { infoOpen = false },
+        )
+    }
+
+    if (editOpen) {
+        ProfileEditDialog(
+            user = user,
+            onOpenWeb = { nav.push(Route.Web(WEIBO_PROFILE_EDIT_URL, "编辑资料")) },
+            onDismiss = { editOpen = false },
         )
     }
 
@@ -661,6 +709,14 @@ fun ProfileContent(
 
     // 顶栏菜单要用头像和昵称，资料加载完就往上同步一份。
     LaunchedEffect(tabState.user) { onUser(tabState.user) }
+    LaunchedEffect(tabState) {
+        App.profileUpdatedEvents.collect { updated ->
+            val target = tabState.resolvedUid ?: tabState.user?.id
+            if (!target.isNullOrBlank() && updated.id == target) {
+                tabState.user = updated
+            }
+        }
+    }
 
     // 服务端说这个人被设了特别关注、本机又没记过标记，就补一次初值；之后一律以本机为准。
     LaunchedEffect(tabState.user?.id, tabState.user?.specialFollow) {
@@ -716,13 +772,35 @@ fun ProfileContent(
             item {
                 val currentUser = tabState.user
                 val tag = FollowTags[currentUser?.id ?: uid]
+                val targetId = currentUser?.id ?: tabState.resolvedUid
+                val isSelf = !App.repo.guest && !targetId.isNullOrBlank() && targetId == App.repo.session?.uid
                 ProfileHeader(
                     user = currentUser,
                     tag = tag,
                     topInset = topInset,
                     pullState = pullState,
+                    editableProfile = isSelf,
                     onActiveCover = onActiveCover,
                     onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
+                    onAvatar = { avatarUrl ->
+                        nav.push(
+                            Route.Images(
+                                pics = listOf(Pic(thumb = avatarUrl, large = avatarUrl)),
+                                index = 0,
+                                editableAvatar = isSelf,
+                            ),
+                        )
+                    },
+                    onRename = if (isSelf) {
+                        { newName ->
+                            runCatching {
+                                App.repo.updateProfileBasic(
+                                    screenName = newName,
+                                    membership = currentUser?.membership ?: Membership.None,
+                                )
+                            }
+                        }
+                    } else null,
                     onRelations = { kind ->
                         val target = currentUser?.id ?: tabState.resolvedUid
                         if (!target.isNullOrBlank()) nav.push(Route.Relations(target, kind))
@@ -857,6 +935,15 @@ fun ProfileHubContent(
             if (state.user != null) state.loadedUid = target
         }
     }
+    LaunchedEffect(guest, state) {
+        if (guest) return@LaunchedEffect
+        App.profileUpdatedEvents.collect { updated ->
+            val target = state.resolvedUid ?: state.user?.id
+            if (target.isNullOrBlank() || updated.id == target) {
+                state.user = updated
+            }
+        }
+    }
 
     val content: @Composable () -> Unit = {
         LazyColumn(
@@ -906,13 +993,34 @@ fun ProfileHubContent(
                 item {
                     val currentUser = state.user
                     val targetUid = currentUser?.id ?: state.resolvedUid
+                    val isSelf = !guest && !targetUid.isNullOrBlank()
                     ProfileHeader(
                         user = currentUser,
                         tag = null,
                         topInset = topInset,
                         pullState = pullState,
+                        editableProfile = isSelf,
                         onActiveCover = onActiveCover,
                         onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
+                        onAvatar = { avatarUrl ->
+                            nav.push(
+                                Route.Images(
+                                    pics = listOf(Pic(thumb = avatarUrl, large = avatarUrl)),
+                                    index = 0,
+                                    editableAvatar = isSelf,
+                                ),
+                            )
+                        },
+                        onRename = if (isSelf) {
+                            { newName ->
+                                runCatching {
+                                    App.repo.updateProfileBasic(
+                                        screenName = newName,
+                                        membership = currentUser?.membership ?: Membership.None,
+                                    )
+                                }
+                            }
+                        } else null,
                         onStatusesClick = {
                             if (!targetUid.isNullOrBlank()) nav.push(Route.Profile(targetUid))
                         },
@@ -937,7 +1045,7 @@ fun ProfileHubContent(
                     ) {
                         ArrowPreference(
                             title = "我的微博",
-                            startAction = { HubRowIcon(COUIIcons.Notes) },
+                            startAction = { HubRowIcon(MeIcons.Statuses) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Head,
                             modifier = Modifier.testTag("hub_my_statuses"),
@@ -948,7 +1056,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "我的收藏",
-                            startAction = { HubRowIcon(CoboIcons.Star) },
+                            startAction = { HubRowIcon(MeIcons.Favorites) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_favorites"),
@@ -957,7 +1065,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "我赞过的",
-                            startAction = { HubRowIcon(CoboIcons.Heart) },
+                            startAction = { HubRowIcon(MeIcons.MyLikes) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_my_likes"),
@@ -966,7 +1074,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "收到的赞",
-                            startAction = { HubRowIcon(CoboIcons.ThumbUp) },
+                            startAction = { HubRowIcon(MeIcons.ReceivedLikes) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_received_likes"),
@@ -975,7 +1083,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "收到的评论",
-                            startAction = { HubRowIcon(CoboIcons.Comment) },
+                            startAction = { HubRowIcon(MeIcons.ReceivedComments) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_received_comments"),
@@ -984,7 +1092,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "发出的评论",
-                            startAction = { HubRowIcon(CoboIcons.WriteComment) },
+                            startAction = { HubRowIcon(MeIcons.SentComments) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Tail,
                             modifier = Modifier.testTag("hub_sent_comments"),
@@ -1006,7 +1114,7 @@ fun ProfileHubContent(
                     if (guest) {
                         ArrowPreference(
                             title = "本地收藏",
-                            startAction = { HubRowIcon(CoboIcons.Star) },
+                            startAction = { HubRowIcon(MeIcons.Favorites) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Head,
                             modifier = Modifier.testTag("local_favorites"),
@@ -1016,7 +1124,7 @@ fun ProfileHubContent(
                     }
                     ArrowPreference(
                         title = "草稿箱",
-                        startAction = { HubRowIcon(COUIIcons.Edit) },
+                        startAction = { HubRowIcon(MeIcons.Drafts) },
                         centerStartAction = true,
                         cardListPosition = if (guest) CardListPosition.Middle else CardListPosition.Head,
                         modifier = Modifier.testTag("hub_drafts"),
@@ -1025,7 +1133,7 @@ fun ProfileHubContent(
                     PreferenceDivider()
                     ArrowPreference(
                         title = "浏览历史",
-                        startAction = { HubRowIcon(CoboIcons.History) },
+                        startAction = { HubRowIcon(MeIcons.History) },
                         centerStartAction = true,
                         cardListPosition = CardListPosition.Middle,
                         modifier = Modifier.testTag("hub_history"),
@@ -1034,7 +1142,7 @@ fun ProfileHubContent(
                     PreferenceDivider()
                     ArrowPreference(
                         title = "话题 / 超话",
-                        startAction = { HubRowIcon(CoboIcons.Topic) },
+                        startAction = { HubRowIcon(MeIcons.Topic) },
                         centerStartAction = true,
                         cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.Middle,
                         modifier = Modifier.testTag("hub_topic"),
@@ -1044,7 +1152,7 @@ fun ProfileHubContent(
                         PreferenceDivider()
                         ArrowPreference(
                             title = "附近",
-                            startAction = { HubRowIcon(CoboIcons.LocationOutline) },
+                            startAction = { HubRowIcon(MeIcons.Nearby) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Tail,
                             modifier = Modifier.testTag("hub_nearby"),
@@ -1132,11 +1240,11 @@ private fun HubRowIcon(imageVector: ImageVector) {
 }
 
 private fun SettingsGroup.hubIcon(): ImageVector = when (this) {
-    SettingsGroup.Display -> CoboIcons.TuneOutline
-    SettingsGroup.Feed -> CoboIcons.FeedOutline
-    SettingsGroup.AccountAndContent -> CoboIcons.ProfileOutline
-    SettingsGroup.Update -> CoboIcons.UpdateOutline
-    SettingsGroup.Other -> COUIIcons.Settings
+    SettingsGroup.Display -> MeIcons.DisplaySettings
+    SettingsGroup.Feed -> MeIcons.FeedSettings
+    SettingsGroup.AccountAndContent -> MeIcons.AccountSettings
+    SettingsGroup.Update -> MeIcons.UpdateSettings
+    SettingsGroup.Other -> MeIcons.OtherSettings
 }
 
 private val ProfileAvatarRing = 68.dp
@@ -1160,6 +1268,10 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
         label = "followPress",
     )
     val brighten = HighlightedIconButtonDefaults.PressedFillBrighten * press
+    val squircleEnabled = isSquircleEnabled()
+    val capsuleShape = remember(squircleEnabled) {
+        CapsuleOutlineShape(squircleEnabled = squircleEnabled)
+    }
     Box(
         modifier = modifier
             .height(36.dp)
@@ -1168,7 +1280,7 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(CircleShape)
+            .clip(capsuleShape)
             .drawBehind {
                 drawRect(
                     Brush.radialGradient(
@@ -1215,8 +1327,11 @@ private fun ProfileHeader(
     tag: FollowTag? = null,
     /** 顶栏（含状态栏）的高度：封面顶到屏幕最上沿，多出这一截藏在顶栏玻璃下面。 */
     topInset: Dp = 0.dp,
+    editableProfile: Boolean = false,
     onActiveCover: (String?) -> Unit = {},
     onCover: (List<Pic>, Int) -> Unit = { _, _ -> },
+    onAvatar: ((String) -> Unit)? = null,
+    onRename: (suspend (String) -> Result<User>)? = null,
     onStatusesClick: (() -> Unit)? = null,
     onRelations: (RelationKind) -> Unit = {},
 ) {
@@ -1346,12 +1461,24 @@ private fun ProfileHeader(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.size(ProfileAvatarRing)) {
+                    val avatarUrl = user?.avatar.orEmpty()
+                    val canOpenAvatar = avatarUrl.isNotBlank() && onAvatar != null
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.9f))
-                            .padding(2.dp),
+                            .padding(2.dp)
+                            .then(
+                                if (canOpenAvatar) {
+                                    Modifier
+                                        .imageOrigin(avatarUrl, 32.dp, aspect = 1f, model = avatarUrl)
+                                        .clickable(role = Role.Image) { onAvatar.invoke(avatarUrl) }
+                                        .testTag("profile_avatar")
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     ) {
                         Avatar(user?.avatar, 64.dp)
                     }
@@ -1364,6 +1491,69 @@ private fun ProfileHeader(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
+                val renameScope = rememberCoroutineScope()
+                val keyboardController = LocalSoftwareKeyboardController.current
+                var editingName by remember(user?.id) { mutableStateOf(false) }
+                var originalName by remember(user?.id) { mutableStateOf("") }
+                var nameDraft by remember(user?.id) { mutableStateOf(TextFieldValue("")) }
+                var savingName by remember(user?.id) { mutableStateOf(false) }
+                var pendingRenameConfirm by remember(user?.id) { mutableStateOf<String?>(null) }
+                val nameFocus = remember { FocusRequester() }
+                val editProgress by animateFloatAsState(
+                    targetValue = if (editingName) 1f else 0f,
+                    animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+                    label = "profileNameEdit",
+                )
+                val nameFontSize = (20f - 1.5f * editProgress).sp
+                LaunchedEffect(editingName) {
+                    if (editingName) {
+                        nameFocus.requestFocus()
+                        runCatching { App.repo.syncServerRenameHint() }
+                    }
+                }
+                BackHandler(enabled = editingName && !savingName) {
+                    nameDraft = TextFieldValue(originalName, TextRange(originalName.length))
+                    editingName = false
+                }
+                fun commitRename() {
+                    val trimmed = nameDraft.text.trim()
+                    if (trimmed.isEmpty()) {
+                        App.toast("昵称不能为空")
+                        return
+                    }
+                    if (trimmed == originalName) {
+                        editingName = false
+                        return
+                    }
+                    if (onRename == null || savingName) return
+                    keyboardController?.hide()
+                    pendingRenameConfirm = trimmed
+                }
+                pendingRenameConfirm?.let { targetName ->
+                    ConfirmDialog(
+                        title = "确认修改昵称",
+                        message = "确定将微博昵称修改为「$targetName」吗？",
+                        confirmText = "确认修改",
+                        onDismiss = { pendingRenameConfirm = null },
+                        onConfirm = {
+                            pendingRenameConfirm = null
+                            val handler = onRename ?: return@ConfirmDialog
+                            if (savingName) return@ConfirmDialog
+                            savingName = true
+                            renameScope.launch {
+                                handler(targetName)
+                                    .onSuccess {
+                                        editingName = false
+                                        App.toast("昵称已更新")
+                                    }
+                                    .onFailure {
+                                        App.toast(it.message ?: "修改昵称失败")
+                                    }
+                                savingName = false
+                            }
+                        },
+                    )
+                }
                 Column(Modifier.weight(1f)) {
                     val membership = user?.membership ?: Membership.None
                     if (tag != null || membership != Membership.None) {
@@ -1380,14 +1570,171 @@ private fun ProfileHeader(
                         }
                         Spacer(Modifier.height(2.dp))
                     }
-                    Text(
-                        user?.name ?: "加载中…",
-                        color = onCoverColor,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .drawBehind {
+                                if (editProgress > 0.01f) {
+                                    val stroke = 1.5.dp.toPx()
+                                    drawLine(
+                                        color = onCoverColor.copy(alpha = 0.85f * editProgress),
+                                        start = Offset(0f, size.height),
+                                        end = Offset(size.width * editProgress, size.height),
+                                        strokeWidth = stroke,
+                                    )
+                                }
+                            }
+                            .padding(bottom = (3f * editProgress).dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (editingName) {
+                            BasicTextField(
+                                value = nameDraft,
+                                onValueChange = { next ->
+                                    val clean = next.text.replace("\n", "").take(30)
+                                    nameDraft = if (clean == next.text) next else next.copy(text = clean)
+                                },
+                                singleLine = true,
+                                enabled = !savingName,
+                                textStyle = TextStyle(
+                                    color = onCoverColor,
+                                    fontSize = nameFontSize,
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
+                                cursorBrush = SolidColor(onCoverColor),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { commitRename() }),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(nameFocus)
+                                    .testTag("profile_my_id_input"),
+                            )
+                        } else {
+                            val canInlineRename = editableProfile && user != null && onRename != null
+                            Text(
+                                text = if (editProgress > 0.01f) nameDraft.text else (user?.name ?: "加载中…"),
+                                color = onCoverColor,
+                                fontSize = nameFontSize,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .then(
+                                        if (canInlineRename) {
+                                            Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .clickable {
+                                                    val current = user.name
+                                                    originalName = current
+                                                    nameDraft = TextFieldValue(current, TextRange(current.length))
+                                                    editingName = true
+                                                }
+                                                .testTag("profile_my_id")
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
+                            )
+                        }
+                        AnimatedVisibility(
+                            visible = editingName,
+                            enter = fadeIn(tween(220)) +
+                                scaleIn(
+                                    initialScale = 0.72f,
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                ) +
+                                expandHorizontally(
+                                    expandFrom = Alignment.End,
+                                    animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                ),
+                            exit = fadeOut(tween(180)) +
+                                scaleOut(
+                                    targetScale = 0.72f,
+                                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                                ) +
+                                shrinkHorizontally(
+                                    shrinkTowards = Alignment.End,
+                                    animationSpec = tween(180, easing = FastOutSlowInEasing),
+                                ),
+                        ) {
+                            val trimmedDraft = nameDraft.text.trim()
+                            val canSave = !savingName && trimmedDraft.isNotEmpty() && trimmedDraft != originalName
+                            val saveAlpha by animateFloatAsState(
+                                targetValue = if (canSave) 0.95f else 0.35f,
+                                animationSpec = tween(durationMillis = 160),
+                                label = "profileNameSaveAlpha",
+                            )
+                            Row(
+                                modifier = Modifier.padding(start = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .clickable(enabled = !savingName, role = Role.Button) {
+                                            nameDraft = TextFieldValue(originalName, TextRange(originalName.length))
+                                            editingName = false
+                                        }
+                                        .testTag("profile_name_restore"),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = COUIIcons.Undo,
+                                        contentDescription = "撤回",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = onCoverColor.copy(alpha = 0.9f),
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .clickable(enabled = canSave, role = Role.Button) {
+                                            commitRename()
+                                        }
+                                        .testTag("profile_name_save"),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = COUIIcons.Ok,
+                                        contentDescription = if (savingName) "保存中" else "保存",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = onCoverColor.copy(alpha = saveAlpha),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = editingName,
+                        enter = fadeIn(tween(200)) + expandVertically(animationSpec = tween(200)),
+                        exit = fadeOut(tween(150)) + shrinkVertically(animationSpec = tween(150)),
+                    ) {
+                        val renameVersion = App.profileRenameVersion
+                        val renameUid = user?.id.orEmpty().ifBlank { runCatching { App.repo.session?.uid.orEmpty() }.getOrDefault("") }
+                        val renameRecord = remember(renameUid, renameVersion) {
+                            runCatching { App.store.profileRenameRecord(renameUid) }.getOrDefault(ProfileRenameRecord())
+                        }
+                        val renameStatus = remember(renameRecord, membership) {
+                            computeProfileRenameStatus(renameRecord, membership)
+                        }
+                        Text(
+                            text = renameStatus.summary,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = if (renameStatus.limited) {
+                                if (hasCover) Color(0xFFFFD180) else scheme.error
+                            } else {
+                                onCoverColor.copy(alpha = 0.78f)
+                            },
+                            modifier = Modifier
+                                .padding(top = 4.dp)
+                                .testTag("profile_name_hint"),
+                        )
+                    }
                     if (user?.verified == true) {
                         Text(
                             "已认证",

@@ -18,8 +18,7 @@ import kotlin.math.abs
 class SettingsE2eTest : UiE2eTest() {
 
     private fun openSettings() {
-        tapTag("bottom_tab_profile")
-        tapTag("top_settings")
+        openSettingsFromProfileTab()
         waitText("设置")
         waitTag("settings_dark")
     }

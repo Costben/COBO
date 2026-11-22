@@ -362,12 +362,12 @@ class FeedStore(
             gaps.clear()
             items.clear()
             items.addAll(unique)
-            lastReadBeforeStatusId = when {
-                previousHeadId == null -> null
-                unique.indexOfFirst { it.id == previousHeadId } > 0 -> previousHeadId
-                unique.firstOrNull()?.id == previousHeadId ->
-                    lastReadBeforeStatusId?.takeIf { id -> unique.indexOfFirst { it.id == id } > 0 }
-                else -> null
+            lastReadBeforeStatusId = if (
+                previousHeadId != null && unique.indexOfFirst { it.id == previousHeadId } > 0
+            ) {
+                previousHeadId
+            } else {
+                null
             }
             sinceId = page.sinceId
             end = unique.isEmpty()
@@ -395,6 +395,7 @@ class FeedStore(
         val firstPage = loader(null, force)
         val firstUnique = firstPage.items.distinctBy { it.id }
         if (firstUnique.isEmpty()) {
+            lastReadBeforeStatusId = null
             loaded = true
             resumed = false
             persist()
@@ -423,6 +424,7 @@ class FeedStore(
             if (seenNew.add(s.id)) collected.add(s)
         }
         if (collected.isEmpty()) {
+            lastReadBeforeStatusId = null
             loaded = true
             resumed = false
             persist()

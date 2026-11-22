@@ -21,11 +21,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -56,6 +58,8 @@ import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Back
+import io.github.suqi8.coui.kmp.squircle.SquircleShape
+import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
 @Composable
@@ -135,6 +139,20 @@ fun VerifiedBadge(
 internal val CompactBadgeHeight = 14.dp
 internal val RegularBadgeHeight = 16.dp
 
+/** VIP / 关注标记 / 粉丝兜底徽标共用的连续曲率圆角形状。 */
+@Composable
+internal fun badgeShape(compact: Boolean): Shape {
+    val squircleEnabled = isSquircleEnabled()
+    val radius = if (compact) 4.dp else 5.dp
+    return remember(squircleEnabled, radius) {
+        SquircleShape(
+            cornerRadius = radius,
+            squircleEnabled = squircleEnabled,
+            capsuleCircleBlend = false,
+        )
+    }
+}
+
 private data class MemberBadgeStyle(
     val background: Color,
     val content: Color,
@@ -160,7 +178,7 @@ fun MemberBadge(
         Membership.Vvip -> MemberBadgeStyle(MemberVvipBg, MemberVvipGold, "vip_badge_vvip", "VVIP")
     }
     val text = if (rank > 0) "${style.prefix}$rank" else style.prefix
-    val shape = RoundedCornerShape(if (compact) 4.dp else 5.dp)
+    val shape = badgeShape(compact)
     Box(
         modifier = modifier
             .height(height)

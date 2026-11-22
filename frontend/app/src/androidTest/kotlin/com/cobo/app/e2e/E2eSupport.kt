@@ -120,6 +120,16 @@ abstract class UiE2eTest {
 
     protected fun tapTag(tag: String) = clickSelector(By.res(tag), "节点 [$tag]")
 
+    protected fun openSettingsFromProfileTab() {
+        tapTag("bottom_tab_profile")
+        if (existsTag("top_me_menu", 2_000)) {
+            tapTag("top_me_menu")
+            clickText("设置")
+        } else {
+            tapTag("top_settings")
+        }
+    }
+
     protected fun tapText(text: String) = clickSelector(By.text(text), "文本 [$text]")
 
     protected fun clickText(text: String, timeout: Long = UI_WAIT) =

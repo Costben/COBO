@@ -442,4 +442,130 @@ class Store(private val context: Context) {
         o.put(uid, token)
         write("chat-seen.json", o)
     }
+
+    private fun readProfileRenameMap(): JSONObject {
+        val f = file("profile-rename.json")
+        if (!f.exists()) return JSONObject()
+        return runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject())
+    }
+
+    fun profileRenameRecord(uid: String): ProfileRenameRecord {
+        if (uid.isBlank()) return ProfileRenameRecord()
+        val item = readProfileRenameMap().optJSONObject(uid) ?: return ProfileRenameRecord()
+        return ProfileRenameRecord(
+            lastRenamedAtMs = item.optLong("lastRenamedAtMs", 0L),
+            lastBlockedAtMs = item.optLong("lastBlockedAtMs", 0L),
+            lastBlockedReason = item.optString("lastBlockedReason", ""),
+        )
+    }
+
+    fun recordProfileRenamed(uid: String, atMs: Long = System.currentTimeMillis()) {
+        if (uid.isBlank()) return
+        val map = readProfileRenameMap()
+        map.put(
+            uid,
+            JSONObject()
+                .put("lastRenamedAtMs", atMs)
+                .put("lastBlockedAtMs", 0L)
+                .put("lastBlockedReason", ""),
+        )
+        write("profile-rename.json", map)
+    }
+
+    fun recordProfileRenameBlocked(
+        uid: String,
+        reason: String,
+        atMs: Long = System.currentTimeMillis(),
+    ) {
+        if (uid.isBlank()) return
+        val prev = profileRenameRecord(uid)
+        val map = readProfileRenameMap()
+        map.put(
+            uid,
+            JSONObject()
+                .put("lastRenamedAtMs", prev.lastRenamedAtMs)
+                .put("lastBlockedAtMs", atMs)
+                .put("lastBlockedReason", reason.take(80)),
+        )
+        write("profile-rename.json", map)
+    }
+}
+
+data class ProfileRenameRecord(
+    val lastRenamedAtMs: Long = 0L,
+    val lastBlockedAtMs: Long = 0L,
+    val lastBlockedReason: String = "",
+)
+
+data class ProfileRenameStatus(
+    val summary: String,
+    val limited: Boolean,
+)
+
+private const val ONE_DAY_MS = 86_400_000L
+
+internal fun computeProfileRenameStatus(
+    record: ProfileRenameRecord,
+    membership: Membership,
+    nowMs: Long = System.currentTimeMillis(),
+): ProfileRenameStatus {
+    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+    val lastTimeText = if (record.lastRenamedAtMs > 0L) {
+        fmt.format(java.util.Date(record.lastRenamedAtMs))
+    } else {
+        "暂无本机记录"
+    }
+    val recentBlock = record.lastBlockedAtMs > 0L && record.lastBlockedAtMs >= record.lastRenamedAtMs
+    if (recentBlock) {
+        val reason = record.lastBlockedReason
+            .removePrefix("修改失败：")
+            .replace(Regex("\\s*（HTTP\\s*\\d+）"), "")
+            .trim()
+            .ifBlank { "未到改名间隔或次数已达上限" }
+        return ProfileRenameStatus(
+            summary = "上次改名：$lastTimeText · 当前暂不可改名（$reason）",
+            limited = true,
+        )
+    }
+    if (record.lastRenamedAtMs > 0L) {
+        val elapsed = (nowMs - record.lastRenamedAtMs).coerceAtLeast(0L)
+        return when (membership) {
+            Membership.None -> {
+                if (elapsed < 365L * ONE_DAY_MS) {
+                    ProfileRenameStatus(
+                        summary = "上次改名：$lastTimeText · 非会员每年限改 1 次，当前暂不可改",
+                        limited = true,
+                    )
+                } else {
+                    ProfileRenameStatus(
+                        summary = "上次改名：$lastTimeText · 当前可尝试改名",
+                        limited = false,
+                    )
+                }
+            }
+            Membership.Vip, Membership.Svip, Membership.Vvip -> {
+                if (elapsed < 7L * ONE_DAY_MS) {
+                    ProfileRenameStatus(
+                        summary = "上次改名：$lastTimeText · 距上次不足 7 天，可能处于冷却期",
+                        limited = true,
+                    )
+                } else {
+                    ProfileRenameStatus(
+                        summary = "上次改名：$lastTimeText · 当前可尝试改名（以年度次数为准）",
+                        limited = false,
+                    )
+                }
+            }
+        }
+    }
+    return when (membership) {
+        Membership.None -> ProfileRenameStatus(
+            summary = "上次改名：暂无本机记录 · 非会员每年限改 1 次，可尝试提交",
+            limited = false,
+        )
+        Membership.Vip, Membership.Svip, Membership.Vvip -> ProfileRenameStatus(
+            summary = "上次改名：暂无本机记录 · 会员享年度多次改名（需满足间隔），可尝试提交",
+            limited = false,
+        )
+    }
 }

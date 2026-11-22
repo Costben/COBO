@@ -172,6 +172,133 @@ object ContainerApi {
         return checkSuccess(resp.json)
     }
 
+    suspend fun postFileMultipart(
+        path: String,
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        parts: Map<String, String> = emptyMap(),
+        fileField: String,
+        fileName: String,
+        bytes: ByteArray,
+        mimeType: String = "image/jpeg",
+        queryExtra: Map<String, String?> = emptyMap(),
+        includeAuthInBody: Boolean = true,
+    ): JSONObject {
+        val resolvedAid = aid.ifBlank { ClientLogin.ensureAid() }
+        val query = buildQuery(path, uid, gsid, resolvedAid, queryExtra)
+        val body = if (includeAuthInBody) buildBodyParts(uid, gsid, parts) else parts
+        val resp = Api.containerPostFileShare(
+            path = path,
+            query = query,
+            form = body,
+            fileField = fileField,
+            fileName = fileName,
+            bytes = bytes,
+            mimeType = mimeType,
+            headers = ClientLogin.validatorHeaders(uid),
+        )
+        ClientLogin.recordValidator(resp.xValidator)
+        return checkSuccess(resp.json)
+    }
+
+    /** 上传并更换头像：走 Share 容器通道 `account/avatar_upload`。 */
+    suspend fun uploadAvatar(
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        bytes: ByteArray,
+        fileName: String = "avatar.jpg",
+        mimeType: String = "image/jpeg",
+        cropWidth: Int = 720,
+    ): JSONObject {
+        if (bytes.isEmpty()) throw ApiException("图片内容为空")
+        val parts = mapOf(
+            "trim_x" to "0",
+            "trim_y" to "0",
+            "trim_width" to cropWidth.coerceAtLeast(1).toString(),
+        )
+        return try {
+            postFileMultipart(
+                path = "account/avatar_upload",
+                uid = uid,
+                gsid = gsid,
+                aid = aid,
+                parts = parts,
+                fileField = "avatar",
+                fileName = fileName,
+                bytes = bytes,
+                mimeType = mimeType,
+            )
+        } catch (e: ApiException) {
+            val msg = e.message.orEmpty()
+            val retryWithImageField = e.errno in setOf("10008", "20002", "20003") ||
+                msg.contains("image", ignoreCase = true) ||
+                msg.contains("参数")
+            if (!retryWithImageField) throw e
+            postFileMultipart(
+                path = "account/avatar_upload",
+                uid = uid,
+                gsid = gsid,
+                aid = aid,
+                parts = parts,
+                fileField = "image",
+                fileName = fileName,
+                bytes = bytes,
+                mimeType = mimeType,
+            )
+        }
+    }
+
+    /** 更新昵称 / 个人简介：走 Share 容器通道 `users/update`。 */
+    suspend fun updateProfileBasic(
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        screenName: String? = null,
+        description: String? = null,
+    ): JSONObject {
+        val form = LinkedHashMap<String, String>()
+        if (screenName != null) form["screen_name"] = screenName
+        if (description != null) form["description"] = description
+        if (form.isEmpty()) throw ApiException("没有需要修改的资料")
+        return post(
+            path = "users/update",
+            uid = uid,
+            gsid = gsid,
+            aid = aid,
+            form = form,
+        )
+    }
+
+    /** 上传并更换主页背景图：先上传图片拿到媒体 ID，再提交 `profile/set/pure/covers`。 */
+    suspend fun updateCover(
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        bytes: ByteArray,
+        fileName: String = "cover.jpg",
+    ): JSONObject {
+        val uploaded = uploadPic(
+            uid = uid,
+            gsid = gsid,
+            aid = aid,
+            bytes = bytes,
+            fileName = fileName,
+            md5Hex = md5Hex(bytes),
+        )
+        return post(
+            path = "profile/set/pure/covers",
+            uid = uid,
+            gsid = gsid,
+            aid = aid,
+            form = mapOf(
+                "covers" to uploaded.fid,
+                "pic_id" to uploaded.fid,
+            ),
+        )
+    }
+
     internal fun buildPublishMediaJson(media: List<UploadedMedia>): String {
         val arr = JSONArray()
         for (item in media) {

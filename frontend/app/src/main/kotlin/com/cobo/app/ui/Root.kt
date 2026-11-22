@@ -205,7 +205,17 @@ fun CoboRoot() {
                 } else Route.Vote(voteId))
                 isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
                 isVideoLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "视频"))
-                statusId != null -> nav.push(Route.Detail(statusId, "", readOnly))
+                isWeiboWboxLink(url) ->
+                    App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
+                url.contains("containerid=231601_", ignoreCase = true) ->
+                    App.toast("该微博卡片详情暂不支持在第三方客户端打开，可直接查看上方卡片图")
+                statusId != null -> if (current is Route.Detail &&
+                    (current.id == statusId || (current.mid.isNotBlank() && current.mid == statusId))
+                ) {
+                    App.requestDetailRefresh(current.id)
+                } else {
+                    nav.push(Route.Detail(statusId, "", readOnly))
+                }
                 uid != null -> nav.push(Route.Profile(uid))
                 // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
                 mention != null -> scope.launch {
@@ -228,11 +238,19 @@ fun CoboRoot() {
                         nav.push(if (readOnly) {
                             Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$vid", "投票")
                         } else Route.Vote(vid))
+                    } else if (isWeiboWboxLink(resolved)) {
+                        App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
                     } else {
                         val sid = weiboStatusId(resolved)
                         val resolvedTopicQuery = weiboTopicQuery(resolved)
                         if (sid != null) {
-                            nav.push(Route.Detail(sid, "", readOnly))
+                            if (current is Route.Detail &&
+                                (current.id == sid || (current.mid.isNotBlank() && current.mid == sid))
+                            ) {
+                                App.requestDetailRefresh(current.id)
+                            } else {
+                                nav.push(Route.Detail(sid, "", readOnly))
+                            }
                         } else if (resolvedTopicQuery != null) {
                             nav.push(Route.TopicFeed(resolvedTopicQuery))
                         } else if (isVideoLink(resolved)) {
@@ -260,12 +278,14 @@ fun CoboRoot() {
     var saveTargets by remember { mutableStateOf<List<String>?>(null) }
     var saveIndex by remember { mutableIntStateOf(0) }
     var savePrecise by remember { mutableStateOf<PreciseClickState?>(null) }
+    var savePreserveUrls by remember { mutableStateOf(false) }
     val saveState = rememberImageSaveState()
     val imageSaver = remember {
-        ImageSaver { urls, index, precise ->
+        ImageSaver { urls, index, precise, preserveUrls ->
             saveTargets = urls
             saveIndex = index
             savePrecise = precise
+            savePreserveUrls = preserveUrls
         }
     }
     // 玻璃菜单要有一层能采样的底：把整摞路由录进 backdrop，菜单浮在上面做模糊和外发光。
@@ -396,6 +416,7 @@ fun CoboRoot() {
                         precise = savePrecise,
                         onDismiss = { saveTargets = null },
                         state = saveState,
+                        preserveUrls = savePreserveUrls,
                     )
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
@@ -833,7 +854,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.Nearby -> NearbyScreen(nav)
         is Route.Topic -> TopicScreen(nav, route.name)
         is Route.TopicFeed -> TopicFeedScreen(nav, route.topic)
-        is Route.Images -> ImageViewerScreen(nav, route.pics, route.index)
+        is Route.Images -> ImageViewerScreen(nav, route.pics, route.index, route.editableAvatar)
         is Route.Video -> VideoScreen(nav, route.url, route.title)
         is Route.Vote -> VoteScreen(nav, route.voteId)
         Route.TabLab -> TabBarLabScreen()

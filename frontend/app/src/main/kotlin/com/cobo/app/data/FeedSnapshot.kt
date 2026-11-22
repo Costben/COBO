@@ -238,6 +238,9 @@ private fun videoToSnapshot(v: VideoInfo): JSONObject = JSONObject().apply {
 private fun bigPicToSnapshot(p: BigPicInfo): JSONObject = JSONObject().apply {
     put("url", p.url)
     put("scheme", p.scheme)
+    if (p.title.isNotBlank()) put("title", p.title)
+    if (p.subtitle.isNotBlank()) put("subtitle", p.subtitle)
+    if (!p.isLarge) put("isLarge", false)
 }
 
 internal fun statusToSnapshot(s: Status): JSONObject = JSONObject().apply {
@@ -298,7 +301,17 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
         },
         bigPic = o.optJSONObject("bigPic")?.let {
             val url = it.str("url")
-            if (url.isNotBlank()) BigPicInfo(url = url, scheme = it.str("scheme")) else null
+            if (url.isNotBlank()) {
+                BigPicInfo(
+                    url = url,
+                    scheme = it.str("scheme"),
+                    title = it.str("title"),
+                    subtitle = it.str("subtitle"),
+                    isLarge = it.optBoolean("isLarge", true),
+                )
+            } else {
+                null
+            }
         },
         retweeted = statusFromSnapshot(o.optJSONObject("retweeted")),
         reposts = o.int("reposts"),

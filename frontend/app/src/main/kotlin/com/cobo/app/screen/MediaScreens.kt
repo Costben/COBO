@@ -14,6 +14,7 @@ import android.os.Environment
 import java.io.File
 import java.security.MessageDigest
 import android.provider.MediaStore
+import android.net.Uri
 import android.provider.Settings
 import android.util.Log
 import android.view.View
@@ -27,6 +28,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -45,6 +47,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -104,6 +107,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
@@ -121,6 +125,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -134,6 +139,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -142,6 +149,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -180,6 +188,8 @@ import com.cobo.app.App
 import com.cobo.app.data.Api
 import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.Pic
+import com.cobo.app.data.ProfileWebFallbackException
+import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.CoboPredictiveBackHandler
 import com.cobo.app.ui.ExpandEasing
@@ -193,32 +203,41 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.openExternalUrl
 import com.cobo.app.ui.ThumbBounds
 import com.cobo.app.ui.unwrapSinaUrl
+import com.cobo.app.ui.components.AvatarCropDialog
+import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.extractIntentFallbackUrl
 import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
+import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarDefaults
+import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
 import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
+import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
+import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
-import io.github.suqi8.coui.kmp.basic.materialShadowEdge
-import io.github.suqi8.coui.kmp.basic.GlassContainer
 import io.github.suqi8.coui.kmp.basic.IntentSlider
 import io.github.suqi8.coui.kmp.basic.IntentSliderPlaybackState
 import io.github.suqi8.coui.kmp.basic.IntentSliderSize
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
-import io.github.suqi8.coui.kmp.basic.couiGlassSurface
-import io.github.suqi8.coui.kmp.basic.rememberGlassHighlight
+import io.github.suqi8.coui.kmp.basic.MetaBallParticle
+import io.github.suqi8.coui.kmp.basic.MetaBallSurface
+import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.couiTouchMotion
+import io.github.suqi8.coui.kmp.basic.rememberCOUITouchMotionState
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.basic.preciseClickAnchor
 import io.github.suqi8.coui.kmp.basic.rememberPreciseClickState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.icon.extended.Lock
+import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.LocalContentColor
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
@@ -226,6 +245,7 @@ import io.github.suqi8.coui.kmp.utils.CouiHapticEffect
 import io.github.suqi8.coui.kmp.utils.rememberCouiHaptic
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Download
+import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Pause
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import kotlinx.coroutines.CoroutineScope
@@ -270,10 +290,8 @@ private const val ZoomEpsilon = 0.01f
 // Double tap and toggle zoom animation duration.
 private const val ZoomMillis = 220
 
-// One height for every control in the viewer's top bar: a 38 dp circle next to a 32 dp pill
-// reads as a big dot and a small one, which is exactly what it looked like.
-private val BarHeight = 38.dp
-private val BarRadius = 19.dp
+// 看图页与视频播放页控件统一使用与视频页相同的 36dp 高度与 HighlightedIconButton 材质体系。
+private val MediaControlHeight = 36.dp
 
 /**
  * The ramp the viewer's chrome sits on. A photo can be white right up to the status bar, and the
@@ -381,51 +399,143 @@ private fun ViewerSystemBars(visible: Boolean) {
 }
 
 /**
- * A ColorOS glass chip.
- *
- * `couiGlassSurface` returns its own modifier chain and drops anything in front of it, so every
- * caller has to put size/position/padding *after* this call — that is why the callers below wrap
- * their controls in a plain [Box] for placement.
+ * 与视频页 [HighlightedIconButton] 完全统一材质的胶囊控件：复用 [HighlightedIconButtonDefaults]
+ * 的填充色、边缘高光、暗色焦散/亮色投影、[couiTouchMotion] 聚光与按压缩放，用于图片页与视频页的胶囊按钮及提示。
  */
 @Composable
-private fun Modifier.viewerGlass(
-    shape: Shape,
-    tint: Color,
-    alpha: Float,
-    container: GlassContainer = GlassContainer.Small,
-): Modifier {
-    val backdrop = LocalBackdrop.current
-    return couiGlassSurface(
-        backdrop = backdrop,
-        shape = shape,
-        containerColor = tint,
-        fallback = Modifier.background(tint.copy(alpha = alpha), shape),
-        containerAlpha = alpha,
-        highlight = rememberGlassHighlight(container, backdrop),
-    )
-}
-
-@Composable
-private fun ViewerGlyph(
-    plate: Color,
-    alpha: Float,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit,
+private fun MediaMaterialPill(
+    modifier: Modifier = Modifier,
+    height: Dp = MediaControlHeight,
+    horizontalPadding: Dp = 14.dp,
+    onClick: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .viewerGlass(CircleShape, plate, alpha)
-            .size(BarHeight)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
+    val scheme = COUITheme.colorScheme
+    val isDark = scheme.background.luminance() < 0.5f
+    val density = LocalDensity.current
+    val squircleEnabled = isSquircleEnabled()
+    val capsuleShape = remember(squircleEnabled) { CapsuleOutlineShape(squircleEnabled = squircleEnabled) }
+    val touchMotion = rememberCOUITouchMotionState()
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressProgress by animateFloatAsState(
+        targetValue = if (onClick != null && pressed) 1f else 0f,
+        animationSpec = HighlightedIconButtonDefaults.PressSpring,
+        label = "mediaMaterialPillPress",
+    )
+    val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * pressProgress
+    val brighten = HighlightedIconButtonDefaults.PressedFillBrighten * pressProgress
+    val fillColor = colorLerp(
+        HighlightedIconButtonDefaults.fillCenter(isDark),
+        Color.White,
+        brighten,
+    ).copy(alpha = HighlightedIconButtonDefaults.FillAlpha)
+    val contentColor = colorLerp(
+        scheme.onBackground,
+        Color.White,
+        HighlightedIconButtonDefaults.PressedContentBrighten * pressProgress,
+    )
+    val currentOnClick by rememberUpdatedState(onClick)
+    var pillWidthPx by remember { mutableIntStateOf(0) }
+    val pillWidth = with(density) { pillWidthPx.toDp() }
+    val clickableModifier = remember(onClick != null, interactionSource) {
+        if (onClick != null) {
+            Modifier.clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = { currentOnClick?.invoke() },
+            )
+        } else {
+            Modifier
+        }
+    }
+
+    CompositionLocalProvider(LocalContentColor provides contentColor) {
+        Box(
+            modifier = modifier
+                .height(height)
+                .couiTouchMotion(
+                    enabled = onClick != null,
+                    motionState = touchMotion,
+                    pressScaleEnabled = false,
+                    shape = capsuleShape,
+                    lightParams = SpotLightDefaults.circleParams1(isDark),
+                    lightEnabled = onClick != null,
+                    extraTransform = {
+                        scaleX += scale - 1f
+                        scaleY += scale - 1f
+                    },
+                )
+                .then(clickableModifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!isDark && pillWidthPx > 0) {
+                Box(
+                    modifier = Modifier
+                        .size(pillWidth, height)
+                        .dropShadow(shape = capsuleShape, shadow = BottomFloatingToolbarDefaults.Shadow),
+                )
+            }
+            MetaBallSurface(
+                particles = if (pillWidthPx > 0) {
+                    listOf(
+                        MetaBallParticle(
+                            centerX = pillWidth / 2,
+                            centerY = height / 2,
+                            width = pillWidth,
+                            height = height,
+                            cornerRadius = height / 2,
+                        ),
+                    )
+                } else {
+                    emptyList()
+                },
+                modifier = Modifier.matchParentSize(),
+                color = fillColor,
+                backdrop = null,
+                rimColor = Color.White.copy(
+                    alpha = HighlightedIconButtonDefaults.stroke(isDark).edgeAlpha * (1f - pressProgress).coerceIn(0f, 1f),
+                ),
+                rimBottomScale = 1f,
+                bottomGlowColor = if (isDark) {
+                    HighlightedIconButtonDefaults.DarkHaloColor.copy(
+                        alpha = HighlightedIconButtonDefaults.DarkHaloColor.alpha * (1f - pressProgress).coerceIn(0f, 1f),
+                    )
+                } else {
+                    null
+                },
+                continuousCurve = true,
+            )
+            Box(
+                modifier = Modifier
+                    .height(height)
+                    .onSizeChanged { pillWidthPx = it.width }
+                    .padding(horizontal = horizontalPadding),
+                contentAlignment = Alignment.Center,
+                content = content,
+            )
+        }
     }
 }
 
 @Composable
-fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
-    val urls = pics.map { it.large }
+fun ImageViewerScreen(
+    nav: NavState,
+    pics: List<Pic>,
+    index: Int,
+    editableAvatar: Boolean = false,
+) {
+    var avatarOverride by remember { mutableStateOf<String?>(null) }
+    val effectivePics = remember(pics, avatarOverride) {
+        val override = avatarOverride
+        if (editableAvatar && !override.isNullOrBlank() && pics.isNotEmpty()) {
+            listOf(pics[0].copy(thumb = override, large = override)) + pics.drop(1)
+        } else {
+            pics
+        }
+    }
+    val urls = effectivePics.map { it.large }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
@@ -433,8 +543,8 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val origins = LocalImageOrigins.current
     val density = LocalDensity.current.density
     val frame = remember { ViewerFrame() }
-    remember(pics) {
-        pics.forEach { pic ->
+    remember(effectivePics) {
+        effectivePics.forEach { pic ->
             if (pic.width > 0 && pic.height > 0 && pic.large !in frame.aspects) {
                 frame.aspects[pic.large] = pic.width.toFloat() / pic.height
             }
@@ -448,6 +558,15 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     var chrome by remember { mutableStateOf(true) }
     var original by remember { mutableStateOf(App.settings.imageBrowseQuality == ImageBrowseQuality.Original) }
     var menu by remember { mutableStateOf(false) }
+    var avatarMoreOpen by remember { mutableStateOf(false) }
+    var pendingCropUri by remember { mutableStateOf<Uri?>(null) }
+    var uploadingAvatar by remember { mutableStateOf(false) }
+    var avatarFallbackMessage by remember { mutableStateOf<String?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) pendingCropUri = uri
+    }
     val precise = rememberPreciseClickState()
     // 保存原图 / 一键保存原图与信息流共用同一套队列，HUD 和权限也一起管。
     val saver = rememberImageSaveState()
@@ -456,7 +575,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
     val pagerState = rememberPagerState(initialPage = start) { urls.size }
     val current = urls.getOrNull(pagerState.currentPage).orEmpty()
 
-    val currentPic = pics.getOrNull(pagerState.currentPage)
+    val currentPic = effectivePics.getOrNull(pagerState.currentPage)
     val viewerOwner = remember { Any() }
 
     // 记下正在看的是哪一张：被它盖住的那枚缩略图角标要等这一页撤走再淡回来，别的缩略图不动。
@@ -547,13 +666,14 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                     .fillMaxSize()
                     .preciseClickAnchor(precise),
             ) {
-                val pagePic = pics[page]
+                val pagePic = effectivePics[page]
                 ZoomableImage(
                     url = urls[page],
                     live = if (pagePic.isVideo) "" else pagePic.live,
                     thumbModel = origins.modelOf(urls[page]),
                     thumbCacheKey = origins.cacheKeyOf(urls[page]),
                     original = original,
+                    preserveUrl = pagePic.preserveUrl,
                     isCurrent = pagerState.currentPage == page,
                     isSettledElsewhere = pagerState.settledPage != page,
                     canPage = urls.size > 1,
@@ -638,9 +758,8 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                         .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = ScrimTail),
                 ) {
                     Box(Modifier.align(Alignment.CenterStart)) {
-                        ViewerGlyph(
-                            plate = plate,
-                            alpha = plateAlpha,
+                        HighlightedIconButton(
+                            size = MediaControlHeight,
                             onClick = {
                                 if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
                                     frame.dismiss.cancelActive()
@@ -648,23 +767,18 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                                 }
                             },
                         ) {
-                            Icon(COUIIcons.Close, "关闭", Modifier, tint = ink)
+                            Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
                         }
                     }
 
                     // Centred on the screen rather than tucked against the close button.
                     Box(Modifier.align(Alignment.Center)) {
-                        Box(
-                            modifier = Modifier
-                                .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
-                                .height(BarHeight)
-                                .padding(horizontal = 14.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
+                        MediaMaterialPill {
                             Text(
                                 "${pagerState.currentPage + 1} / ${urls.size}",
-                                color = ink,
+                                color = LocalContentColor.current,
                                 fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
                             )
                         }
                     }
@@ -674,42 +788,124 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                             modifier = Modifier.align(Alignment.CenterEnd),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
-                                    .height(BarHeight)
-                                    .clickable {
-                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                            original = !original
-                                            saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
-                                        }
-                                    }
-                                    .padding(horizontal = 14.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    "原图",
-                                    color = if (original) COUITheme.colorScheme.primary else ink,
-                                    fontSize = 13.sp,
-                                )
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            ViewerGlyph(
-                                plate = plate,
-                                alpha = plateAlpha,
+                            MediaMaterialPill(
                                 onClick = {
                                     if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                        saver.saveOne(current)
+                                        original = !original
+                                        saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
                                     }
                                 },
                             ) {
-                                Icon(COUIIcons.Download, "保存原图", Modifier.size(19.dp), tint = ink)
+                                Text(
+                                    "原图",
+                                    color = if (original) COUITheme.colorScheme.primary else LocalContentColor.current,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            if (editableAvatar) {
+                                val menuScheme = COUITheme.colorScheme
+                                Box {
+                                    HighlightedIconButton(
+                                        size = MediaControlHeight,
+                                        onClick = {
+                                            if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                avatarMoreOpen = true
+                                            }
+                                        },
+                                    ) {
+                                        val dotColor = LocalContentColor.current
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                                            modifier = Modifier
+                                                .semantics { contentDescription = "更多" }
+                                                .testTag("image_viewer_more"),
+                                        ) {
+                                            repeat(3) {
+                                                Box(
+                                                    Modifier
+                                                        .size(3.5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(dotColor),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    OverlayCascadingListPopup(
+                                        show = avatarMoreOpen,
+                                        entries = listOf(
+                                            DropdownEntry(
+                                                items = listOf(
+                                                    DropdownItem(
+                                                        text = "编辑头像",
+                                                        icon = { iconModifier ->
+                                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = COUIIcons.Edit,
+                                                                    contentDescription = "编辑",
+                                                                    modifier = Modifier.size(18.dp),
+                                                                    tint = menuScheme.onSurfaceContainer,
+                                                                )
+                                                            }
+                                                        },
+                                                        onClick = {
+                                                            avatarMoreOpen = false
+                                                            avatarPicker.launch(
+                                                                PickVisualMediaRequest(
+                                                                    ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                                                ),
+                                                            )
+                                                        },
+                                                    ),
+                                                    DropdownItem(
+                                                        text = "保存原图",
+                                                        icon = { iconModifier ->
+                                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = COUIIcons.Download,
+                                                                    contentDescription = null,
+                                                                    modifier = Modifier.size(18.dp),
+                                                                    tint = menuScheme.onSurfaceContainer,
+                                                                )
+                                                            }
+                                                        },
+                                                        onClick = {
+                                                            avatarMoreOpen = false
+                                                            saver.saveOne(
+                                                                current,
+                                                                preserveUrl = currentPic?.preserveUrl == true,
+                                                            )
+                                                        },
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                                        onDismissRequest = { avatarMoreOpen = false },
+                                    )
+                                }
+                            } else {
+                                HighlightedIconButton(
+                                    size = MediaControlHeight,
+                                    onClick = {
+                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                            saver.saveOne(
+                                                current,
+                                                preserveUrl = currentPic?.preserveUrl == true,
+                                            )
+                                        }
+                                    },
+                                ) {
+                                    Icon(COUIIcons.Download, "保存原图", Modifier.size(18.dp))
+                                }
                             }
                         }
                     }
                 }
 
-                // 实况标记：跟顶栏那些胶囊共用一套玻璃底，图标取自相册的实况图标。
+                // 实况标记：与顶部控件共用同一套 HighlightedIconButton 胶囊材质。
                 if (currentPic?.isLive == true) {
                     Box(
                         Modifier
@@ -718,7 +914,7 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
                             .navigationBarsPadding()
                             .padding(start = 12.dp, bottom = 12.dp),
                     ) {
-                        LivePill(plate = plate, plateAlpha = plateAlpha, ink = ink)
+                        LivePill()
                     }
                 }
             }
@@ -731,33 +927,74 @@ fun ImageViewerScreen(nav: NavState, pics: List<Pic>, index: Int) {
             precise = precise,
             onDismiss = { menu = false },
             state = saver,
+            preserveUrls = currentPic?.preserveUrl == true,
         )
+
+        pendingCropUri?.let { cropUri ->
+            AvatarCropDialog(
+                sourceUri = cropUri,
+                uploading = uploadingAvatar,
+                onDismiss = { if (!uploadingAvatar) pendingCropUri = null },
+                onConfirm = { bytes, cropWidth ->
+                    if (!uploadingAvatar) {
+                        uploadingAvatar = true
+                        scope.launch {
+                            runCatching {
+                                App.repo.updateAvatar(bytes = bytes, cropWidth = cropWidth)
+                            }.onSuccess { updated ->
+                                pendingCropUri = null
+                                if (updated.avatar.isNotBlank()) avatarOverride = updated.avatar
+                                App.toast("头像已更新")
+                            }.onFailure { err ->
+                                if (err is ProfileWebFallbackException) {
+                                    pendingCropUri = null
+                                    avatarFallbackMessage = err.message
+                                } else {
+                                    App.toast(err.message ?: "更换头像失败")
+                                }
+                            }
+                            uploadingAvatar = false
+                        }
+                    }
+                },
+            )
+        }
+
+        avatarFallbackMessage?.let { msg ->
+            ConfirmDialog(
+                title = "未能直接上传头像",
+                message = "$msg。是否打开微博网页版编辑资料？",
+                confirmText = "打开网页版",
+                onDismiss = { avatarFallbackMessage = null },
+                onConfirm = {
+                    avatarFallbackMessage = null
+                    nav.pop()
+                    nav.push(Route.Web(WEIBO_PROFILE_EDIT_URL, "编辑资料"))
+                },
+            )
+        }
     }
 }
 
 /** 看图页停住时顶栏左下角那颗「实况」胶囊，也是退场那枚标记的起点。 */
 @Composable
-private fun LivePill(
-    plate: Color,
-    plateAlpha: Float,
-    ink: Color,
-) {
-    Row(
-        // 玻璃底会把挂在它前面的修饰符整条丢掉，尺寸和留白只能排在它后面。
-        modifier = Modifier
-            .viewerGlass(RoundedCornerShape(BarRadius), plate, plateAlpha)
-            .height(BarHeight)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
-            contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = ink,
-        )
-        Spacer(Modifier.width(6.dp))
-        Text("实况", color = ink, fontSize = 13.sp)
+private fun LivePill() {
+    MediaMaterialPill {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painter = painterResource(com.cobo.app.R.drawable.ic_live_photo),
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = LocalContentColor.current,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "实况",
+                color = LocalContentColor.current,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
     }
 }
 
@@ -829,6 +1066,7 @@ private fun ZoomableImage(
     thumbModel: String?,
     thumbCacheKey: MemoryCache.Key?,
     original: Boolean,
+    preserveUrl: Boolean,
     isCurrent: Boolean,
     isSettledElsewhere: Boolean,
     canPage: Boolean,
@@ -860,7 +1098,7 @@ private fun ZoomableImage(
     // that went under the resting size.
     val glide = remember { mutableStateOf<Job?>(null) }
     val remote = url.startsWith("http://") || url.startsWith("https://")
-    val targetUrl = if (original) originalSize(url) else url
+    val targetUrl = if (original && !preserveUrl) originalSize(url) else url
     var loaded by remember(url) { mutableStateOf(false) }
     // 保留上一张已解码的 Painter 与缓存键，切原图或重解码时垫在下面，不出现空白闪烁。
     var settledPainter by remember(url) { mutableStateOf<Painter?>(null) }
@@ -2139,7 +2377,7 @@ private fun playerView(context: Context, player: ExoPlayer, controls: Boolean): 
         }
     }
 
-private val VideoTopBarButtonHeight = 36.dp
+private val VideoTopBarButtonHeight = MediaControlHeight
 
 private const val SeekStepMs = 5_000L
 
@@ -2173,64 +2411,23 @@ private fun speedLabel(value: Float): String = when (value) {
     else -> "3.0×"
 }
 
-/** 与 [HighlightedIconButton] 共用同一套配色、边缘描边与按压缩放的胶囊按钮，用于视频倍速切换。 */
+/** 与 [HighlightedIconButton] 共用同一套 [MediaMaterialPill] 材质的胶囊按钮，用于视频倍速切换。 */
 @Composable
 private fun VideoSpeedPill(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scheme = COUITheme.colorScheme
-    val isDark = scheme.background.luminance() < 0.5f
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val press by animateFloatAsState(
-        targetValue = if (pressed) 1f else 0f,
-        animationSpec = HighlightedIconButtonDefaults.PressSpring,
-        label = "videoSpeedPress",
-    )
-    val brighten = HighlightedIconButtonDefaults.PressedFillBrighten * press
-    Box(
-        modifier = modifier
-            .height(VideoTopBarButtonHeight)
-            .graphicsLayer {
-                val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(CircleShape)
-            .drawBehind {
-                drawRect(
-                    Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0f to colorLerp(HighlightedIconButtonDefaults.fillCenter(isDark), Color.White, brighten)
-                                .copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
-                            HighlightedIconButtonDefaults.FillEdgeStop to colorLerp(
-                                HighlightedIconButtonDefaults.fillEdge(isDark),
-                                Color.White,
-                                brighten,
-                            ).copy(alpha = HighlightedIconButtonDefaults.FillAlpha),
-                        ),
-                        center = center,
-                        radius = size.maxDimension / 2f,
-                    ),
-                )
-            }
-            .materialShadowEdge(stroke = HighlightedIconButtonDefaults.stroke(isDark))
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                role = Role.Button,
-                onClick = onClick,
-            )
-            .padding(horizontal = 14.dp),
-        contentAlignment = Alignment.Center,
+    MediaMaterialPill(
+        modifier = modifier,
+        height = VideoTopBarButtonHeight,
+        onClick = onClick,
     ) {
         Text(
             text = text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = colorLerp(scheme.onBackground, Color.White, HighlightedIconButtonDefaults.PressedContentBrighten * press),
+            color = LocalContentColor.current,
             maxLines = 1,
         )
     }
@@ -2403,6 +2600,7 @@ private fun DirectVideoPlayer(
     onOpenInBrowser: () -> Unit,
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val activity = remember(context) { context.findActivity() }
     val audio = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -2445,6 +2643,13 @@ private fun DirectVideoPlayer(
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
     var speed by remember { mutableFloatStateOf(1f) }
     var speedMenu by remember { mutableStateOf(false) }
+    var longPressSpeedActive by remember { mutableStateOf(false) }
+    var longPressSpeedLocked by remember { mutableStateOf(false) }
+    val effectivePlaybackSpeed = if (longPressSpeedActive || longPressSpeedLocked) 3f else speed
+
+    LaunchedEffect(player, effectivePlaybackSpeed) {
+        player.setPlaybackSpeed(effectivePlaybackSpeed)
+    }
 
     fun syncPlayerState() {
         isPlaying = player.isPlaying
@@ -2543,7 +2748,7 @@ private fun DirectVideoPlayer(
         )
 
         // 手势层铺在底部与顶部控件下面：单点切换整套控件显隐，左/中/右双击快退5秒/暂停播放/快进5秒，
-        // 左右拖动联动底部进度条快进/快退，左半上下划调亮度、右半上下划调音量，长按临时 3× 倍速。
+        // 左右拖动联动底部进度条快进/快退，左半上下划调亮度、右半上下划调音量，长按临时 3× 倍速并支持下滑锁定。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2554,6 +2759,10 @@ private fun DirectVideoPlayer(
                     var active = false
                     detectHorizontalDragGestures(
                         onDragStart = {
+                            if (longPressSpeedActive) {
+                                active = false
+                                return@detectHorizontalDragGestures
+                            }
                             if (speedMenu) speedMenu = false
                             dur = player.duration.takeIf { it > 0L } ?: 0L
                             active = dur > 0L
@@ -2566,7 +2775,7 @@ private fun DirectVideoPlayer(
                             }
                         },
                         onHorizontalDrag = { change, dx ->
-                            if (!active) return@detectHorizontalDragGestures
+                            if (!active || longPressSpeedActive) return@detectHorizontalDragGestures
                             change.consume()
                             draggedX += dx
                             val target = calculateHorizontalScrubTargetMs(
@@ -2598,8 +2807,14 @@ private fun DirectVideoPlayer(
                     var startVolume = 0
                     var maxVolume = 1
                     var dragged = 0f
+                    var verticalActive = false
                     detectVerticalDragGestures(
                         onDragStart = { position ->
+                            if (longPressSpeedActive) {
+                                verticalActive = false
+                                return@detectVerticalDragGestures
+                            }
+                            verticalActive = true
                             left = position.x < size.width / 2f
                             dragged = 0f
                             if (left) {
@@ -2612,6 +2827,7 @@ private fun DirectVideoPlayer(
                             }
                         },
                         onVerticalDrag = { change, dy ->
+                            if (!verticalActive || longPressSpeedActive) return@detectVerticalDragGestures
                             change.consume()
                             dragged += dy
                             val ratio = -dragged / size.height
@@ -2627,6 +2843,8 @@ private fun DirectVideoPlayer(
                                 flash("音量 ${value * 100 / maxVolume}%")
                             }
                         },
+                        onDragEnd = { verticalActive = false },
+                        onDragCancel = { verticalActive = false },
                     )
                 }
                 .pointerInput(Unit) {
@@ -2650,12 +2868,14 @@ private fun DirectVideoPlayer(
                                 else -> togglePlayPause()
                             }
                         },
-                        onLongPress = { /* 长按 3× 倍速由下方 awaitEachGesture 接管 */ },
+                        onLongPress = { /* 长按 3× 倍速与锁定解锁由下方 awaitEachGesture 接管 */ },
                     )
                 }
-                .pointerInput(speed) {
+                .pointerInput(Unit) {
+                    val lockDragThresholdPx = with(this) { 48.dp.toPx() }
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        var lastPos = down.position
                         val movedOrLifted = withTimeoutOrNull(
                             viewConfiguration.longPressTimeoutMillis
                         ) {
@@ -2667,6 +2887,7 @@ private fun DirectVideoPlayer(
                                     early = true
                                     break
                                 }
+                                lastPos = change.position
                                 if ((change.position - down.position).getDistance() >
                                     viewConfiguration.touchSlop
                                 ) {
@@ -2678,14 +2899,30 @@ private fun DirectVideoPlayer(
                         } ?: false
                         if (movedOrLifted) return@awaitEachGesture
 
-                        player.setPlaybackSpeed(3f)
-                        flash("3× 快进中")
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (longPressSpeedLocked) {
+                            longPressSpeedLocked = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.changes.none { it.pressed }) break
+                            }
+                            return@awaitEachGesture
+                        }
+
+                        longPressSpeedActive = true
+                        val anchorY = lastPos.y
                         while (true) {
                             val event = awaitPointerEvent()
+                            val tracked = event.changes.firstOrNull { it.id == down.id }
+                            if (tracked != null && tracked.pressed && !longPressSpeedLocked) {
+                                if (tracked.position.y - anchorY >= lockDragThresholdPx) {
+                                    longPressSpeedLocked = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
+                            }
                             if (event.changes.none { it.pressed }) break
                         }
-                        player.setPlaybackSpeed(speed)
-                        flash(speedLabel(speed))
+                        longPressSpeedActive = false
                     }
                 },
         )
@@ -2728,7 +2965,7 @@ private fun DirectVideoPlayer(
                 )
                 Box {
                     VideoSpeedPill(
-                        text = speedLabel(speed),
+                        text = speedLabel(effectivePlaybackSpeed),
                         onClick = { speedMenu = !speedMenu },
                     )
                     OverlayListPopup(
@@ -2742,12 +2979,12 @@ private fun DirectVideoPlayer(
                                 DropdownImpl(
                                     item = DropdownItem(text = speedLabel(value)),
                                     optionSize = Speeds.size,
-                                    isSelected = speed == value,
+                                    isSelected = !longPressSpeedLocked && speed == value,
                                     index = index,
                                     groupKey = "video_speed",
                                     onSelectedIndexChange = {
                                         speed = value
-                                        player.setPlaybackSpeed(value)
+                                        longPressSpeedLocked = false
                                         flash("${speedLabel(value)} 倍速")
                                         dismiss?.invoke()
                                     },
@@ -2877,6 +3114,47 @@ private fun DirectVideoPlayer(
                         fontSize = 12.sp,
                         modifier = Modifier.widthIn(min = 44.dp),
                         textAlign = TextAlign.End,
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = longPressSpeedActive || longPressSpeedLocked,
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(150)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 58.dp),
+        ) {
+            MediaMaterialPill(
+                onClick = if (longPressSpeedLocked) {
+                    { longPressSpeedLocked = false }
+                } else {
+                    null
+                },
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (longPressSpeedLocked) {
+                        Icon(
+                            imageVector = COUIIcons.Lock,
+                            contentDescription = "已锁定倍速",
+                            tint = COUITheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                    }
+                    Text(
+                        text = if (longPressSpeedLocked) {
+                            "3.0× 已锁定 · 长按解锁"
+                        } else {
+                            "3.0× 快进中 · 下滑锁定"
+                        },
+                        color = if (longPressSpeedLocked) COUITheme.colorScheme.primary else LocalContentColor.current,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
                     )
                 }
             }

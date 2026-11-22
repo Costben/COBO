@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiObject2
 import com.cobo.app.App
+import com.cobo.app.screen.SearchTab
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -193,7 +194,7 @@ class SearchE2eTest : UiE2eTest() {
         waitAny(By.res("search_user_0"), By.text("没有找到相关用户"))
 
         val tabsInUsers = waitTag("search_tabs")
-        assertEquals(3, tabNodes(tabsInUsers).size)
+        assertEquals(SearchTab.entries.size, tabNodes(tabsInUsers).size)
         val menuButtonInUsers = findLeadingMenuButton(tabsInUsers)
         assertTrue("用户分类下仍应显示前置四宫格按钮", menuButtonInUsers != null)
         menuButtonInUsers!!.click()

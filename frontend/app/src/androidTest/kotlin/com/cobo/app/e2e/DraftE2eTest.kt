@@ -39,8 +39,7 @@ class DraftE2eTest : UiE2eTest() {
             leavePublish()
             waitTag("bottom_tab_feed")
 
-            tapTag("bottom_tab_profile")
-            tapTag("top_settings")
+            openSettingsFromProfileTab()
             waitText("设置")
             tapTag("settings_drafts")
             waitText("草稿箱")

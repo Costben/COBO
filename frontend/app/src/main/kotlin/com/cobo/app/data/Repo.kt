@@ -74,6 +74,11 @@ private const val SPECIAL_REFRESH_BUDGET_MS = 15_000L
 /** 访客身份被拒后多久内不再重领：真要登录的接口也回 -100，不能每次都去领一个新的。 */
 private const val VISITOR_RETRY_MS = 60_000L
 
+const val WEIBO_PROFILE_EDIT_URL = "https://weibo.com/set/index"
+
+/** 原生修改头像/背景图受限于当前登录方式或风控时，提示可切到网页版编辑页面。 */
+class ProfileWebFallbackException(message: String) : Exception(message)
+
 private const val GUEST_BLOCKED = "纯本地模式看不了这里，登录后可用"
 private const val LOGIN_REQUIRED = "纯本地模式不能这样操作，登录后可用"
 
@@ -948,8 +953,172 @@ class Repo(private val context: Context, private val store: Store) {
         runCatching { Api.getHtml("https://m.weibo.cn/", active.cookie) }
     }
 
-    private fun parseContainerStatusPage(root: JSONObject, boundaryId: String? = null): FeedPage {
+    private val longTextCache = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
+
+    private fun extractExtendLongContent(ext: JSONObject?): String {
+        if (ext == null) return ""
+        val payload = ext.optJSONObject("data") ?: ext
+        return payload.str("longTextContent")
+            .ifBlank { ext.str("longTextContent") }
+            .ifBlank { payload.optJSONObject("longText")?.str("longTextContent").orEmpty() }
+            .ifBlank { ext.optJSONObject("longText")?.str("longTextContent").orEmpty() }
+    }
+
+    private fun applyExtendPayload(target: JSONObject, ext: JSONObject) {
+        val payload = ext.optJSONObject("data") ?: ext
+        val longContent = extractExtendLongContent(ext)
+        if (longContent.isNotBlank()) {
+            val longObj = (target.optJSONObject("longText") ?: JSONObject()).apply {
+                put("longTextContent", longContent)
+            }
+            target.put("longText", longObj)
+        }
+        val extUrls = payload.optJSONArray("url_struct")
+            ?: ext.optJSONArray("url_struct")
+            ?: payload.optJSONObject("longText")?.optJSONArray("url_struct")
+        if (extUrls != null && extUrls.length() > 0) {
+            val existing = target.optJSONArray("url_struct")
+            if (existing == null || existing.length() == 0) {
+                target.put("url_struct", extUrls)
+            } else {
+                val merged = JSONArray()
+                for (i in 0 until existing.length()) merged.put(existing.opt(i))
+                for (i in 0 until extUrls.length()) merged.put(extUrls.opt(i))
+                target.put("url_struct", merged)
+            }
+        }
+        val extTopics = payload.optJSONArray("topic_struct")
+            ?: ext.optJSONArray("topic_struct")
+            ?: payload.optJSONObject("longText")?.optJSONArray("topic_struct")
+        if (extTopics != null && extTopics.length() > 0) {
+            val existing = target.optJSONArray("topic_struct")
+            if (existing == null || existing.length() == 0) {
+                target.put("topic_struct", extTopics)
+            } else {
+                val merged = JSONArray()
+                for (i in 0 until existing.length()) merged.put(existing.opt(i))
+                for (i in 0 until extTopics.length()) merged.put(extTopics.opt(i))
+                target.put("topic_struct", merged)
+            }
+        }
+        if (target.optJSONObject("page_info") == null) {
+            val extPage = payload.optJSONObject("page_info") ?: ext.optJSONObject("page_info")
+            if (extPage != null) target.put("page_info", extPage)
+        }
+    }
+
+    private suspend fun fetchLongTextExtend(id: String, mid: String): JSONObject? {
+        val containerExt = try {
+            containerGet("statuses/extend", mapOf("id" to id))
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            null
+        }
+        if (extractExtendLongContent(containerExt).isNotBlank()) return containerExt
+
+        val cookieStr = cookie()
+        if (!cookieStr.isNullOrBlank()) {
+            val mobileExt = try {
+                get(Api.url("https://m.weibo.cn/statuses/extend", mapOf("id" to id)), cookieStr, force = true)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                null
+            }
+            if (extractExtendLongContent(mobileExt).isNotBlank()) return mobileExt
+        }
+
+        val deskCookie = desktopCookieOrNull()
+        val queryId = mid.ifBlank { id }
+        if (!deskCookie.isNullOrBlank() && queryId.isNotBlank()) {
+            val deskExt = try {
+                Api.getDesktop(
+                    Api.url("https://weibo.com/ajax/statuses/longtext", mapOf("id" to queryId)),
+                    deskCookie,
+                )
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                null
+            }
+            if (extractExtendLongContent(deskExt).isNotBlank()) return deskExt
+        }
+        return containerExt
+    }
+
+    private suspend fun enrichContainerLongTextObjects(roots: List<JSONObject>) {
+        if (!isClientChannel() || roots.isEmpty()) return
+        val candidates = ArrayList<Pair<String, JSONObject>>()
+        val seenIds = HashSet<String>()
+        fun collect(obj: JSONObject?) {
+            if (obj == null || obj.isPromotedStatus()) return
+            val id = obj.str("idstr").ifBlank { obj.str("id") }.ifBlank { obj.str("mid") }
+            val needsExtend = (obj.optBoolean("isLongText") || obj.optBoolean("truncated")) &&
+                obj.optJSONObject("longText")?.str("longTextContent").isNullOrBlank()
+            if (id.isNotBlank() && needsExtend && seenIds.add(id)) {
+                val cached = longTextCache[id]
+                if (cached != null) {
+                    applyExtendPayload(obj, cached)
+                } else {
+                    candidates.add(id to obj)
+                }
+            }
+        }
+        for (root in roots) {
+            collect(root)
+            collect(root.optJSONObject("retweeted_status"))
+        }
+        if (candidates.isEmpty()) return
+        coroutineScope {
+            val gate = Semaphore(6)
+            candidates.map { (id, target) ->
+                async {
+                    gate.withPermit {
+                        val mid = target.str("mid").ifBlank { target.str("mblogid") }
+                        val ext = fetchLongTextExtend(id, mid)
+                        if (ext != null) {
+                            if (extractExtendLongContent(ext).isNotBlank()) {
+                                if (longTextCache.size > 200) longTextCache.clear()
+                                longTextCache[id] = ext
+                            }
+                            applyExtendPayload(target, ext)
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    private suspend fun enrichContainerLongTextArray(arr: JSONArray?) {
+        if (!isClientChannel() || arr == null || arr.length() == 0) return
+        val list = ArrayList<JSONObject>(arr.length())
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.let(list::add)
+        }
+        enrichContainerLongTextObjects(list)
+    }
+
+    private suspend fun enrichContainerLongTextCardsRoot(root: JSONObject?) {
+        if (!isClientChannel() || root == null) return
+        val mblogs = ArrayList<JSONObject>()
+        fun walk(node: Any?) {
+            when (node) {
+                is JSONObject -> {
+                    node.optJSONObject("mblog")?.let(mblogs::add)
+                    val keys = node.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        if (k != "mblog") walk(node.opt(k))
+                    }
+                }
+                is JSONArray -> for (i in 0 until node.length()) walk(node.opt(i))
+            }
+        }
+        walk(root.optJSONArray("cards") ?: root.optJSONObject("data")?.optJSONArray("cards"))
+        enrichContainerLongTextObjects(mblogs)
+    }
+
+    private suspend fun parseContainerStatusPage(root: JSONObject, boundaryId: String? = null): FeedPage {
         val arr = root.optJSONArray("statuses") ?: JSONArray()
+        enrichContainerLongTextArray(arr)
         val rawItems = statusesOf(arr)
         val items = if (boundaryId.isNullOrBlank()) rawItems else rawItems.filter { it.id != boundaryId }
         val cursor = root.str("next_cursor_str")
@@ -973,9 +1142,12 @@ class Repo(private val context: Context, private val store: Store) {
                 params["group_id"] = "102803"
                 params["refresh_type"] = if (sinceId.isNullOrBlank()) "0" else "1"
                 params["count"] = "15"
+                params["isGetLongText"] = "1"
                 if (!sinceId.isNullOrBlank()) params["max_id"] = sinceId
                 val root = containerGet("statuses/unread_hot_timeline", params)
-                val items = statusesOf(root.optJSONArray("statuses") ?: JSONArray())
+                val arr = root.optJSONArray("statuses") ?: JSONArray()
+                enrichContainerLongTextArray(arr)
+                val items = statusesOf(arr)
                 val next = root.str("max_id").takeIf { it.isNotBlank() && it != "0" && it != sinceId }
                 return FeedPage(items, next)
             }
@@ -985,6 +1157,7 @@ class Repo(private val context: Context, private val store: Store) {
             extra.forEach { (k, v) -> params[k] = v }
             val endpoint = if (cid.startsWith("100103")) "searchall" else "cardlist"
             val root = containerGet(endpoint, params)
+            enrichContainerLongTextCardsRoot(root)
             return parseContainerCards(root)
         }
         val params = LinkedHashMap<String, String?>()
@@ -1010,6 +1183,7 @@ class Repo(private val context: Context, private val store: Store) {
         if (isClientChannel()) {
             val params = LinkedHashMap<String, String?>()
             params["count"] = "20"
+            params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val root = containerGet("statuses/friends/timeline", params)
             return parseContainerStatusPage(root, maxId)
@@ -1024,6 +1198,7 @@ class Repo(private val context: Context, private val store: Store) {
             val params = LinkedHashMap<String, String?>()
             params["list_id"] = "10009$uid"
             params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val root = containerGet("groups/timeline", params)
             return parseContainerStatusPage(root, maxId)
@@ -1042,6 +1217,7 @@ class Repo(private val context: Context, private val store: Store) {
             val params = LinkedHashMap<String, String?>()
             params["list_id"] = gid
             params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val page = parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
             val localUids = FollowTags.uids(FollowTag.Special)
@@ -1132,6 +1308,7 @@ class Repo(private val context: Context, private val store: Store) {
             val params = LinkedHashMap<String, String?>()
             params["list_id"] = gid
             params["count"] = GROUP_FEED_PAGE_SIZE.toString()
+            params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             return parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
         }
@@ -1649,6 +1826,40 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun searchTopics(query: String, page: Int = 1, force: Boolean = true): List<TopicItem> =
         searchIndex("100103type=38&q=$query&t=0", page, force, ::parseTopicCards)
 
+    /** 搜索的「图片」分类（`type=63`）。 */
+    suspend fun searchPictures(query: String, page: Int = 1, force: Boolean = true): FeedPage =
+        container(
+            "100103type=63&q=$query&t=0",
+            extra = if (page > 1) mapOf("page" to page.toString()) else emptyMap(),
+            force = force,
+        )
+
+    /** 搜索的「视频」分类（`type=64`）。 */
+    suspend fun searchVideos(query: String, page: Int = 1, force: Boolean = true): FeedPage =
+        container(
+            "100103type=64&q=$query&t=0",
+            extra = if (page > 1) mapOf("page" to page.toString()) else emptyMap(),
+            force = force,
+        )
+
+    /** 搜索的「关注」分类（`type=62`）：在我关注的人中搜相关微博。 */
+    suspend fun searchFollowing(query: String, page: Int = 1, force: Boolean = true): FeedPage {
+        if (guest) return FeedPage(emptyList(), null)
+        return container(
+            "100103type=62&q=$query&t=0",
+            extra = if (page > 1) mapOf("page" to page.toString()) else emptyMap(),
+            force = force,
+        )
+    }
+
+    /** 搜索的「超话」分类（`type=98`）。 */
+    suspend fun searchSuperTopicCards(query: String, page: Int = 1, force: Boolean = true): List<TopicItem> =
+        searchIndex("100103type=98&q=$query&t=0", page, force, ::parseTopicCards)
+
+    /** 搜索的「地点」分类（`type=92`）。 */
+    suspend fun searchPlaces(query: String, page: Int = 1, force: Boolean = true): List<TopicItem> =
+        searchIndex("100103type=92&q=$query&t=0", page, force, ::parseTopicCards)
+
     private suspend fun <T> searchIndex(
         cid: String,
         page: Int,
@@ -1675,15 +1886,19 @@ class Repo(private val context: Context, private val store: Store) {
 
     suspend fun detail(id: String, force: Boolean = false): Status? {
         var parsed: Status? = if (isClientChannel()) {
-            val root = containerGet("statuses/show", mapOf("id" to id))
-            if ((root.optBoolean("isLongText") || root.optBoolean("truncated")) && root.optJSONObject("longText") == null) {
-                val ext = runCatching { containerGet("statuses/extend", mapOf("id" to id)) }.getOrNull()
-                val longContent = ext?.optString("longTextContent").orEmpty()
-                if (longContent.isNotBlank()) {
-                    root.put("longText", JSONObject().put("longTextContent", longContent))
-                }
+            val root = containerGet("statuses/show", mapOf("id" to id, "isGetLongText" to "1"))
+            enrichContainerLongTextObjects(listOf(root))
+            val clientStatus = Status.from(root)
+            val stillTruncated = (root.optBoolean("isLongText") || root.optBoolean("truncated")) &&
+                root.optJSONObject("longText")?.str("longTextContent").isNullOrBlank()
+            if (stillTruncated && !cookie().isNullOrBlank()) {
+                val mobileRoot = runCatching {
+                    get(Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)), cookie(), force)
+                }.getOrNull()
+                Status.from(mobileRoot?.optJSONObject("data")) ?: clientStatus
+            } else {
+                clientStatus
             }
-            Status.from(root)
         } else {
             val root = get(
                 Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
@@ -3350,13 +3565,238 @@ class Repo(private val context: Context, private val store: Store) {
     suspend fun ownUid(): String =
         session?.uid?.takeIf { it.isNotBlank() } ?: config().uid
 
+    /**
+     * 尝试从网页端资料设置接口读取服务端返回的上次改名时间 / 剩余改名次数等提示字段；
+     * 若接口未公开该字段或请求失败则返回 null，由本机记录兜底。
+     */
+    suspend fun syncServerRenameHint(): Boolean {
+        if (guest) return false
+        val uid = runCatching { ownUid() }.getOrNull().orEmpty()
+        if (uid.isBlank()) return false
+        val deskCookie = desktopCookieOrNull() ?: return false
+        val data = runCatching {
+            val root = Api.getDesktop("https://weibo.com/ajax/setting/getBasicInfo", deskCookie)
+            if (root.optInt("ok", 0) == 1) root.optJSONObject("data") else null
+        }.getOrNull() ?: return false
+
+        val timeKeys = listOf(
+            "screen_name_modify_time",
+            "modify_name_time",
+            "last_modify_name_time",
+            "last_rename_time",
+            "nickname_modify_time",
+            "name_modify_time",
+        )
+        for (key in timeKeys) {
+            val rawVal = data.opt(key)?.takeIf { it != JSONObject.NULL } ?: continue
+            val tsMs = when (rawVal) {
+                is Number -> rawVal.toLong().let { if (it in 1L..9_999_999_999L) it * 1000L else it }
+                is String -> rawVal.trim().toLongOrNull()?.let { if (it in 1L..9_999_999_999L) it * 1000L else it }
+                    ?: runCatching {
+                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(rawVal.trim())?.time
+                    }.getOrNull()
+                    ?: runCatching {
+                        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(rawVal.trim())?.time
+                    }.getOrNull()
+                else -> null
+            }
+            if (tsMs != null && tsMs > 0L) {
+                val current = store.profileRenameRecord(uid)
+                if (tsMs > current.lastRenamedAtMs) {
+                    store.recordProfileRenamed(uid, tsMs)
+                    App.notifyProfileRenameUpdated()
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * 修改当前账号基础资料（昵称 / 个人简介）。
+     * 客户端登录优先走 `users/update`（仅通道/认证类失败且有桌面 Cookie 时回退网页端 `updateProfileBasic`）；
+     * 网页 Cookie 登录直接走 `weibo.com/ajax/setting/updateProfileBasic`。
+     */
+    suspend fun updateProfileBasic(
+        screenName: String? = null,
+        description: String? = null,
+        membership: Membership = Membership.None,
+    ): User {
+        if (guest) throw ApiException(LOGIN_REQUIRED)
+        val trimmedName = screenName?.trim()
+        if (screenName != null && trimmedName.isNullOrEmpty()) {
+            throw ApiException("昵称不能为空")
+        }
+        val uid = ownUid()
+        val renaming = trimmedName != null
+        val form = LinkedHashMap<String, String>()
+        if (trimmedName != null) form["screen_name"] = trimmedName
+        if (description != null) form["description"] = description.trim()
+        if (form.isEmpty()) throw ApiException("没有需要修改的资料")
+
+        suspend fun submitDesktop(previousErr: Throwable? = null): User? {
+            val root = try {
+                desktopPost("/ajax/setting/updateProfileBasic", form = form)
+            } catch (e: ApiHttpException) {
+                val msg = resolveProfileUpdateErrorMessage(
+                    err = e,
+                    renaming = renaming,
+                    membership = membership,
+                    previousErr = previousErr,
+                )
+                if (renaming && isProfileRenameLimitFailure(e.code, msg)) {
+                    store.recordProfileRenameBlocked(uid, msg)
+                    App.notifyProfileRenameUpdated()
+                }
+                throw ApiException(msg)
+            }
+            if (root.optInt("ok", 0) != 1) {
+                val rawMsg = root.str("msg").ifBlank { root.str("message", previousErr?.message ?: "修改资料失败") }
+                if (renaming && isProfileRenameLimitFailure(null, rawMsg)) {
+                    store.recordProfileRenameBlocked(uid, rawMsg)
+                    App.notifyProfileRenameUpdated()
+                }
+                throw ApiException(rawMsg)
+            }
+            return User.from(root.optJSONObject("data")?.optJSONObject("user"))
+        }
+
+        var parsedUser: User? = null
+        if (isClientChannel()) {
+            val clientResp = runCatching {
+                withContainerAuth { authUid, gsid, aid ->
+                    ContainerApi.updateProfileBasic(
+                        uid = authUid,
+                        gsid = gsid,
+                        aid = aid,
+                        screenName = trimmedName,
+                        description = description?.trim(),
+                    )
+                }
+            }
+            if (clientResp.isSuccess) {
+                parsedUser = User.from(clientResp.getOrThrow())
+            } else {
+                val err = clientResp.exceptionOrNull()
+                val isAuthOrChannelErr = err is ApiHttpException ||
+                    (err as? ApiException)?.errno in ContainerApi.AUTH_ERRNOS ||
+                    err?.message.isNullOrBlank() ||
+                    err?.message == "请求失败"
+                if (isAuthOrChannelErr && desktopCookieOrNull() != null) {
+                    parsedUser = submitDesktop(previousErr = err)
+                } else {
+                    val msg = resolveProfileUpdateErrorMessage(
+                        err = err ?: ApiException("修改资料失败"),
+                        renaming = renaming,
+                        membership = membership,
+                    )
+                    if (renaming && isProfileRenameLimitFailure((err as? ApiHttpException)?.code, msg)) {
+                        store.recordProfileRenameBlocked(uid, msg)
+                        App.notifyProfileRenameUpdated()
+                    }
+                    throw ApiException(msg, (err as? ApiException)?.errno)
+                }
+            }
+        } else {
+            parsedUser = submitDesktop()
+        }
+
+        if (renaming) {
+            store.recordProfileRenamed(uid)
+            App.notifyProfileRenameUpdated()
+        }
+
+        val fresh = runCatching { profile(uid, force = true) }.getOrNull()
+        val base = fresh ?: parsedUser ?: User(id = uid, name = trimmedName.orEmpty(), avatar = "")
+        val merged = base.copy(
+            name = trimmedName ?: base.name,
+            description = description?.trim() ?: base.description,
+        )
+        return syncUpdatedProfile(uid, merged)
+    }
+
+    /** 上传并更换当前账号头像；非客户端会话或接口受限时抛出异常，由页面提供网页版编辑入口。 */
+    suspend fun updateAvatar(
+        bytes: ByteArray,
+        fileName: String = "avatar.jpg",
+        mimeType: String = "image/jpeg",
+        cropWidth: Int = 720,
+    ): User {
+        if (guest) throw ApiException(LOGIN_REQUIRED)
+        if (!isClientChannel()) {
+            throw ProfileWebFallbackException("当前登录方式暂不支持直接上传头像，请前往微博网页版更换")
+        }
+        val uid = ownUid()
+        val root = withContainerAuth { authUid, gsid, aid ->
+            ContainerApi.uploadAvatar(
+                uid = authUid,
+                gsid = gsid,
+                aid = aid,
+                bytes = bytes,
+                fileName = fileName,
+                mimeType = mimeType,
+                cropWidth = cropWidth,
+            )
+        }
+        val fromResp = User.from(root.optJSONObject("user") ?: root)
+        val avatarFromResp = fromResp?.avatar.orEmpty()
+            .ifBlank { root.str("avatar_hd") }
+            .ifBlank { root.str("avatar_large") }
+            .ifBlank { root.str("profile_image_url") }
+        val fresh = runCatching { profile(uid, force = true) }.getOrNull()
+        val base = fresh ?: fromResp ?: User(id = uid, name = "", avatar = avatarFromResp)
+        val merged = if (avatarFromResp.isNotBlank()) base.copy(avatar = avatarFromResp) else base
+        return syncUpdatedProfile(uid, merged)
+    }
+
+    /** 更换当前账号主页背景图；非客户端会话时提示通过网页版修改。 */
+    suspend fun updateCover(
+        bytes: ByteArray,
+        fileName: String = "cover.jpg",
+    ): User {
+        if (guest) throw ApiException(LOGIN_REQUIRED)
+        if (!isClientChannel()) {
+            throw ProfileWebFallbackException("当前登录方式暂不支持直接更换背景图，请前往微博网页版修改")
+        }
+        val uid = ownUid()
+        withContainerAuth { authUid, gsid, aid ->
+            ContainerApi.updateCover(
+                uid = authUid,
+                gsid = gsid,
+                aid = aid,
+                bytes = bytes,
+                fileName = fileName,
+            )
+        }
+        val fresh = runCatching { profile(uid, force = true) }.getOrNull()
+            ?: User(id = uid, name = "", avatar = "")
+        return syncUpdatedProfile(uid, fresh)
+    }
+
+    private fun syncUpdatedProfile(uid: String, updated: User): User {
+        val current = store.accounts().firstOrNull { it.uid == uid }
+        if (current != null) {
+            store.saveAccount(
+                current.copy(
+                    name = updated.name.ifBlank { current.name },
+                    avatar = updated.avatar.ifBlank { current.avatar },
+                ),
+            )
+        }
+        App.notifyProfileUpdated(updated)
+        return updated
+    }
+
     suspend fun userStatuses(uid: String, sinceId: String? = null, force: Boolean = false): FeedPage {
         if (isClientChannel()) {
             val params = LinkedHashMap<String, String?>()
             params["containerid"] = "107603$uid"
             params["count"] = "20"
+            params["isGetLongText"] = "1"
             if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
-            return parseContainerCards(containerGet("profile/statuses", params))
+            val root = containerGet("profile/statuses", params)
+            enrichContainerLongTextCardsRoot(root)
+            return parseContainerCards(root)
         }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
             val desktop = runCatching { desktopUserStatuses(uid, sinceId) }.getOrNull()
@@ -3452,6 +3892,18 @@ class Repo(private val context: Context, private val store: Store) {
         val page = cursor?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         if (isClientChannel()) {
             val root = containerGet("favorites", mapOf("page" to page.toString(), "count" to "20"))
+            val payload = root.optJSONObject("data") ?: root
+            val favs = payload.optJSONArray("favorites")
+            if (favs != null) {
+                val list = ArrayList<JSONObject>(favs.length())
+                for (i in 0 until favs.length()) {
+                    val entry = favs.optJSONObject(i) ?: continue
+                    (entry.optJSONObject("status") ?: entry).let(list::add)
+                }
+                enrichContainerLongTextObjects(list)
+            } else {
+                enrichContainerLongTextArray(payload.optJSONArray("statuses") ?: payload.optJSONArray("list"))
+            }
             return parseCloudFavoritesPayload(root, page)
         }
         val uid = ownUid()
@@ -3481,11 +3933,14 @@ class Repo(private val context: Context, private val store: Store) {
             val params = LinkedHashMap<String, String?>()
             params["containerid"] = cid
             params["count"] = "20"
+            params["isGetLongText"] = "1"
             if (!cursor.isNullOrBlank()) params["since_id"] = cursor
             val root = containerGet("profile/statuses", params)
+            enrichContainerLongTextCardsRoot(root)
             val parsed = parseContainerCards(root)
             if (parsed.items.isNotEmpty() || root.optJSONArray("cards") != null) return parsed
             val arr = root.optJSONArray("statuses")
+            enrichContainerLongTextArray(arr)
             return if (arr != null) FeedPage(statusesOf(arr), null) else parsed
         }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
@@ -3534,11 +3989,14 @@ class Repo(private val context: Context, private val store: Store) {
             params["group_id"] = "102803_2222"
             params["refresh_type"] = if (maxId.isNullOrBlank()) "0" else "1"
             params["count"] = "15"
+            params["isGetLongText"] = "1"
             params["lat"] = lat
             params["lon"] = lon
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val root = containerGet("statuses/unread_hot_timeline", params)
-            val items = statusesOf(root.optJSONArray("statuses") ?: JSONArray())
+            val arr = root.optJSONArray("statuses") ?: JSONArray()
+            enrichContainerLongTextArray(arr)
+            val items = statusesOf(arr)
             val next = root.str("max_id").takeIf { it.isNotBlank() && it != "0" && it != maxId }
             return FeedPage(items, next)
         }
@@ -3754,3 +4212,67 @@ private val DEFAULT_NEARBY_PLACES = listOf(
     NearbyPlace("台北", 25.0330, 121.5654),
     NearbyPlace("东京", 35.6762, 139.6503),
 )
+
+internal fun extractWeiboHttpErrorMessage(body: String): String {
+    val trimmed = body.trim()
+    if (trimmed.isEmpty()) return ""
+    if (trimmed.startsWith("{")) {
+        val json = runCatching { JSONObject(trimmed) }.getOrNull()
+        if (json != null) {
+            val dataObj = json.optJSONObject("data")
+            val candidates = listOf(
+                json.str("errmsg"),
+                json.str("error"),
+                json.str("msg"),
+                json.str("message"),
+                dataObj?.str("msg").orEmpty(),
+                dataObj?.str("message").orEmpty(),
+            )
+            val hit = candidates.firstOrNull { it.isNotBlank() }
+            if (!hit.isNullOrBlank()) return hit.trim()
+        }
+    }
+    return ""
+}
+
+internal fun isProfileRenameLimitFailure(httpCode: Int?, message: String): Boolean {
+    if (httpCode == 400) return true
+    return message.contains("次数") ||
+        message.contains("上限") ||
+        message.contains("频繁") ||
+        message.contains("间隔") ||
+        message.contains("冷却") ||
+        message.contains("改名") ||
+        message.contains("修改") && (message.contains("限制") || message.contains("天") || message.contains("年"))
+}
+
+internal fun resolveProfileUpdateErrorMessage(
+    err: Throwable,
+    renaming: Boolean,
+    membership: Membership,
+    previousErr: Throwable? = null,
+): String {
+    if (err is ApiHttpException) {
+        val parsed = extractWeiboHttpErrorMessage(err.body)
+        if (parsed.isNotBlank()) return parsed
+        val prevMsg = previousErr?.message.orEmpty().trim()
+        if (prevMsg.isNotBlank() && !prevMsg.startsWith("HTTP ") && prevMsg != "请求失败") {
+            return prevMsg
+        }
+        if (err.code == 400) {
+            return if (renaming) {
+                when (membership) {
+                    Membership.None ->
+                        "修改失败：非会员每年仅限改名 1 次，当前可能已达上限或处于冷却期（HTTP 400）"
+                    Membership.Vip, Membership.Svip, Membership.Vvip ->
+                        "修改失败：未达到微博两次改名的时间间隔或已达本年度改名次数上限（HTTP 400）"
+                }
+            } else {
+                "保存失败：请检查填写内容是否合规或稍后再试（HTTP 400）"
+            }
+        }
+        return "修改资料失败（HTTP ${err.code}）"
+    }
+    val raw = err.message.orEmpty().trim()
+    return raw.ifBlank { "修改资料失败" }
+}

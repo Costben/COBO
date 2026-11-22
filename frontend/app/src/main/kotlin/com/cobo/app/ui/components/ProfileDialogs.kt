@@ -1,5 +1,9 @@
 package com.cobo.app.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -17,6 +21,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,10 +69,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
+import com.cobo.app.data.Membership
 import com.cobo.app.data.ProfileDetail
 import com.cobo.app.data.ProfileGroup
 import com.cobo.app.data.ProfileGroupSelection
+import com.cobo.app.data.ProfileRenameRecord
+import com.cobo.app.data.ProfileWebFallbackException
 import com.cobo.app.data.User
+import com.cobo.app.data.computeProfileRenameStatus
+import androidx.compose.ui.platform.testTag
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
@@ -77,6 +87,7 @@ import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Rename
+import io.github.suqi8.coui.kmp.icon.extended.Undo
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.layout.DialogDefaults
@@ -720,10 +731,12 @@ fun ProfileInfoDialog(
     user: User?,
     detail: ProfileDetail?,
     loading: Boolean,
+    onEdit: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     var show by remember { mutableStateOf(false) }
     var settled by remember { mutableStateOf(false) }
+    var triggerEditOnFinish by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
     OverlayDialog(
         show = show,
@@ -734,6 +747,7 @@ fun ProfileInfoDialog(
             if (!settled) {
                 settled = true
                 onDismiss()
+                if (triggerEditOnFinish) onEdit?.invoke()
             }
         },
     ) {
@@ -775,7 +789,15 @@ fun ProfileInfoDialog(
                 }
             }
             DialogButtonBar(
-                negative = null,
+                negative = onEdit?.let {
+                    DialogButtonBarAction(
+                        text = "编辑资料",
+                        onClick = {
+                            triggerEditOnFinish = true
+                            show = false
+                        },
+                    )
+                },
                 positive = DialogButtonBarAction(
                     text = "完成",
                     recommended = true,
@@ -784,6 +806,338 @@ fun ProfileInfoDialog(
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
+    }
+}
+
+/** 个人主页「编辑资料」弹窗：支持更换头像（含裁剪）、修改昵称与简介、更换背景图及网页端兜底。 */
+@Composable
+fun ProfileEditDialog(
+    user: User?,
+    onOpenWeb: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val scheme = COUITheme.colorScheme
+    val initialName = remember(user?.id) { user?.name.orEmpty() }
+    val initialDesc = remember(user?.id) { user?.description.orEmpty() }
+
+    var show by remember { mutableStateOf(false) }
+    var settled by remember { mutableStateOf(false) }
+    var nameDraft by remember(user?.id) { mutableStateOf(initialName) }
+    var descDraft by remember(user?.id) { mutableStateOf(initialDesc) }
+    var avatarUrl by remember(user?.id) { mutableStateOf(user?.avatar.orEmpty()) }
+    var saving by remember { mutableStateOf(false) }
+    var uploadingMedia by remember { mutableStateOf(false) }
+    var cropUri by remember { mutableStateOf<Uri?>(null) }
+    var coverCropUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingSave by remember { mutableStateOf<Pair<String?, String?>?>(null) }
+    var webFallbackMessage by remember { mutableStateOf<String?>(null) }
+
+    val avatarPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) cropUri = uri
+    }
+    val coverPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) coverCropUri = uri
+    }
+
+    LaunchedEffect(Unit) {
+        show = true
+        runCatching { App.repo.syncServerRenameHint() }
+    }
+
+    OverlayDialog(
+        show = show,
+        title = "编辑资料",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { if (!saving && !uploadingMedia) show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                onDismiss()
+            }
+        },
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .scrollEndHaptic()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceContainer)
+                        .clickable(enabled = !uploadingMedia && !saving) {
+                            avatarPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Avatar(avatarUrl, 44.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("头像", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (uploadingMedia) "正在处理上传…" else "点击从相册选择并裁剪",
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                        )
+                    }
+                    Text("更换", fontSize = 13.sp, color = scheme.primary)
+                }
+
+                val renameVersion = App.profileRenameVersion
+                val renameUid = user?.id.orEmpty().ifBlank { runCatching { App.repo.session?.uid.orEmpty() }.getOrDefault("") }
+                val renameRecord = remember(renameUid, renameVersion) {
+                    runCatching { App.store.profileRenameRecord(renameUid) }.getOrDefault(ProfileRenameRecord())
+                }
+                val renameStatus = remember(renameRecord, user?.membership) {
+                    computeProfileRenameStatus(renameRecord, user?.membership ?: Membership.None)
+                }
+
+                TextField(
+                    value = nameDraft,
+                    onValueChange = { nameDraft = it.take(30) },
+                    label = "昵称",
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { nameDraft = initialName },
+                            enabled = !saving && nameDraft != initialName,
+                            modifier = Modifier.testTag("edit_profile_name_restore"),
+                        ) {
+                            Icon(
+                                imageVector = COUIIcons.Undo,
+                                contentDescription = "恢复昵称",
+                                modifier = Modifier.size(18.dp),
+                                tint = if (!saving && nameDraft != initialName) {
+                                    scheme.primary
+                                } else {
+                                    scheme.onSurfaceSecondary.copy(alpha = 0.4f)
+                                },
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("edit_profile_name"),
+                )
+
+                Text(
+                    text = renameStatus.summary,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = if (renameStatus.limited) scheme.error else scheme.onSurfaceSecondary,
+                    modifier = Modifier.padding(horizontal = 4.dp).testTag("edit_profile_name_hint"),
+                )
+
+                TextField(
+                    value = descDraft,
+                    onValueChange = { descDraft = it.take(140) },
+                    label = "个人简介",
+                    singleLine = false,
+                    maxLines = 4,
+                    trailingIcon = if (descDraft != initialDesc) {
+                        {
+                            IconButton(
+                                onClick = { descDraft = initialDesc },
+                                enabled = !saving,
+                                modifier = Modifier.testTag("edit_profile_desc_restore"),
+                            ) {
+                                Icon(
+                                    imageVector = COUIIcons.Undo,
+                                    contentDescription = "恢复简介",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = scheme.primary,
+                                )
+                            }
+                        }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth().testTag("edit_profile_desc"),
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(scheme.surfaceContainer)
+                        .clickable(enabled = !uploadingMedia && !saving) {
+                            coverPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("主页背景图", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (uploadingMedia) "正在处理上传…" else "点击从相册选择并裁剪",
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                        )
+                    }
+                    Text("更换", fontSize = 13.sp, color = scheme.primary)
+                }
+
+                Text(
+                    text = "完整资料或受限时，点此打开微博网页版编辑 →",
+                    fontSize = 12.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            show = false
+                            onOpenWeb()
+                        }
+                        .padding(vertical = 4.dp),
+                )
+            }
+
+            DialogButtonBar(
+                negative = DialogButtonBarAction(
+                    text = "取消",
+                    onClick = { if (!saving && !uploadingMedia) show = false },
+                ),
+                positive = DialogButtonBarAction(
+                    text = if (saving) "保存中…" else "保存",
+                    recommended = true,
+                    onClick = {
+                        if (saving || uploadingMedia) return@DialogButtonBarAction
+                        val nextName = nameDraft.trim()
+                        val nextDesc = descDraft.trim()
+                        if (nextName.isEmpty()) {
+                            App.toast("昵称不能为空")
+                            return@DialogButtonBarAction
+                        }
+                        val nameArg = if (nextName != initialName) nextName else null
+                        val descArg = if (nextDesc != initialDesc) nextDesc else null
+                        if (nameArg == null && descArg == null) {
+                            show = false
+                            return@DialogButtonBarAction
+                        }
+                        pendingSave = nameArg to descArg
+                    },
+                ),
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+
+    pendingSave?.let { (nameArg, descArg) ->
+        val summaryLines = buildList {
+            if (nameArg != null) add("昵称改为「$nameArg」")
+            if (descArg != null) add("简介更新为「${descArg.ifBlank { "（清空）" }}」")
+        }.joinToString("，")
+        ConfirmDialog(
+            title = "确认保存资料",
+            message = "确定将$summaryLines 并同步到微博账号吗？",
+            confirmText = "确认保存",
+            onDismiss = { pendingSave = null },
+            onConfirm = {
+                pendingSave = null
+                if (!saving) {
+                    saving = true
+                    scope.launch {
+                        runCatching {
+                            App.repo.updateProfileBasic(
+                                screenName = nameArg,
+                                description = descArg,
+                                membership = user?.membership ?: Membership.None,
+                            )
+                        }.onSuccess {
+                            App.toast("资料已同步到微博")
+                            show = false
+                        }.onFailure { err ->
+                            App.toast(err.message ?: "修改资料失败")
+                        }
+                        saving = false
+                    }
+                }
+            },
+        )
+    }
+
+    cropUri?.let { uri ->
+        AvatarCropDialog(
+            sourceUri = uri,
+            uploading = uploadingMedia,
+            onDismiss = { if (!uploadingMedia) cropUri = null },
+            onConfirm = { bytes, cropWidth ->
+                if (!uploadingMedia) {
+                    uploadingMedia = true
+                    scope.launch {
+                        runCatching {
+                            App.repo.updateAvatar(bytes = bytes, cropWidth = cropWidth)
+                        }.onSuccess { updated ->
+                            cropUri = null
+                            if (updated.avatar.isNotBlank()) avatarUrl = updated.avatar
+                            App.toast("头像已更新")
+                        }.onFailure { err ->
+                            if (err is ProfileWebFallbackException) {
+                                cropUri = null
+                                webFallbackMessage = err.message
+                            } else {
+                                App.toast(err.message ?: "更换头像失败")
+                            }
+                        }
+                        uploadingMedia = false
+                    }
+                }
+            },
+        )
+    }
+
+    coverCropUri?.let { uri ->
+        CoverCropDialog(
+            sourceUri = uri,
+            uploading = uploadingMedia,
+            onDismiss = { if (!uploadingMedia) coverCropUri = null },
+            onConfirm = { bytes ->
+                if (!uploadingMedia) {
+                    uploadingMedia = true
+                    scope.launch {
+                        runCatching {
+                            App.repo.updateCover(bytes = bytes)
+                        }.onSuccess {
+                            coverCropUri = null
+                            App.toast("背景图已更新")
+                        }.onFailure { err ->
+                            if (err is ProfileWebFallbackException) {
+                                coverCropUri = null
+                                webFallbackMessage = err.message
+                            } else {
+                                App.toast(err.message ?: "更换背景图失败")
+                            }
+                        }
+                        uploadingMedia = false
+                    }
+                }
+            },
+        )
+    }
+
+    webFallbackMessage?.let { msg ->
+        ConfirmDialog(
+            title = "未能直接修改",
+            message = "$msg。是否打开微博网页版编辑资料？",
+            confirmText = "打开网页版",
+            onDismiss = { webFallbackMessage = null },
+            onConfirm = {
+                webFallbackMessage = null
+                show = false
+                onOpenWeb()
+            },
+        )
     }
 }
 

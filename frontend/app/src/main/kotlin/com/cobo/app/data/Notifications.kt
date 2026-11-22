@@ -95,8 +95,13 @@ private fun parseNotificationPayload(container: JSONObject, tab: NotificationTab
             val statusObj = likedComment?.optJSONObject("status") ?: o.optJSONObject("status")
             val targetStatus = Status.from(statusObj)
             val actionLabel = if (likedComment != null) "赞了你的评论" else "赞了你的微博"
-            val replyTextHtml = likedComment?.str("text").orEmpty()
+            val rawReplyText = likedComment?.str("text").orEmpty()
                 .ifBlank { likedComment?.str("text_raw").orEmpty() }
+            val replyTextHtml = formatContainerTextToHtml(
+                rawReplyText,
+                likedComment?.optJSONArray("url_struct"),
+                likedComment?.optJSONArray("topic_struct"),
+            )
             val replyUserName = User.from(likedComment?.optJSONObject("user"))?.name.orEmpty()
             val commentId = likedComment?.str("idstr").orEmpty().ifBlank { likedComment?.str("id").orEmpty() }
             if (user == null && targetStatus == null && replyTextHtml.isBlank()) continue
@@ -117,9 +122,19 @@ private fun parseNotificationPayload(container: JSONObject, tab: NotificationTab
             val replyComment = o.optJSONObject("reply_comment") ?: o.optJSONObject("reply")
             val replyUserName = User.from(replyComment?.optJSONObject("user"))?.name.orEmpty()
             val targetStatus = Status.from(o.optJSONObject("status"))
-            val textHtml = o.str("text").ifBlank { o.str("text_raw") }
-            val replyTextHtml = replyComment?.str("text").orEmpty()
+            val rawText = o.str("text").ifBlank { o.str("text_raw") }
+            val textHtml = formatContainerTextToHtml(
+                rawText,
+                o.optJSONArray("url_struct"),
+                o.optJSONArray("topic_struct"),
+            )
+            val rawReplyText = replyComment?.str("text").orEmpty()
                 .ifBlank { replyComment?.str("text_raw").orEmpty() }
+            val replyTextHtml = formatContainerTextToHtml(
+                rawReplyText,
+                replyComment?.optJSONArray("url_struct"),
+                replyComment?.optJSONArray("topic_struct"),
+            )
             val actionLabel = when (tab) {
                 NotificationTab.AtComment -> "在评论中提到了你"
                 NotificationTab.SentComment -> "我发出的评论"

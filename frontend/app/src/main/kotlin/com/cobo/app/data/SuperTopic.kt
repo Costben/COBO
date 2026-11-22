@@ -324,9 +324,48 @@ private fun collectSuperTopicCards(cards: JSONArray?, items: MutableMap<String, 
                     superTopicVideoStatus(item)?.let { items.putIfAbsent(it.id, it) }
                 }
             }
+        } else {
+            superTopicWboxCardStatus(card)?.let { items.putIfAbsent(it.id, it) }
         }
         collectSuperTopicCards(card.optJSONArray("card_group"), items)
     }
+}
+
+private fun superTopicWboxCardStatus(card: JSONObject): Status? {
+    val scheme = card.str("scheme").trim()
+    if (!com.cobo.app.ui.isWeiboWboxLink(scheme)) return null
+    val pic = normalizeWeiboMediaUrl(
+        card.str("pic")
+            .ifBlank { card.str("item_pic") }
+            .ifBlank { card.optJSONObject("page_pic")?.str("url").orEmpty() },
+    )
+    if (pic.isBlank() || isGenericCardIcon(pic)) return null
+    val title = card.str("title_sub")
+        .ifBlank { card.str("title") }
+        .ifBlank { card.str("item_title") }
+        .ifBlank { card.str("desc1") }
+        .ifBlank { "超话卡片" }
+        .trim()
+    val subtitle = card.str("desc1")
+        .ifBlank { card.str("desc") }
+        .takeIf { it.isNotBlank() && it != title }
+        .orEmpty()
+    val itemId = card.str("itemid").ifBlank { scheme.hashCode().toUInt().toString() }
+    val id = "st_card_$itemId"
+    return Status(
+        id = id,
+        mid = id,
+        textHtml = title,
+        createdAt = "",
+        source = "超话卡片",
+        user = null,
+        bigPic = BigPicInfo(
+            url = pic,
+            scheme = scheme,
+            title = title,
+            subtitle = subtitle,
+        ),
+    )
 }
 
 private fun superTopicVideoStatus(item: JSONObject): Status? {

@@ -69,6 +69,7 @@ import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.formatWeiboTime
+import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
 import com.cobo.app.ui.LocalLinkHandler
@@ -170,7 +171,7 @@ fun StatusCard(
             Spacer(Modifier.height(8.dp))
             StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = keepFrame)
         }
-        StatusMedia(status, compact, onImage, onVideo)
+        StatusMedia(status, compact, onImage, onVideo, onCard = keepFrame)
         if (status.retweeted != null) {
             Spacer(Modifier.height(8.dp))
             RetweetBlock(
@@ -490,6 +491,7 @@ fun StatusMedia(
     compact: Boolean,
     onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
+    onCard: Boolean = true,
 ) {
     val video = status.video
     if (video != null && video.url.isNotBlank()) {
@@ -503,7 +505,72 @@ fun StatusMedia(
     val bigPic = status.bigPic
     if (bigPic != null && bigPic.url.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
-        BigPicCard(bigPic, onImage)
+        if (bigPic.isLarge) {
+            BigPicCard(bigPic, onImage)
+        } else {
+            PageLinkCard(bigPic, compact = compact, onCard = onCard)
+        }
+    }
+}
+
+/** 普通网页 / 微博正文外链卡片：左侧小缩略图 + 右侧标题与摘要，不把缩略图放大成整行大图。 */
+@Composable
+private fun PageLinkCard(
+    info: BigPicInfo,
+    compact: Boolean,
+    onCard: Boolean,
+) {
+    val scheme = COUITheme.colorScheme
+    val linkHandler = LocalLinkHandler.current
+    val hasTarget = info.scheme.isNotBlank()
+    val thumbSize = if (compact) 52.dp else 60.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(nestedBlockTone(onCard))
+            .then(if (hasTarget) Modifier.clickable { linkHandler(info.scheme) } else Modifier)
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = info.url,
+            contentDescription = info.title.ifBlank { null },
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(thumbSize)
+                .clip(RoundedCornerShape(8.dp))
+                .background(scheme.surfaceContainerHigh),
+        )
+        if (info.title.isNotBlank() || info.subtitle.isNotBlank()) {
+            Spacer(Modifier.width(10.dp))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                if (info.title.isNotBlank()) {
+                    Text(
+                        text = info.title,
+                        fontSize = if (compact) 13.sp else 14.sp,
+                        lineHeight = if (compact) 18.sp else 19.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (info.subtitle.isNotBlank()) {
+                    Text(
+                        text = info.subtitle,
+                        fontSize = if (compact) 11.sp else 12.sp,
+                        lineHeight = if (compact) 15.sp else 17.sp,
+                        color = scheme.onSurfaceSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -516,10 +583,15 @@ private fun BigPicCard(
     val saver = LocalImageSaver.current
     val precise = rememberPreciseClickState()
     var ratio by remember(bigPic.url) { mutableFloatStateOf(16f / 9f) }
-    val targetUrl = remember(bigPic.scheme) {
-        if (isWeiboWboxLink(bigPic.scheme)) null else resolveWeiboLink(bigPic.scheme)
+    val isWbox = remember(bigPic.scheme) { isWeiboWboxLink(bigPic.scheme) }
+    val isSuperTopicScheme = remember(bigPic.scheme) { superTopicId(bigPic.scheme) != null }
+    val targetUrl = remember(bigPic.scheme, isWbox) {
+        if (isWbox) null else resolveWeiboLink(bigPic.scheme)
     }
-    val singlePic = remember(bigPic.url) { listOf(Pic(thumb = bigPic.url, large = bigPic.url)) }
+    val openImageFirst = isWbox || isSuperTopicScheme
+    val singlePic = remember(bigPic.url) {
+        listOf(Pic(thumb = bigPic.url, large = bigPic.url, preserveUrl = true))
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -530,15 +602,15 @@ private fun BigPicCard(
             .preciseClickAnchor(precise)
             .combinedClickable(
                 onClick = {
-                    if (targetUrl != null) linkHandler(bigPic.scheme) else onImage(singlePic, 0)
+                    if (!openImageFirst && targetUrl != null) linkHandler(bigPic.scheme) else onImage(singlePic, 0)
                 },
-                onLongClick = { saver?.show(listOf(bigPic.url), 0, precise) },
+                onLongClick = { saver?.show(listOf(bigPic.url), 0, precise, preserveUrls = true) },
             ),
     ) {
         val origins = LocalImageOrigins.current
         AsyncImage(
             model = bigPic.url,
-            contentDescription = null,
+            contentDescription = bigPic.title.ifBlank { null },
             contentScale = ContentScale.Crop,
             onSuccess = { state ->
                 origins.putCacheKey(bigPic.url, state.result.memoryCacheKey)
@@ -549,6 +621,44 @@ private fun BigPicCard(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        if (isWbox || isSuperTopicScheme || bigPic.title.isNotBlank()) {
+            val label = buildString {
+                if (bigPic.title.isNotBlank()) append(bigPic.title)
+                when {
+                    isWbox -> {
+                        if (isNotEmpty()) append(" · ")
+                        append("小程序预览图")
+                    }
+                    isSuperTopicScheme && targetUrl != null -> {
+                        if (isNotEmpty()) append(" · ")
+                        append("进入超话")
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.56f))
+                    .then(
+                        if (!isWbox && targetUrl != null) {
+                            Modifier.clickable { linkHandler(bigPic.scheme) }
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 10.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -884,7 +994,7 @@ fun RetweetBlock(
             Spacer(Modifier.height(6.dp))
             StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = !onCard)
         }
-        StatusMedia(status, true, onImage, onVideo)
+        StatusMedia(status, true, onImage, onVideo, onCard = !onCard)
     }
 }
 

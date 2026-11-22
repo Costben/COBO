@@ -308,6 +308,14 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         if (seeded == null) loadComments(true, force = false)
     }
 
+    LaunchedEffect(id, mid) {
+        App.detailRefreshEvents.collect { targetId ->
+            if (targetId == id || (mid.isNotBlank() && targetId == mid)) {
+                runCatching { App.repo.detail(id, force = true) }.getOrNull()?.let { status = it }
+            }
+        }
+    }
+
     LaunchedEffect(listState, comments.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
@@ -789,7 +797,7 @@ internal fun CommentBadges(
         Box(
             modifier = Modifier
                 .height(height)
-                .clip(RoundedCornerShape(4.dp))
+                .clip(com.cobo.app.ui.components.badgeShape(compact = true))
                 .background(bg)
                 .padding(horizontal = 4.dp)
                 .testTag("comment_badge"),

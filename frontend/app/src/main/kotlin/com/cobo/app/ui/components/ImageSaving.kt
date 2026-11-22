@@ -59,8 +59,16 @@ val SinaSizeSegment = Regex(
     """^(https?://[^/]+)/(?:large|original|woriginal|bmiddle|small|square|thumbnail|thumb\d+|orj\d+|mw\d+|crop\.[0-9.]+)(/.*)$"""
 )
 
-fun originalSize(url: String): String =
-    SinaSizeSegment.replace(url) { "${it.groupValues[1]}/large${it.groupValues[2]}" }
+fun originalSize(url: String): String {
+    if (url.contains("ssig=", ignoreCase = true) ||
+        url.contains("KID=", ignoreCase = true) ||
+        url.contains("Expires=", ignoreCase = true) ||
+        url.contains("Signature=", ignoreCase = true)
+    ) {
+        return url
+    }
+    return SinaSizeSegment.replace(url) { "${it.groupValues[1]}/large${it.groupValues[2]}" }
+}
 
 private val ImageClient by lazy { OkHttpClient.Builder().build() }
 
@@ -145,15 +153,15 @@ class ImageSaveState internal constructor(
         tick++
     }
 
-    fun saveOne(url: String) {
+    fun saveOne(url: String, preserveUrl: Boolean = false) {
         if (url.isBlank()) return
-        withPermission { scope.launch { performSaveOne(url) } }
+        withPermission { scope.launch { performSaveOne(url, preserveUrl) } }
     }
 
     /** Every original of the post, in the order the gallery shows them. */
-    fun saveAll(urls: List<String>) {
+    fun saveAll(urls: List<String>, preserveUrl: Boolean = false) {
         if (urls.isEmpty()) return
-        withPermission { scope.launch { performSaveAll(urls) } }
+        withPermission { scope.launch { performSaveAll(urls, preserveUrl) } }
     }
 
     private fun withPermission(action: () -> Unit) {
@@ -170,25 +178,25 @@ class ImageSaveState internal constructor(
         }
     }
 
-    private suspend fun performSaveOne(url: String) {
+    private suspend fun performSaveOne(url: String, preserveUrl: Boolean = false) {
         if (saving) return
         saving = true
         flash("正在保存原图…")
-        val target = originalSize(url)
-        val bytes = downloadImage(target) ?: downloadImage(url)
+        val target = if (preserveUrl) url else originalSize(url)
+        val bytes = downloadImage(target) ?: if (target != url) downloadImage(url) else null
         val saved = bytes != null && saveToGallery(context, bytes, target)
         saving = false
         flash(if (saved) "已保存到相册" else "保存失败")
     }
 
-    private suspend fun performSaveAll(urls: List<String>) {
+    private suspend fun performSaveAll(urls: List<String>, preserveUrl: Boolean = false) {
         if (saving) return
         saving = true
         var ok = 0
         for ((position, url) in urls.withIndex()) {
             flash("正在保存 ${position + 1}/${urls.size}…")
-            val target = originalSize(url)
-            val bytes = downloadImage(target) ?: downloadImage(url)
+            val target = if (preserveUrl) url else originalSize(url)
+            val bytes = downloadImage(target) ?: if (target != url) downloadImage(url) else null
             if (bytes != null && saveToGallery(context, bytes, target)) ok++
         }
         saving = false
@@ -223,10 +231,15 @@ fun rememberImageSaveState(): ImageSaveState {
  */
 @Stable
 class ImageSaver internal constructor(
-    private val open: (List<String>, Int, PreciseClickState?) -> Unit,
+    private val open: (List<String>, Int, PreciseClickState?, Boolean) -> Unit,
 ) {
-    fun show(urls: List<String>, index: Int = 0, precise: PreciseClickState? = null) {
-        if (urls.isNotEmpty()) open(urls, index.coerceIn(0, urls.lastIndex), precise)
+    fun show(
+        urls: List<String>,
+        index: Int = 0,
+        precise: PreciseClickState? = null,
+        preserveUrls: Boolean = false,
+    ) {
+        if (urls.isNotEmpty()) open(urls, index.coerceIn(0, urls.lastIndex), precise, preserveUrls)
     }
 }
 
@@ -244,27 +257,38 @@ fun SaveImagesMenu(
     precise: PreciseClickState?,
     onDismiss: () -> Unit,
     state: ImageSaveState = rememberImageSaveState(),
+    preserveUrls: Boolean = false,
 ) {
     var last by remember { mutableStateOf(urls.orEmpty()) }
     var lastIndex by remember { mutableIntStateOf(index) }
-    LaunchedEffect(urls, index) {
+    var lastPreserveUrls by remember { mutableStateOf(preserveUrls) }
+    LaunchedEffect(urls, index, preserveUrls) {
         if (urls != null) {
             last = urls
             lastIndex = index
+            lastPreserveUrls = preserveUrls
         }
     }
     val targets = urls ?: last
     if (targets.isEmpty()) return
+    val effectivePreserve = if (urls != null) preserveUrls else lastPreserveUrls
 
-    val actions = remember(targets, lastIndex, state) {
+    val actions = remember(targets, lastIndex, state, effectivePreserve) {
         buildList {
             add(
                 "保存原图" to {
-                    state.saveOne(targets.getOrNull(lastIndex) ?: targets.first())
+                    state.saveOne(
+                        targets.getOrNull(lastIndex) ?: targets.first(),
+                        preserveUrl = effectivePreserve,
+                    )
                 },
             )
             if (targets.size > 1) {
-                add("一键保存原图（${targets.size} 张）" to { state.saveAll(targets) })
+                add(
+                    "一键保存原图（${targets.size} 张）" to {
+                        state.saveAll(targets, preserveUrl = effectivePreserve)
+                    },
+                )
             }
         }
     }

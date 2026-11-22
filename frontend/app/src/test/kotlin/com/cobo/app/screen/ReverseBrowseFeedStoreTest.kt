@@ -42,6 +42,12 @@ class ReverseBrowseFeedStoreTest {
         assertEquals("倒序增量刷新不该触发回顶 generation", initialGen, store.generation)
         assertEquals(listOf("12", "11", "read_marker:10", "10", "9", "8"), store.entryKeys())
         assertEquals(PrependAnchor("9", 120), controller.restoredPrepend)
+
+        // 再刷一次没有新内容：清除「上次阅读到这里」标记
+        call = 1
+        store.refresh()
+        assertNull(store.lastReadBeforeStatusId)
+        assertEquals(listOf("12", "11", "10", "9", "8"), store.entryKeys())
     }
 
     @Test
@@ -260,7 +266,7 @@ class ReverseBrowseFeedStoreTest {
     }
 
     @Test
-    fun normalRefreshMarksPreviousHeadAndSurvivesZeroNewRefresh() = runBlocking {
+    fun normalRefreshMarksPreviousHeadAndClearsOnZeroNewRefresh() = runBlocking {
         var round = 0
         val store = FeedStore(
             key = "friends",
@@ -270,7 +276,8 @@ class ReverseBrowseFeedStoreTest {
             when (round++) {
                 0 -> FeedPage(listOf(status("10"), status("9"), status("8")), sinceId = "c_7")
                 1 -> FeedPage(listOf(status("12"), status("11"), status("10"), status("9")), sinceId = "c_8")
-                2 -> FeedPage(listOf(status("12"), status("11"), status("10"), status("9")), sinceId = "c_8")
+                2 -> FeedPage(listOf(status("15"), status("12"), status("11"), status("10")), sinceId = "c_9")
+                3 -> FeedPage(listOf(status("15"), status("12"), status("11"), status("10")), sinceId = "c_9")
                 else -> FeedPage(listOf(status("20"), status("19")), sinceId = "c_18")
             }
         }
@@ -283,14 +290,20 @@ class ReverseBrowseFeedStoreTest {
         assertEquals("10", store.lastReadBeforeStatusId)
         assertEquals(listOf("12", "11", "read_marker:10", "10", "9"), store.entryKeys())
 
-        // 再刷一次没有新微博：标记保留
-        store.refresh()
-        assertEquals("10", store.lastReadBeforeStatusId)
-
         // 删除被标记的那条微博：标记顺延到下一条存活微博 9
         store.removeDeleted(mapOf("10" to true))
         assertEquals("9", store.lastReadBeforeStatusId)
         assertEquals(listOf("12", "11", "read_marker:9", "9"), store.entryKeys())
+
+        // 再刷出新微博 15：标记移到新的断点 12 前面
+        store.refresh()
+        assertEquals("12", store.lastReadBeforeStatusId)
+        assertEquals(listOf("15", "read_marker:12", "12", "11", "10"), store.entryKeys())
+
+        // 再刷一次没有新微博：标记消失
+        store.refresh()
+        assertNull(store.lastReadBeforeStatusId)
+        assertEquals(listOf("15", "12", "11", "10"), store.entryKeys())
 
         // 刷出跨一整页的新微博（旧头部完全不在首页内）：清空标记
         store.refresh()

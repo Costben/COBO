@@ -193,6 +193,8 @@ data class Pic(
     val videoTitle: String = "",
     /** 视频时长（秒），> 0 时在混排缩略图右下角显示时长角标。 */
     val durationSec: Int = 0,
+    /** 为 true 时看图页与保存直接沿用原始卡片/签名地址，不再把路径段改写成 `/large/`。 */
+    val preserveUrl: Boolean = false,
 ) {
     val isLive: Boolean get() = live.isNotBlank()
     val isVideo: Boolean get() = videoUrl.isNotBlank()
@@ -396,6 +398,10 @@ data class VideoInfo(
 data class BigPicInfo(
     val url: String,
     val scheme: String = "",
+    val title: String = "",
+    val subtitle: String = "",
+    /** `true` 表示需要撑满宽度的预览大图卡片（`bigPic`/`wbox`/`card_type=107`）；`false` 表示普通链接/微博小图卡片。 */
+    val isLarge: Boolean = true,
 )
 
 data class VoteOption(
@@ -637,18 +643,50 @@ data class Status(
             val retweetedObj = o.optJSONObject("retweeted_status")
             var retweeted = if (depth < 2) parse(retweetedObj, depth + 1) else null
 
-            val rawText = o.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
-                ?: o.str("text")
+            val longTextObj = o.optJSONObject("longText")
+            val longContent = longTextObj?.str("longTextContent")?.takeIf { it.isNotBlank() }
+            val rawText = longContent ?: o.str("text")
+            val mergedUrlStruct = mergeJsonArrays(
+                o.optJSONArray("url_struct"),
+                longTextObj?.optJSONArray("url_struct"),
+            )
+            val mergedTopicStruct = mergeJsonArrays(
+                o.optJSONArray("topic_struct"),
+                longTextObj?.optJSONArray("topic_struct"),
+            )
 
-            var bigPic: BigPicInfo? = null
-            if (page != null && (page.str("type") == "bigPic" || page.str("object_type") == "bigPic")) {
-                val pagePic = page.optJSONObject("page_pic")
-                val picUrl = pagePic?.str("url").orEmpty().ifBlank { page.str("page_pic") }
-                if (picUrl.isNotBlank()) {
-                    val schemeUrl = pagePic?.str("scheme").orEmpty().ifBlank { page.str("page_url") }
-                    bigPic = BigPicInfo(url = picUrl, scheme = schemeUrl)
-                }
+            var voteId: String? = null
+            if (page != null) {
+                val cardInfo = page.optJSONObject("card_info")
+                val voteObj = cardInfo?.optJSONObject("vote_object")
+                voteId = voteObj?.str("id")?.takeIf { it.isNotBlank() }
+                    ?: extractVoteId(page.str("page_url"))
+                    ?: extractVoteId(page.str("page_id"))
+                    ?: extractVoteId(page.str("object_id"))
+                    ?: extractVoteId(page.optJSONObject("page_pic")?.str("scheme"))
             }
+            if (voteId == null) {
+                voteId = extractVoteIdFromUrlStruct(mergedUrlStruct)
+            }
+            if (voteId == null) {
+                voteId = extractVoteId(o.str("text"))
+            }
+
+            // 注意：page_info.type == "23" 在微博里也是超话/网页等通用 H5 卡片类型，不能单独当作投票，
+            // 否则所有带超话卡片的微博都会误显示「暂未获取到投票详情」。
+            val isVote = o.int("is_vote") == 1 ||
+                page?.str("object_type") == "hudongvote" ||
+                page?.optJSONObject("card_info")?.optJSONObject("vote_object") != null ||
+                voteId != null
+
+            var bigPic: BigPicInfo? = extractBigPicInfo(
+                o = o,
+                page = page,
+                pics = pics,
+                hasVideo = video != null,
+                isVote = isVote,
+                urlStructOverride = mergedUrlStruct,
+            )
 
             // 微博转发带视频的原博时，接口常把原博的 page_info 挂在外层转发体上而 retweeted_status 里没有；
             // 转发本身不能附带视频，把被拉出来的外层视频（及大图卡片）回嵌进被转发正文，避免浮在转发框外面。
@@ -683,40 +721,24 @@ data class Status(
                 video = null
             }
 
-            var voteId: String? = null
-            if (page != null) {
-                val cardInfo = page.optJSONObject("card_info")
-                val voteObj = cardInfo?.optJSONObject("vote_object")
-                voteId = voteObj?.str("id")?.takeIf { it.isNotBlank() }
-                    ?: extractVoteId(page.str("page_url"))
-                    ?: extractVoteId(page.str("page_id"))
-                    ?: extractVoteId(page.str("object_id"))
-                    ?: extractVoteId(page.optJSONObject("page_pic")?.str("scheme"))
-            }
-            if (voteId == null) {
-                voteId = extractVoteIdFromUrlStruct(o.optJSONArray("url_struct"))
-            }
-            if (voteId == null) {
-                voteId = extractVoteId(o.str("text"))
-            }
-
-            // 注意：page_info.type == "23" 在微博里也是超话/网页等通用 H5 卡片类型，不能单独当作投票，
-            // 否则所有带超话卡片的微博都会误显示「暂未获取到投票详情」。
-            val isVote = o.int("is_vote") == 1 ||
-                page?.str("object_type") == "hudongvote" ||
-                page?.optJSONObject("card_info")?.optJSONObject("vote_object") != null ||
-                voteId != null
-
-            val htmlText = formatContainerTextToHtml(
+            val htmlTextBase = formatContainerTextToHtml(
                 rawText,
-                o.optJSONArray("url_struct"),
-                o.optJSONArray("topic_struct"),
+                mergedUrlStruct,
+                mergedTopicStruct,
             )
+            val truncatedWithoutLink = (o.optBoolean("isLongText") || o.optBoolean("truncated")) &&
+                longContent == null &&
+                !htmlTextBase.contains("全文")
+            val htmlText = if (truncatedWithoutLink) {
+                "$htmlTextBase...<a href=\"/status/${escapeHtmlAttr(id)}\">全文</a>"
+            } else {
+                htmlTextBase
+            }
 
             return Status(
                 id = id,
                 mid = o.str("mid").ifBlank { id },
-                textHtml = enrichSuperTopicLinks(htmlText, o.optJSONArray("url_struct")),
+                textHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct),
                 createdAt = o.str("created_at"),
                 source = stripHtml(o.str("source")),
                 user = User.from(o.optJSONObject("user")),
@@ -745,8 +767,193 @@ private val WeiboHtmlTagRegex = Regex(
 )
 
 private val ContainerRichTokenRegex = Regex(
-    """(https?://[^\s<>"'\u200B\u00A0]+)|(#[^#\n]+?#)|(@[A-Za-z0-9_\-\u4e00-\u9fa5·]+)"""
+    """(https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)|(#[^#\n]+?#)|(@[\p{L}\p{N}_\-\u4e00-\u9fa5·]+)"""
 )
+
+private val HtmlSegmentRegex = Regex(
+    """<a\b([^>]*)>(.*?)</a>|<[^>]+>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+
+private val HtmlHrefAttrRegex = Regex(
+    """\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+    RegexOption.IGNORE_CASE,
+)
+
+private val EmailDomainSuffixRegex = Regex("""^\.[A-Za-z]{2,}""")
+
+private fun mergeJsonArrays(primary: JSONArray?, secondary: JSONArray?): JSONArray? {
+    if (primary == null || primary.length() == 0) return secondary
+    if (secondary == null || secondary.length() == 0) return primary
+    val merged = JSONArray()
+    for (i in 0 until primary.length()) merged.put(primary.opt(i))
+    for (i in 0 until secondary.length()) merged.put(secondary.opt(i))
+    return merged
+}
+
+private fun canonicalShortUrlKey(url: String): String {
+    val trimmed = url.trim()
+    val schemeSep = trimmed.indexOf("://")
+    if (schemeSep <= 0) return trimmed
+    val rest = trimmed.substring(schemeSep + 3)
+    val slash = rest.indexOf('/')
+    return if (slash < 0) {
+        rest.lowercase()
+    } else {
+        rest.substring(0, slash).lowercase() + rest.substring(slash)
+    }
+}
+
+private fun lookupShortUrl(
+    shortUrls: Map<String, Pair<String, String>>,
+    url: String,
+): Pair<String, String>? {
+    val trimmed = url.trim()
+    return shortUrls[trimmed] ?: shortUrls[canonicalShortUrlKey(trimmed)]
+}
+
+private fun splitUrlAndTrailingPunctuation(
+    rawUrl: String,
+    shortUrls: Map<String, Pair<String, String>>,
+): Pair<String, String> {
+    if (lookupShortUrl(shortUrls, rawUrl) != null) return rawUrl to ""
+    var end = rawUrl.length
+    while (end > 0) {
+        val last = rawUrl[end - 1]
+        val shouldStrip = when (last) {
+            '.', ',', ';', ':', '!', '?', ']', '}' -> true
+            ')' -> {
+                val sub = rawUrl.substring(0, end)
+                sub.count { it == '(' } < sub.count { it == ')' }
+            }
+            else -> false
+        }
+        if (!shouldStrip) break
+        end--
+        val candidate = rawUrl.substring(0, end)
+        if (lookupShortUrl(shortUrls, candidate) != null) {
+            return candidate to rawUrl.substring(end)
+        }
+    }
+    return rawUrl.substring(0, end) to rawUrl.substring(end)
+}
+
+private fun resolveShortUrlLabel(
+    rawTitle: String,
+    picHint: String,
+    short: String,
+    target: String,
+): String {
+    val lowerPic = picHint.lowercase()
+    val isWeiboTarget = com.cobo.app.ui.weiboStatusId(target) != null ||
+        lowerPic.contains("timeline_card_small_weibo")
+    val isVideoTarget = com.cobo.app.ui.isVideoLink(target) ||
+        lowerPic.contains("timeline_card_small_video")
+    return when {
+        isWeiboTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
+            "微博正文"
+        rawTitle.isNotBlank() &&
+            !com.cobo.app.ui.isWeiboShortLink(rawTitle) &&
+            rawTitle != short &&
+            rawTitle != target -> rawTitle
+        isVideoTarget -> "微博视频"
+        lowerPic.contains("timeline_card_small_web") -> "网页链接"
+        rawTitle.isNotBlank() && !com.cobo.app.ui.isWeiboShortLink(rawTitle) -> rawTitle
+        else -> ""
+    }
+}
+
+private fun enrichHtmlShortUrls(
+    raw: String,
+    shortUrls: Map<String, Pair<String, String>>,
+): String {
+    val out = StringBuilder(raw.length + 32)
+    var cursor = 0
+    for (match in HtmlSegmentRegex.findAll(raw)) {
+        if (match.range.first > cursor) {
+            out.append(replaceBareUrlsInPlainHtmlSegment(raw.substring(cursor, match.range.first), shortUrls))
+        }
+        val attrs = match.groups[1]?.value
+        val inner = match.groups[2]?.value
+        if (attrs != null && inner != null) {
+            val innerPlain = stripHtml(inner).trim()
+            val hrefMatch = HtmlHrefAttrRegex.find(attrs)
+            val href = hrefMatch?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }.orEmpty()
+            val mapped = if (com.cobo.app.ui.isWeiboShortLink(innerPlain)) {
+                lookupShortUrl(shortUrls, innerPlain)
+            } else if (com.cobo.app.ui.isWeiboShortLink(href)) {
+                lookupShortUrl(shortUrls, href)
+            } else {
+                null
+            }
+            if (mapped != null && (com.cobo.app.ui.isWeiboShortLink(innerPlain) || innerPlain.isBlank())) {
+                val target = mapped.second.ifBlank { href }.ifBlank { innerPlain }
+                val label = mapped.first.takeIf { it.isNotBlank() } ?: run {
+                    val unwrapped = com.cobo.app.ui.unwrapSinaUrl(target) ?: target
+                    if (com.cobo.app.ui.weiboStatusId(unwrapped) != null) "微博正文" else innerPlain
+                }
+                val newAttrs = if (hrefMatch != null && target != href) {
+                    attrs.replaceRange(hrefMatch.range, "href=\"${escapeHtmlAttr(target)}\"")
+                } else {
+                    attrs
+                }
+                out.append("<a").append(newAttrs).append(">").append(escapeHtmlText(label)).append("</a>")
+            } else if (com.cobo.app.ui.isWeiboShortLink(innerPlain)) {
+                val unwrapped = com.cobo.app.ui.unwrapSinaUrl(href) ?: href
+                val replacementLabel = if (com.cobo.app.ui.weiboStatusId(unwrapped) != null) "微博正文" else null
+                if (replacementLabel != null) {
+                    out.append("<a").append(attrs).append(">").append(replacementLabel).append("</a>")
+                } else {
+                    out.append(match.value)
+                }
+            } else {
+                out.append(match.value)
+            }
+        } else {
+            out.append(match.value)
+        }
+        cursor = match.range.last + 1
+    }
+    if (cursor < raw.length) {
+        out.append(replaceBareUrlsInPlainHtmlSegment(raw.substring(cursor), shortUrls))
+    }
+    return out.toString()
+}
+
+private fun replaceBareUrlsInPlainHtmlSegment(
+    segment: String,
+    shortUrls: Map<String, Pair<String, String>>,
+): String {
+    if (!segment.contains("http://", ignoreCase = true) && !segment.contains("https://", ignoreCase = true)) {
+        return segment
+    }
+    val urlOnlyRegex = Regex("""https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+""")
+    val out = StringBuilder(segment.length + 16)
+    var cursor = 0
+    for (match in urlOnlyRegex.findAll(segment)) {
+        if (match.range.first > cursor) out.append(segment.substring(cursor, match.range.first))
+        val (urlToken, trailing) = splitUrlAndTrailingPunctuation(match.value, shortUrls)
+        val mapped = lookupShortUrl(shortUrls, urlToken)
+        if (mapped != null) {
+            val target = mapped.second
+            val label = mapped.first.takeIf { it.isNotBlank() } ?: urlToken
+            out.append("<a href=\"")
+                .append(escapeHtmlAttr(target))
+                .append("\">")
+                .append(escapeHtmlText(label))
+                .append("</a>")
+                .append(trailing)
+        } else {
+            out.append(match.value)
+        }
+        cursor = match.range.last + 1
+    }
+    if (cursor < segment.length) out.append(segment.substring(cursor))
+    return out.toString()
+}
+
+private fun isAsciiEmailLocalChar(c: Char): Boolean =
+    c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '.' || c == '_' || c == '+' || c == '-'
 
 private fun escapeHtmlText(text: String): String = text
     .replace("&", "&amp;")
@@ -772,12 +979,6 @@ internal fun formatContainerTextToHtml(
     topicStruct: JSONArray? = null,
 ): String {
     if (raw.isBlank()) return raw
-    if (WeiboHtmlTagRegex.containsMatchIn(raw)) return raw
-    val hasRichHints = urlStruct != null || topicStruct != null ||
-        raw.contains('\n') || raw.contains('@') || raw.contains('#') ||
-        raw.contains("http://", ignoreCase = true) || raw.contains("https://", ignoreCase = true)
-    if (!hasRichHints) return raw
-
     val shortUrls = HashMap<String, Pair<String, String>>()
     val superTopicUrls = HashMap<String, String>()
     if (urlStruct != null) {
@@ -787,26 +988,48 @@ internal fun formatContainerTextToHtml(
             val ori = entry.str("ori_url").trim()
             val long = entry.str("long_url").trim()
             val pageId = entry.str("page_id").trim()
-            val title = entry.str("url_title").trim()
+            val rawTitle = entry.str("url_title").trim()
             val target = when {
+                pageId.startsWith("231601") && entry.str("h5_target_url").isNotBlank() ->
+                    entry.str("h5_target_url").trim()
                 pageId.startsWith("100808", ignoreCase = true) ->
                     "https://weibo.com/p/${pageId.lowercase()}"
                 ori.isNotBlank() -> ori
                 long.isNotBlank() -> long
                 else -> short
             }
+            val label = resolveShortUrlLabel(
+                rawTitle = rawTitle,
+                picHint = entry.str("url_type_pic"),
+                short = short,
+                target = target,
+            )
             if (short.isNotBlank() && target.isNotBlank()) {
-                shortUrls[short] = title to target
+                val pair = label to target
+                shortUrls[short] = pair
+                shortUrls[canonicalShortUrlKey(short)] = pair
             }
             val isSuper = pageId.startsWith("100808", ignoreCase = true) ||
                 ori.contains("100808") ||
                 entry.str("url_type_pic").contains("super", ignoreCase = true)
-            if (isSuper && target.isNotBlank() && title.isNotBlank()) {
-                superTopicUrls[title] = target
-                superTopicUrls[title.removeSuffix("超话").trim()] = target
+            if (isSuper && target.isNotBlank() && rawTitle.isNotBlank()) {
+                superTopicUrls[rawTitle] = target
+                superTopicUrls[rawTitle.removeSuffix("超话").trim()] = target
             }
         }
     }
+
+    if (WeiboHtmlTagRegex.containsMatchIn(raw)) {
+        return if (shortUrls.isNotEmpty() || raw.contains("t.cn/", ignoreCase = true)) {
+            enrichHtmlShortUrls(raw, shortUrls)
+        } else {
+            raw
+        }
+    }
+    val hasRichHints = urlStruct != null || topicStruct != null ||
+        raw.contains('\n') || raw.contains('@') || raw.contains('#') ||
+        raw.contains("http://", ignoreCase = true) || raw.contains("https://", ignoreCase = true)
+    if (!hasRichHints) return raw
 
     val topicUrls = HashMap<String, String>()
     if (topicStruct != null) {
@@ -830,14 +1053,16 @@ internal fun formatContainerTextToHtml(
         val token = match.value
         when {
             match.groups[1] != null -> {
-                val mapped = shortUrls[token]
-                val target = mapped?.second ?: token
-                val label = mapped?.first?.takeIf { it.isNotBlank() } ?: token
+                val (urlToken, trailing) = splitUrlAndTrailingPunctuation(token, shortUrls)
+                val mapped = lookupShortUrl(shortUrls, urlToken)
+                val target = mapped?.second ?: urlToken
+                val label = mapped?.first?.takeIf { it.isNotBlank() } ?: urlToken
                 out.append("<a href=\"")
                     .append(escapeHtmlAttr(target))
                     .append("\">")
                     .append(escapeHtmlText(label))
                     .append("</a>")
+                if (trailing.isNotEmpty()) out.append(escapeHtmlText(trailing))
             }
 
             match.groups[2] != null -> {
@@ -866,7 +1091,10 @@ internal fun formatContainerTextToHtml(
 
             match.groups[3] != null -> {
                 val prevChar = raw.getOrNull(match.range.first - 1)
-                if (prevChar != null && (prevChar.isLetterOrDigit() || prevChar == '/' || prevChar == '.')) {
+                val looksLikeEmail = prevChar != null &&
+                    isAsciiEmailLocalChar(prevChar) &&
+                    EmailDomainSuffixRegex.containsMatchIn(raw.substring(match.range.last + 1))
+                if (looksLikeEmail) {
                     out.append(escapeHtmlText(token))
                 } else {
                     val name = token.substring(1)
@@ -904,6 +1132,159 @@ private fun enrichSuperTopicLinks(textHtml: String, urlStruct: JSONArray?): Stri
     return out
 }
 
+internal fun normalizeWeiboMediaUrl(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isBlank()) return ""
+    val absolute = if (trimmed.startsWith("//")) "https:$trimmed" else trimmed
+    return if (absolute.startsWith("http://") &&
+        (absolute.contains("sinaimg.") || absolute.contains("weibocdn.com"))
+    ) {
+        "https://" + absolute.removePrefix("http://")
+    } else {
+        absolute
+    }
+}
+
+internal fun isGenericCardIcon(url: String): Boolean {
+    val lower = url.lowercase()
+    return lower.contains("timeline_card_small_") ||
+        (lower.contains("h5.sinaimg.cn/upload/") &&
+            (lower.contains("_default.") || lower.contains("card_small")))
+}
+
+private fun firstWboxUrlFromStruct(urlStruct: JSONArray?): String {
+    if (urlStruct == null) return ""
+    for (i in 0 until urlStruct.length()) {
+        val entry = urlStruct.optJSONObject(i) ?: continue
+        val candidates = listOf(
+            entry.str("h5_target_url"),
+            entry.str("ori_url"),
+            entry.str("long_url"),
+            entry.str("short_url"),
+        )
+        val match = candidates.firstOrNull { com.cobo.app.ui.isWeiboWboxLink(it) }
+        if (!match.isNullOrBlank()) return match
+    }
+    return ""
+}
+
+private fun pageCardImageUrl(page: JSONObject): String {
+    val pagePicObj = page.optJSONObject("page_pic")
+    val picInfo = page.optJSONObject("pic_info")
+    val cardInfo = page.optJSONObject("card_info")
+    val firstSubCard = cardInfo?.optJSONArray("cards")?.optJSONObject(0)
+        ?: page.optJSONArray("cards")?.optJSONObject(0)
+    // 优先取卡片大图字段（card_info.pic_url / media_pic_url / page_pic），跳过微博小链接占位灰图标（timeline_card_small_*）。
+    val candidates = listOf(
+        cardInfo?.str("pic_url").orEmpty(),
+        cardInfo?.optJSONObject("page_pic")?.str("url").orEmpty(),
+        page.str("media_pic_url"),
+        pagePicObj?.str("url").orEmpty(),
+        (page.opt("page_pic") as? String).orEmpty(),
+        picInfo?.optJSONObject("pic_big")?.str("url").orEmpty(),
+        picInfo?.optJSONObject("pic_middle")?.str("url").orEmpty(),
+        picInfo?.optJSONObject("pic_small")?.str("url").orEmpty(),
+        cardInfo?.str("pic").orEmpty(),
+        firstSubCard?.optJSONObject("page_pic")?.str("url").orEmpty(),
+        firstSubCard?.str("pic_url").orEmpty(),
+        firstSubCard?.str("pic").orEmpty(),
+        page.str("pic"),
+        page.str("thumb_pic"),
+    )
+    return candidates
+        .map { normalizeWeiboMediaUrl(it) }
+        .firstOrNull { it.isNotBlank() && !isGenericCardIcon(it) }
+        .orEmpty()
+}
+
+private fun isPlainSuperTopicOrUserPageInfo(page: JSONObject, schemeUrl: String): Boolean {
+    val objType = page.str("object_type").lowercase()
+    if (objType == "user" || objType == "super_topic" || objType == "topic") return true
+    val pageId = page.str("page_id").trim().lowercase()
+    if (pageId.startsWith("100808")) return true
+    if (superTopicId(schemeUrl) != null) return true
+    return false
+}
+
+/**
+ * 提取微博 `page_info` 附带的大图/卡片预览图（兼容网页端 `type=bigPic` 与客户端容器端 `wbox`/`card_type=107` 卡片）。
+ */
+internal fun extractBigPicInfo(
+    o: JSONObject,
+    page: JSONObject?,
+    pics: List<Pic>,
+    hasVideo: Boolean,
+    isVote: Boolean,
+    urlStructOverride: JSONArray? = null,
+): BigPicInfo? {
+    if (page == null || hasVideo || isVote) return null
+    val pageType = page.str("type").lowercase()
+    val objType = page.str("object_type").lowercase()
+    if (pageType == "video" || objType == "video" || objType == "hudongvote") return null
+
+    val picUrl = pageCardImageUrl(page)
+    if (picUrl.isBlank()) return null
+
+    val pagePic = page.optJSONObject("page_pic")
+    val cardInfo = page.optJSONObject("card_info")
+    val rawScheme = pagePic?.str("scheme").orEmpty()
+        .ifBlank { page.str("page_url") }
+        .ifBlank { page.str("scheme") }
+        .ifBlank { cardInfo?.str("scheme").orEmpty() }
+    val wboxFromStruct = firstWboxUrlFromStruct(urlStructOverride ?: o.optJSONArray("url_struct"))
+    val schemeUrl = if (com.cobo.app.ui.isWeiboWboxLink(rawScheme)) {
+        rawScheme
+    } else if (wboxFromStruct.isNotBlank() && (rawScheme.isBlank() || com.cobo.app.ui.isWeiboShortLink(rawScheme))) {
+        wboxFromStruct
+    } else {
+        rawScheme
+    }
+
+    val pageId = page.str("page_id").trim()
+    val objectId = page.str("object_id").trim()
+    val cardType = cardInfo?.str("card_type").orEmpty().trim()
+    val isBigPicCard = cardType == "107" ||
+        pageId.startsWith("231601") ||
+        objectId.contains(":231601_")
+
+    val isExplicitBigOrWbox = isBigPicCard ||
+        pageType == "bigpic" || pageType == "big_pic" ||
+        objType == "bigpic" || objType == "big_pic" ||
+        pageType == "wbox" || objType == "wbox" || objType == "mini_program" ||
+        com.cobo.app.ui.isWeiboWboxLink(schemeUrl) ||
+        objectId.contains("wbox", ignoreCase = true)
+
+    if (!isExplicitBigOrWbox) {
+        if (pics.isNotEmpty() || isPlainSuperTopicOrUserPageInfo(page, schemeUrl)) {
+            return null
+        }
+    }
+
+    val title = page.str("page_title")
+        .ifBlank { page.str("title") }
+        .ifBlank { cardInfo?.str("title").orEmpty() }
+        .trim()
+    val rawSubtitle = page.str("content1")
+        .ifBlank { page.str("tips") }
+        .trim()
+    val subtitle = if (rawSubtitle == title) {
+        page.str("content2")
+            .ifBlank { cardInfo?.str("content1").orEmpty() }
+            .trim()
+            .takeIf { it != title }
+            .orEmpty()
+    } else {
+        rawSubtitle
+    }
+    return BigPicInfo(
+        url = picUrl,
+        scheme = schemeUrl,
+        title = title,
+        subtitle = subtitle,
+        isLarge = isExplicitBigOrWbox,
+    )
+}
+
 private fun videoCoverUrl(page: JSONObject, media: JSONObject?, pics: List<Pic>): String {
     val pagePicObj = page.optJSONObject("page_pic")
     val picInfo = media?.optJSONObject("pic_info")
@@ -916,15 +1297,7 @@ private fun videoCoverUrl(page: JSONObject, media: JSONObject?, pics: List<Pic>)
         .ifBlank { page.str("thumb_pic") }
         .ifBlank { pics.firstOrNull()?.thumb.orEmpty() }
         .trim()
-    if (raw.isBlank()) return ""
-    val absolute = if (raw.startsWith("//")) "https:$raw" else raw
-    return if (absolute.startsWith("http://") &&
-        (absolute.contains("sinaimg.") || absolute.contains("weibocdn.com"))
-    ) {
-        "https://" + absolute.removePrefix("http://")
-    } else {
-        absolute
-    }
+    return normalizeWeiboMediaUrl(raw)
 }
 
 private fun firstPlaybackUrl(arr: JSONArray?): String {
@@ -954,7 +1327,15 @@ data class EditVersion(
         fun from(o: JSONObject?): EditVersion? {
             if (o == null) return null
             val note = if (o.has("history_type")) stripHtml(o.str("text")) else ""
-            val text = if (note.isBlank()) o.str("text") else ""
+            val text = if (note.isBlank()) {
+                formatContainerTextToHtml(
+                    o.str("text"),
+                    o.optJSONArray("url_struct"),
+                    o.optJSONArray("topic_struct"),
+                )
+            } else {
+                ""
+            }
             val ids = o.optJSONArray("pic_ids")
             val pics = if (ids == null) {
                 emptyList()
@@ -1165,10 +1546,18 @@ private fun outerOwnsPageMedia(
 /** 评论 ID 后面的一枚粉丝标识，比如「铁粉」「钻粉」。 */
 data class CommentBadge(val pic: String, val name: String = "")
 
+data class SearchFeaturedUser(
+    val user: User,
+    val desc1: String = "",
+    val desc2: String = "",
+    val desc2Scheme: String = "",
+)
+
 data class FeedPage(
     val items: List<Status>,
     val sinceId: String?,
     val recommendedUsers: List<User> = emptyList(),
+    val featuredUsers: List<SearchFeaturedUser> = emptyList(),
 )
 
 /** How the detail page orders its comments: the hot list, or every comment in time order. */
@@ -1207,13 +1596,14 @@ enum class HotBoard(val label: String, val filterType: String) {
         get() = if (label.endsWith("热搜")) label else "${label}热搜"
 }
 
-/** 搜索「话题」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论两项计数。 */
+/** 搜索「话题 / 超话 / 地点」分类的一条结果。标题去掉了两侧的 #，[desc1]/[desc2] 是阅读、讨论或打卡数。 */
 data class TopicItem(
     val title: String,
     val desc1: String = "",
     val desc2: String = "",
     val scheme: String = "",
     val containerId: String? = null,
+    val pic: String = "",
 )
 
 data class MessageItem(
@@ -1538,14 +1928,39 @@ fun parseContainerCards(root: JSONObject?): FeedPage =
 private fun parseCardsFromData(data: JSONObject?): FeedPage {
     val items = ArrayList<Status>()
     val recommended = LinkedHashMap<String, User>()
+    val featured = LinkedHashMap<String, SearchFeaturedUser>()
 
     fun collectCardUsers(obj: JSONObject) {
-        searchUserOf(obj)?.let { if (it.id !in recommended) recommended[it.id] = it }
+        val searchUser = searchUserOf(obj)
+        if (searchUser != null) {
+            if (searchUser.id !in recommended) recommended[searchUser.id] = searchUser
+            if (obj.optInt("card_type") == 10 && searchUser.id !in featured) {
+                val desc2Scheme = obj.optJSONArray("desc2_struct")
+                    ?.optJSONObject(0)
+                    ?.str("scheme")
+                    .orEmpty()
+                featured[searchUser.id] = SearchFeaturedUser(
+                    user = searchUser,
+                    desc1 = obj.str("desc1"),
+                    desc2 = obj.str("desc2"),
+                    desc2Scheme = desc2Scheme,
+                )
+            }
+        }
         val userArr = obj.optJSONArray("users") ?: return
         for (k in 0 until userArr.length()) {
             val uObj = userArr.optJSONObject(k) ?: continue
             val u = User.from(uObj) ?: continue
             if (u.id !in recommended) recommended[u.id] = u
+        }
+    }
+
+    fun collectSubCardsMblogs(obj: JSONObject) {
+        val subs = obj.optJSONArray("sub_cards") ?: return
+        for (k in 0 until subs.length()) {
+            val sub = subs.optJSONObject(k) ?: continue
+            sub.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
+                ?.let { Status.from(it)?.let(items::add) }
         }
     }
 
@@ -1556,6 +1971,7 @@ private fun parseCardsFromData(data: JSONObject?): FeedPage {
             card.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
                 ?.let { Status.from(it)?.let(items::add) }
             collectCardUsers(card)
+            collectSubCardsMblogs(card)
             val group = card.optJSONArray("card_group")
             if (group != null) {
                 for (j in 0 until group.length()) {
@@ -1564,12 +1980,13 @@ private fun parseCardsFromData(data: JSONObject?): FeedPage {
                         ?.takeUnless { it.isPromotedStatus() }
                         ?.let { Status.from(it)?.let(items::add) }
                     collectCardUsers(g)
+                    collectSubCardsMblogs(g)
                 }
             }
         }
     }
     val since = data?.optJSONObject("cardlistInfo")?.str("since_id")?.ifBlank { null }
-    return FeedPage(items, since, recommended.values.toList())
+    return FeedPage(items, since, recommended.values.toList(), featured.values.toList())
 }
 
 /**
@@ -1704,25 +2121,31 @@ fun parseRelationUsers(root: JSONObject?): List<User> {
 fun parseTopicCards(root: JSONObject?): List<TopicItem> {
     val data = root?.optJSONObject("data") ?: return emptyList()
     val topics = LinkedHashMap<String, TopicItem>()
+    fun collectTopic(item: JSONObject) {
+        val title = item.str("title_sub").trim('#', ' ', '\u00a0')
+        if (title.isBlank()) return
+        val scheme = item.str("scheme")
+        val containerId = superTopicId(item.str("containerid")) ?: superTopicId(scheme)
+        val key = containerId ?: scheme.ifBlank { title }
+        if (key in topics) return
+        val pic = normalizeWeiboMediaUrl(item.str("pic")).takeUnless { isGenericCardIcon(it) }.orEmpty()
+        topics[key] = TopicItem(
+            title = title,
+            desc1 = item.str("desc1"),
+            desc2 = item.str("desc2"),
+            scheme = scheme,
+            containerId = containerId,
+            pic = pic,
+        )
+    }
     val cards = data.optJSONArray("cards") ?: return emptyList()
     for (i in 0 until cards.length()) {
         val card = cards.optJSONObject(i) ?: continue
+        collectTopic(card)
         val group = card.optJSONArray("card_group") ?: continue
         for (j in 0 until group.length()) {
             val item = group.optJSONObject(j) ?: continue
-            val title = item.str("title_sub").trim('#', ' ', '\u00a0')
-            if (title.isBlank()) continue
-            val scheme = item.str("scheme")
-            val containerId = superTopicId(item.str("containerid")) ?: superTopicId(scheme)
-            val key = containerId ?: scheme.ifBlank { title }
-            if (key in topics) continue
-            topics[key] = TopicItem(
-                title = title,
-                desc1 = item.str("desc1"),
-                desc2 = item.str("desc2"),
-                scheme = scheme,
-                containerId = containerId,
-            )
+            collectTopic(item)
         }
     }
     return topics.values.toList()

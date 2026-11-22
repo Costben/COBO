@@ -1,8 +1,10 @@
 package com.cobo.app.ui.components
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -10,6 +12,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +49,21 @@ fun WeiboWebView(
     val currentOnProgressChanged by rememberUpdatedState(onProgressChanged)
     val currentOnConsoleMessage by rememberUpdatedState(onConsoleMessage)
     val currentOnReceivedError by rememberUpdatedState(onReceivedError)
+    var pendingFileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val singleFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val callback = pendingFileCallback
+        pendingFileCallback = null
+        callback?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+    }
+    val multiFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        val callback = pendingFileCallback
+        pendingFileCallback = null
+        callback?.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+    }
     var loadedUrl by remember { mutableStateOf(url) }
     val webView = remember {
         if (clearCookies) {
@@ -74,6 +93,27 @@ fun WeiboWebView(
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                     currentOnConsoleMessage("${consoleMessage.messageLevel()}: ${consoleMessage.message()}")
                     return false
+                }
+
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?,
+                ): Boolean {
+                    pendingFileCallback?.onReceiveValue(null)
+                    pendingFileCallback = filePathCallback
+                    val mime = fileChooserParams?.acceptTypes
+                        ?.firstOrNull { it.isNotBlank() && it.contains('/') }
+                        ?: "*/*"
+                    val allowMultiple = fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                    runCatching {
+                        if (allowMultiple) multiFileLauncher.launch(mime)
+                        else singleFileLauncher.launch(mime)
+                    }.onFailure {
+                        pendingFileCallback = null
+                        filePathCallback?.onReceiveValue(null)
+                    }
+                    return true
                 }
             }
             if (useSessionCookie) {

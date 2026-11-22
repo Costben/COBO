@@ -50,8 +50,7 @@ class ProfileE2eTest : UiE2eTest() {
 
     @Test
     fun profileOpensSettingsAndReturns() {
-        tapTag("bottom_tab_profile")
-        tapTag("top_settings")
+        openSettingsFromProfileTab()
         waitText("设置")
         back()
         waitTag("bottom_tab_profile")

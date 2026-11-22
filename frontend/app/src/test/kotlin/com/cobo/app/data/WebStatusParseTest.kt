@@ -2,8 +2,10 @@ package com.cobo.app.data
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -182,5 +184,222 @@ class WebStatusParseTest {
         assertNotNull(parsed.retweeted?.video)
         assertEquals("涨知识boss的微博视频", parsed.retweeted?.video?.title)
         assertEquals("https://f.video.weibocdn.com/o0/quoted.mp4", parsed.retweeted?.video?.url)
+    }
+
+    @Test
+    fun parsesClientWboxCardPageInfoAndIgnoresPlainSuperTopicTag() {
+        val wboxStatus = JSONObject(
+            """
+            {
+              "id": "5369999000000001",
+              "mid": "5369999000000001",
+              "text": "#Bin哥厉害[超话]# 兵出征卡 http://t.cn/A6xXxXxX",
+              "source": "Bin哥厉害超话",
+              "url_struct": [
+                {
+                  "short_url": "http://t.cn/A6xXxXxX",
+                  "ori_url": "sinaweibo://wbox?id=abc123&page=card",
+                  "url_title": "兵出征卡"
+                }
+              ],
+              "page_info": {
+                "type": "36",
+                "object_type": "webpage",
+                "page_title": "兵出征卡",
+                "page_url": "http://t.cn/A6xXxXxX",
+                "page_pic": {
+                  "url": "http://mu1.sinaimg.cn/original/bingge_card.png"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedCard = Status.from(wboxStatus)!!
+        val bigPic = parsedCard.bigPic
+        assertNotNull(bigPic)
+        assertEquals("https://mu1.sinaimg.cn/original/bingge_card.png", bigPic!!.url)
+        assertEquals("sinaweibo://wbox?id=abc123&page=card", bigPic.scheme)
+        assertEquals("兵出征卡", bigPic.title)
+
+        // 实测 Bin哥厉害「bin出征卡」结构：type=23 + page_id=231601_... + card_info(card_type=107, pic_url) + page_url 指回超话
+        val card107Status = JSONObject(
+            """
+            {
+              "id": "5310045241737774",
+              "mid": "5310045241737774",
+              "text": "http://t.cn/AXaaX34L",
+              "page_info": {
+                "type": "23",
+                "page_id": "231601_7374758152_3_178149690382",
+                "object_type": "webpage",
+                "page_title": "bin出征卡",
+                "page_url": "sinaweibo://pageinfo?containerid=100808b57c4153faa6a778c2b7e4c3268182f6",
+                "card_info": {
+                  "card_type": "107",
+                  "pic_url": "https://mu1.sinaimg.cn/original/phpnNIPOo1781494581hanlin6.png",
+                  "scheme": "sinaweibo://pageinfo?pageid=100808b57c4153faa6a778c2b7e4c3268182f6"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsed107 = Status.from(card107Status)!!
+        assertNotNull(parsed107.bigPic)
+        assertEquals("https://mu1.sinaimg.cn/original/phpnNIPOo1781494581hanlin6.png", parsed107.bigPic!!.url)
+        assertEquals("bin出征卡", parsed107.bigPic!!.title)
+
+        // 仅含微博灰底小图标 timeline_card_small_* 时，不把小图标放大当大图卡片
+        val placeholderIconOnlyStatus = JSONObject(
+            """
+            {
+              "id": "5369999000000003",
+              "mid": "5369999000000003",
+              "text": "仅有默认小图标",
+              "page_info": {
+                "type": "23",
+                "object_type": "wbox",
+                "page_title": "小程序卡片",
+                "page_pic": {
+                  "url": "https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_web_default.png"
+                },
+                "page_url": "https://m.weibo.cn/c/wbox?id=abc"
+              }
+            }
+            """.trimIndent(),
+        )
+        assertNull(Status.from(placeholderIconOnlyStatus)!!.bigPic)
+
+        val plainSuperTopicStatus = JSONObject(
+            """
+            {
+              "id": "5369999000000002",
+              "mid": "5369999000000002",
+              "text": "普通超话发帖",
+              "page_info": {
+                "type": "23",
+                "object_type": "webpage",
+                "page_id": "100808abcdef123456",
+                "page_pic": { "url": "https://wx1.sinaimg.cn/thumb/super_avatar.jpg" },
+                "page_url": "https://m.weibo.cn/p/index?containerid=100808abcdef123456"
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedPlain = Status.from(plainSuperTopicStatus)!!
+        assertNull(parsedPlain.bigPic)
+    }
+
+    @Test
+    fun resolvesProfileRenameHttp400AndComputesCooldownHint() {
+        val json400 = ApiHttpException(400, """{"ok":0,"msg":"非会员一年只可修改一次昵称"}""")
+        assertEquals(
+            "非会员一年只可修改一次昵称",
+            resolveProfileUpdateErrorMessage(json400, renaming = true, membership = Membership.None),
+        )
+
+        val html400 = ApiHttpException(400, "<html>Bad Request</html>")
+        val fallbackMsg = resolveProfileUpdateErrorMessage(
+            html400,
+            renaming = true,
+            membership = Membership.None,
+        )
+        assertTrue(fallbackMsg.contains("改名") && fallbackMsg.contains("HTTP 400"))
+
+        val now = 1_795_000_000_000L
+        val nonVipRecent = computeProfileRenameStatus(
+            ProfileRenameRecord(lastRenamedAtMs = now - 3_600_000L),
+            Membership.None,
+            nowMs = now,
+        )
+        assertTrue(nonVipRecent.limited)
+        assertTrue(nonVipRecent.summary.contains("上次改名：") && nonVipRecent.summary.contains("暂不可改"))
+
+        val vipEligible = computeProfileRenameStatus(
+            ProfileRenameRecord(lastRenamedAtMs = now - 10L * 86_400_000L),
+            Membership.Svip,
+            nowMs = now,
+        )
+        assertFalse(vipEligible.limited)
+        assertTrue(vipEligible.summary.contains("可尝试改名"))
+    }
+
+    @Test
+    fun formatsShortWeiboLinksAndLongTextWithoutRawTcnTruncation() {
+        val longStatus = JSONObject(
+            """
+            {
+              "id": "5370000000000001",
+              "mid": "5370000000000001",
+              "isLongText": true,
+              "text": "之前介绍过的 Strata（http://t.cn/AXWV0FO1），专门找",
+              "longText": {
+                "longTextContent": "之前介绍过的 Strata（http://t.cn/AXWV0FO1），最新版已经支持 Inkling-2-Mini 了（http://t.cn/AXTaF7i9）。\n完整正文结尾。",
+                "url_struct": [
+                  {
+                    "short_url": "https://t.cn/AXWV0FO1",
+                    "ori_url": "sinaweibo://detail?mblogid=Q12345",
+                    "url_title": "微博正文"
+                  },
+                  {
+                    "short_url": "http://t.cn/AXTaF7i9",
+                    "ori_url": "https://m.weibo.cn/status/5369999999999999",
+                    "url_title": "",
+                    "url_type_pic": "https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_weibo_default.png"
+                  }
+                ]
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val parsedLong = Status.from(longStatus)!!
+        assertFalse(parsedLong.textHtml.contains("t.cn/AXWV0FO1"))
+        assertFalse(parsedLong.textHtml.contains("t.cn/AXTaF7i9"))
+        assertTrue(parsedLong.textHtml.contains(">微博正文</a>），最新版"))
+        assertTrue(parsedLong.textHtml.contains("完整正文结尾。"))
+        assertFalse(parsedLong.textHtml.contains(">全文</a>"))
+
+        val stillTruncated = JSONObject(
+            """
+            {
+              "id": "5370000000000002",
+              "mid": "5370000000000002",
+              "isLongText": true,
+              "text": "被截断的正文内容"
+            }
+            """.trimIndent(),
+        )
+        val parsedTruncated = Status.from(stillTruncated)!!
+        assertTrue(parsedTruncated.textHtml.contains("被截断的正文内容...<a href=\"/status/5370000000000002\">全文</a>"))
+    }
+
+    @Test
+    fun parsesNormalPageInfoAsCompactLinkCardNotLargePic() {
+        val status = JSONObject(
+            """
+            {
+              "id": "5370000000000003",
+              "mid": "5370000000000003",
+              "text": "正文",
+              "page_info": {
+                "type": "webpage",
+                "object_type": "webpage",
+                "page_title": "tombkeeper 的微博",
+                "content1": "本地跑大模型的同学，可以试一下新出的推理引擎 Strata",
+                "page_url": "https://m.weibo.cn/status/5369999999999999",
+                "page_pic": {
+                  "url": "https://wx1.sinaimg.cn/thumbnail/thumb.jpg"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsed = Status.from(status)!!
+        val linkCard = parsed.bigPic
+        assertNotNull(linkCard)
+        assertFalse(linkCard!!.isLarge)
+        assertEquals("tombkeeper 的微博", linkCard.title)
+        assertEquals("本地跑大模型的同学，可以试一下新出的推理引擎 Strata", linkCard.subtitle)
+        assertEquals("https://wx1.sinaimg.cn/thumbnail/thumb.jpg", linkCard.url)
     }
 }
