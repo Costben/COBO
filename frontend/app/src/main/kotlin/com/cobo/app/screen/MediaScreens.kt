@@ -110,6 +110,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Brush
@@ -199,14 +200,19 @@ import com.cobo.app.ui.ExpandEasing
 import com.cobo.app.ui.ImageOrigins
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.LocalRouteTransition
+import com.cobo.app.ui.LongImageAspect
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.isWeiboLiveLink
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.openExternalUrl
+import com.cobo.app.ui.resolveWeiboLink
 import com.cobo.app.ui.ThumbBounds
+import com.cobo.app.ui.unwrapWeiboLink
 import com.cobo.app.ui.unwrapSinaUrl
 import com.cobo.app.ui.components.AvatarCropDialog
+import com.cobo.app.ui.components.CoboRefreshSpinner
 import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.extractIntentFallbackUrl
@@ -214,7 +220,6 @@ import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarDefaults
 import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
@@ -270,11 +275,6 @@ import kotlin.math.roundToLong
 
 private const val MaxZoom = 5f
 private const val DoubleTapZoom = 2.5f
-
-// A picture narrower than this (width over height) is a long strip. Fitted inside the screen it
-// would shrink to a sliver, so it rests at the screen's width and is scrolled up and down, and it
-// is decoded at that width so the detail is there when it is zoomed.
-private const val LongImageAspect = 9f / 22f
 
 // A flick down a long strip carries on after the finger is lifted; below this speed it is just a
 // slow drag and stops where it is.
@@ -597,7 +597,7 @@ fun ImageViewerScreen(
         val h = frame.dismiss.boxSize.height.toFloat()
         val effectiveAspect = aspect ?: thumb?.rect?.let { if (it.height > 0f) it.width / it.height else null }
         val rest = if (w > 0f && h > 0f && effectiveAspect != null) restSize(w, h, effectiveAspect) else null
-        val hasThumb = thumb != null && rest != null && rest.height <= h + 0.5f
+        val hasThumb = thumb != null && rest != null
         transition?.onHasReturnTarget?.invoke(hasThumb)
         origins.beginViewing(viewerOwner, if (transitionExiting && !hasThumb) null else current)
     }
@@ -699,7 +699,7 @@ fun ImageViewerScreen(
                             chrome = true
                         }
                     },
-                    onDismissRelease = { velocity ->
+                    onDismissRelease = { velocity, _, _ ->
                         handleDismissRelease(
                             velocity = velocity,
                             dismiss = frame.dismiss,
@@ -708,6 +708,7 @@ fun ImageViewerScreen(
                             url = urls.getOrNull(pagerState.currentPage),
                             density = density,
                             scope = scope,
+                            startImageOffset = frame.dismiss.pendingImageOffset,
                             onPopImmediate = { nav.popImmediate() },
                         )
                     },
@@ -720,7 +721,13 @@ fun ImageViewerScreen(
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.55f))
                             .clickable {
-                                nav.push(Route.Video(pagePic.videoUrl, pagePic.videoTitle))
+                                nav.push(
+                                    Route.Video(
+                                        pagePic.videoUrl,
+                                        pagePic.videoTitle,
+                                        isLive = isWeiboLiveLink(pagePic.videoUrl),
+                                    ),
+                                )
                             },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1109,7 +1116,7 @@ private fun ZoomableImage(
     chromeVisible: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
-    onDismissRelease: (Velocity) -> Unit,
+    onDismissRelease: (Velocity, ComposeSize, Offset) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1281,10 +1288,11 @@ private fun ZoomableImage(
     var reveal by remember(url) { mutableFloatStateOf(if (syncThumbPainter != null) 0f else 1f) }
     var skipNextFade by remember(url) { mutableStateOf(false) }
 
+    val effectiveAspect = frame.aspects[url] ?: origins.aspectOf(url)
     // A long strip is decoded at the screen's width rather than fitted to it, so zooming in shows
     // detail instead of a stretched handful of pixels.
     val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
-    val decodeSize = frame.aspects[url]?.takeIf { it < LongImageAspect }?.let { aspect ->
+    val decodeSize = effectiveAspect?.takeIf { it < LongImageAspect }?.let { aspect ->
         val width = screenWidthPx.coerceAtLeast(1)
         val height = (width / aspect).toInt().coerceAtLeast(1)
         coil3.size.Size(width, minOf(height, (MaxDecodePixels / width).coerceAtLeast(1)))
@@ -1308,7 +1316,7 @@ private fun ZoomableImage(
 
     // The picture as laid out at rest; a picture whose shape is not known yet fills the box.
     fun shown(): ComposeSize {
-        val aspect = frame.aspects[url] ?: return ComposeSize(box.width.toFloat(), box.height.toFloat())
+        val aspect = effectiveAspect ?: return ComposeSize(box.width.toFloat(), box.height.toFloat())
         return restSize(box.width.toFloat(), box.height.toFloat(), aspect)
     }
 
@@ -1409,8 +1417,8 @@ private fun ZoomableImage(
     // The picture is put at its resting position as soon as its shape and the box are both known,
     // and pushed back inside the box whenever the shape the decoder reports refines the one the
     // address carried.
-    LaunchedEffect(isCurrent, box, frame.aspects[url]) {
-        if (box == IntSize.Zero || frame.aspects[url] == null) return@LaunchedEffect
+    LaunchedEffect(isCurrent, box, effectiveAspect) {
+        if (box == IntSize.Zero || effectiveAspect == null) return@LaunchedEffect
         if (isCurrent && !placed) {
             offset = restPosition()
             placed = true
@@ -1477,7 +1485,20 @@ private fun ZoomableImage(
                                         null
                                     }
                                     val thumb = liveThumb ?: url.takeIf { !frame.zoomed }?.let { frame.thumbs[it] }
-                                    openFrame(p, thumb, frame.aspects[url] ?: thumb?.aspect)
+                                    val rest = shown()
+                                    val restPos = if (box != IntSize.Zero && effectiveAspect != null) restPosition() else Offset.Zero
+                                    val baseOffset = if (isCurrent && !placed && effectiveAspect != null) restPos else offset
+                                    val isExiting = transition?.exiting?.invoke() == true
+                                    val needsScroll = isExiting &&
+                                        box != IntSize.Zero &&
+                                        rest.height > box.height + 0.5f &&
+                                        (baseOffset - restPos).getDistance() > LongImageScrollEpsilon
+                                    openFrame(
+                                        progress = p,
+                                        thumb = thumb,
+                                        aspect = frame.aspects[url] ?: origins.aspectOf(url) ?: thumb?.aspect,
+                                        needsScroll = needsScroll,
+                                    )
                                 }
                                 translationX += off.x
                                 translationY += off.y
@@ -1486,21 +1507,58 @@ private fun ZoomableImage(
                     }
                 },
         ) {
+            val rest = shown()
+            val restPos = if (box != IntSize.Zero && effectiveAspect != null) restPosition() else Offset.Zero
+            val baseOffset = if (isCurrent && !placed && effectiveAspect != null) restPos else offset
             Box(
                 Modifier
                     .fillMaxSize()
                     .onSizeChanged { box = it }
                     .graphicsLayer {
+                        val d = frame.dismiss
+                        val isLong = rest.height > box.height + 0.5f
+                        val displayOffset = when {
+                            isCurrent && d.exiting && d.exitHasThumb -> {
+                                val startOff = d.exitStartImageOffset
+                                val targetOff = d.exitTargetImageOffset
+                                val needsScroll = isLong &&
+                                    (startOff - targetOff).getDistance() > LongImageScrollEpsilon
+                                val tScroll = longImageScrollFactor(d.exitProgress.value, needsScroll)
+                                Offset(
+                                    lerp(startOff.x, targetOff.x, tScroll),
+                                    lerp(startOff.y, targetOff.y, tScroll),
+                                )
+                            }
+                            isCurrent && !d.active && !d.exiting && progress() < 1f && transition?.exiting?.invoke() == true -> {
+                                val host = frame.host
+                                val hasTargetThumb = !frame.zoomed && (
+                                    (host != null && origins.boundsOf(url, host, density.density) != null) ||
+                                        frame.thumbs[url] != null
+                                    )
+                                val needsScroll = box != IntSize.Zero &&
+                                    isLong &&
+                                    (baseOffset - restPos).getDistance() > LongImageScrollEpsilon
+                                if (hasTargetThumb && needsScroll) {
+                                    val tScroll = longImageScrollFactor(1f - progress(), needsScroll = true)
+                                    Offset(
+                                        lerp(baseOffset.x, restPos.x, tScroll),
+                                        lerp(baseOffset.y, restPos.y, tScroll),
+                                    )
+                                } else {
+                                    baseOffset
+                                }
+                            }
+                            else -> baseOffset
+                        }
                         scaleX = scale
                         scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
+                        translationX = displayOffset.x
+                        translationY = displayOffset.y
                     },
             ) {
                 // The picture rests at the size it shows at. A long strip is taller than this box and
                 // overhangs it, which is what the gesture layer below scrolls; every other picture
                 // rests fitted inside the box.
-                val rest = shown()
                 val resting = if (rest.height > box.height + 0.5f) {
                     Modifier.requiredSize(
                         with(density) { rest.width.toDp() },
@@ -1512,19 +1570,23 @@ private fun ZoomableImage(
                 Box(Modifier.align(Alignment.Center).then(resting)) {
                     // 信息流里那张图先顶上：优先同步画出内存缓存里的缩略图，首帧零空白；
                     // 整图到了再盖上去，切原图时也用 settledPainter 垫底，不出现闪烁。
+                    val thumbScale = if (rest.height > box.height + 0.5f) ContentScale.FillWidth else ContentScale.Fit
+                    val thumbAlign = if (rest.height > box.height + 0.5f) Alignment.TopCenter else Alignment.Center
                     if (!loaded || reveal < 1f) {
                         if (syncThumbPainter != null) {
                             Image(
                                 painter = syncThumbPainter,
                                 contentDescription = null,
-                                contentScale = ContentScale.Fit,
+                                contentScale = thumbScale,
+                                alignment = thumbAlign,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else if (thumbModel != null) {
                             AsyncImage(
                                 model = thumbModel,
                                 contentDescription = null,
-                                contentScale = ContentScale.Fit,
+                                contentScale = thumbScale,
+                                alignment = thumbAlign,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -1695,7 +1757,8 @@ private fun ZoomableImage(
                         },
                         onRelease = { velocity, taken ->
                             if (mode == GestureMode.DISMISS || (frame.dismiss.active && !frame.dismiss.exiting)) {
-                                currentOnDismissRelease(velocity)
+                                frame.dismiss.pendingImageOffset = offset
+                                currentOnDismissRelease(velocity, shown(), offset)
                             } else if (scale < 1f - ZoomEpsilon) {
                                 rebound()
                             } else if (taken) {
@@ -2158,6 +2221,27 @@ private const val DragMinScale = 0.7f
 /** 拖拽缩放曲线：跟手即刻开始缩小，越拖越柔和（对齐相册 PathInterpolator(0, 0, 0.4, 1)）。 */
 private val DragScaleEasing = CubicBezierEasing(0f, 0f, 0.4f, 1f)
 
+private const val LongImageScrollEpsilon = 8f
+private const val LongImageScrollEnd = 0.72f
+private const val LongImageShrinkStart = 0.18f
+
+/**
+ * 长图退场（[exitProgress] 0→1）滚动阶段进度：平滑滚动到缩略图对应的中心裁切位置，
+ * 与外层动画曲线保持一致不额外叠加缓动，避免在起始段跑得过快。
+ */
+internal fun longImageScrollFactor(exitProgress: Float, needsScroll: Boolean): Float {
+    if (!needsScroll) return 1f
+    return (exitProgress / LongImageScrollEnd).coerceIn(0f, 1f)
+}
+
+/**
+ * 长图退场（[exitProgress] 0→1）缩放阶段进度：滚动到位前后平滑接力缩小，无视口拉伸。
+ */
+internal fun longImageShrinkFactor(exitProgress: Float, needsScroll: Boolean): Float {
+    if (!needsScroll) return exitProgress.coerceIn(0f, 1f)
+    return ((exitProgress - LongImageShrinkStart) / (1f - LongImageShrinkStart)).coerceIn(0f, 1f)
+}
+
 /** 拖拽退出时手势与背景状态：支持任意方向拖动与甩出退出，取消时平滑回弹、退出时接力回到原缩略图位置。 */
 @Stable
 private class DragDismissState {
@@ -2176,6 +2260,9 @@ private class DragDismissState {
     var exitHasThumb by mutableStateOf(false)
     var exitThumb: ThumbBounds? by mutableStateOf(null)
     var exitAspect: Float? by mutableStateOf(null)
+    var exitStartImageOffset by mutableStateOf(Offset.Zero)
+    var exitTargetImageOffset by mutableStateOf(Offset.Zero)
+    var pendingImageOffset by mutableStateOf(Offset.Zero)
     var exitFlyTarget by mutableStateOf(Offset.Zero)
     var animJob: Job? = null
 
@@ -2202,6 +2289,8 @@ private class DragDismissState {
 
     fun startDrag(focus: Offset) {
         animJob?.cancel()
+        exitStartImageOffset = Offset.Zero
+        exitTargetImageOffset = Offset.Zero
         pivot = focus - Offset(boxSize.width / 2f, boxSize.height / 2f)
         dragOffset = Offset.Zero
         active = true
@@ -2221,6 +2310,9 @@ private class DragDismissState {
         dragging = false
         active = false
         dragOffset = Offset.Zero
+        exitStartImageOffset = Offset.Zero
+        exitTargetImageOffset = Offset.Zero
+        pendingImageOffset = Offset.Zero
     }
 }
 
@@ -2232,6 +2324,7 @@ private fun handleDismissRelease(
     url: String?,
     density: Float,
     scope: CoroutineScope,
+    startImageOffset: Offset = Offset.Zero,
     onPopImmediate: () -> Unit,
 ) {
     if (dismiss.exiting) return
@@ -2290,10 +2383,15 @@ private fun handleDismissRelease(
     val h = dismiss.boxSize.height.toFloat()
     val effectiveAspect = aspect ?: thumb?.rect?.let { if (it.height > 0f) it.width / it.height else null }
     val rest = if (w > 0f && h > 0f && effectiveAspect != null) restSize(w, h, effectiveAspect) else null
-    val hasThumb = thumb != null && rest != null && rest.height <= h + 0.5f
+    val longImage = rest != null && rest.height > h + 0.5f
+    val hasThumb = thumb != null && rest != null
+    val targetImageOffset = if (longImage) Offset(0f, ((rest.height - h) / 2f).coerceAtLeast(0f)) else Offset.Zero
+    val needsLongScroll = longImage && (startImageOffset - targetImageOffset).getDistance() > LongImageScrollEpsilon
 
     dismiss.exitStartScale = startScale
     dismiss.exitStartTranslation = startTranslation
+    dismiss.exitStartImageOffset = if (longImage) startImageOffset else Offset.Zero
+    dismiss.exitTargetImageOffset = targetImageOffset
 
     dismiss.animJob = scope.launch {
         dismiss.exitBgAlpha.snapTo(startBgAlpha)
@@ -2313,12 +2411,13 @@ private fun handleDismissRelease(
             dismiss.exitHasThumb = true
             dismiss.exitTranslation.snapTo(startTranslation)
 
+            val exitMillis = if (needsLongScroll) 460 else 320
             coroutineScope {
                 launch {
                     dismiss.exitBgAlpha.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
                 }
                 launch {
-                    dismiss.exitProgress.animateTo(1f, tween(320, easing = ExpandEasing))
+                    dismiss.exitProgress.animateTo(1f, tween(exitMillis, easing = ExpandEasing))
                 }
                 launch {
                     dismiss.exitTranslation.animateTo(
@@ -2333,7 +2432,7 @@ private fun handleDismissRelease(
                 }
             }
         } else {
-            // 无原缩略图（如长图/不可见原位）直接飞出淡出，此时恢复底层缩略图避免淡出时出现空洞。
+            // 无原缩略图或不可见原位时直接飞出淡出，此时恢复底层缩略图避免淡出时出现空洞。
             origins.viewing = null
             val dir = when {
                 speed >= flingThreshold && speed > 0f -> vel / speed
@@ -2367,7 +2466,7 @@ private fun GraphicsLayerScope.applyDismissDrag(d: DragDismissState) {
     translationX = trans.x
     translationY = trans.y
     shape = RectangleShape
-    clip = false
+    clip = true
 }
 
 private fun GraphicsLayerScope.applyDismissExit(d: DragDismissState) {
@@ -2389,21 +2488,17 @@ private fun GraphicsLayerScope.applyDismissExit(d: DragDismissState) {
     val rest = (d.exitAspect ?: (source.width / source.height)).let {
         restSize(size.width, size.height, it)
     }
-    val cover = max(source.width / rest.width, source.height / rest.height)
-    val curScale = lerp(d.exitStartScale, cover, p)
-    val trans = d.exitTranslation.value
-    alpha = 1f
-    transformOrigin = TransformOrigin.Center
-    scaleX = curScale
-    scaleY = curScale
-    translationX = trans.x
-    translationY = trans.y
-    shape = CenteredWindow(
-        width = lerp(size.width * d.exitStartScale, source.width, p) / curScale,
-        height = lerp(size.height * d.exitStartScale, source.height, p) / curScale,
-        radius = lerp(0f, thumb.cornerRadius, p) / curScale,
+    val needsScroll = rest.height > size.height + 0.5f &&
+        (d.exitStartImageOffset - d.exitTargetImageOffset).getDistance() > LongImageScrollEpsilon
+    val shrink = longImageShrinkFactor(p, needsScroll = needsScroll)
+    applyThumbReturnFrame(
+        source = source,
+        cornerRadius = thumb.cornerRadius,
+        rest = rest,
+        startScale = d.exitStartScale,
+        trans = d.exitTranslation.value,
+        shrink = shrink,
     )
-    clip = true
 }
 
 /** 一页图画自己的进场要用到、又不属于任何一页的东西。 */
@@ -2435,12 +2530,16 @@ private fun GraphicsLayerScope.settle() {
 }
 
 /**
- * 把整层从缩略图摆到整屏。画面本来就停在它最终落定的位置（居中、按原比例），
- * 所以绕中心放大到刚好盖住缩略图、再裁成缩略图那一块，得到的正是缩略图的居中裁切；
- * 中间每一帧都是这两步的同一个插值。没有缩略图、或者还不知道图片本身的比例时，
- * 只淡入并轻微放大，绝不从一块错误的位置长出来。
+ * 把整层从缩略图摆到整屏。普通图缩略图居中裁切，长图缩略图从顶部对齐裁切，
+ * 所以退场滚回顶部即可直接与长图顶部缩略图无缝重合；进场时从顶部缩略图直接展开。
+ * 没有缩略图或还不知道图片本身的比例时，只淡入并轻微放大，绝不从错误的位置长出来。
  */
-private fun GraphicsLayerScope.openFrame(progress: Float, thumb: ThumbBounds?, aspect: Float?) {
+private fun GraphicsLayerScope.openFrame(
+    progress: Float,
+    thumb: ThumbBounds?,
+    aspect: Float?,
+    needsScroll: Boolean = false,
+) {
     if (size.width <= 0f || size.height <= 0f) {
         settle()
         return
@@ -2448,30 +2547,82 @@ private fun GraphicsLayerScope.openFrame(progress: Float, thumb: ThumbBounds?, a
     val source = thumb?.rect
     val rest = (aspect ?: source?.let { it.width / it.height })
         ?.let { restSize(size.width, size.height, it) }
-    if (source == null || rest == null || rest.height > size.height + 0.5f) {
+    if (source == null || rest == null) {
         settle()
         alpha = progress
         scaleX = lerp(0.92f, 1f, progress)
         scaleY = scaleX
         return
     }
-    val width = size.width
-    val height = size.height
-    val cover = max(source.width / rest.width, source.height / rest.height)
-    val scale = lerp(cover, 1f, progress)
-    alpha = 1f
-    transformOrigin = TransformOrigin.Center
-    scaleX = scale
-    scaleY = scale
-    translationX = lerp(source.center.x, width / 2f, progress) - width / 2f
-    translationY = lerp(source.center.y, height / 2f, progress) - height / 2f
-    // 可见窗口在图层自己的坐标里，是被缩放放大了的，所以要按缩放折算回去。
-    shape = CenteredWindow(
-        width = lerp(source.width, width, progress) / scale,
-        height = lerp(source.height, height, progress) / scale,
-        radius = lerp(thumb.cornerRadius, 0f, progress) / scale,
+    val shrink = longImageShrinkFactor(1f - progress, needsScroll = needsScroll)
+    val trans = Offset(
+        lerp(0f, source.center.x - size.width / 2f, shrink),
+        lerp(0f, source.center.y - size.height / 2f, shrink),
     )
+    applyThumbReturnFrame(
+        source = source,
+        cornerRadius = thumb.cornerRadius,
+        rest = rest,
+        startScale = 1f,
+        trans = trans,
+        shrink = shrink,
+    )
+}
+
+private fun GraphicsLayerScope.applyThumbReturnFrame(
+    source: Rect,
+    cornerRadius: Float,
+    rest: ComposeSize,
+    startScale: Float,
+    trans: Offset,
+    shrink: Float,
+) {
+    val cover = max(source.width / rest.width, source.height / rest.height)
+    val curScale = lerp(startScale, cover, shrink).coerceAtLeast(0.001f)
+    val destW = lerp(size.width * startScale, source.width, shrink)
+    val destH = lerp(size.height * startScale, source.height, shrink)
+    val radius = lerp(0f, cornerRadius, shrink) / curScale
+    alpha = 1f
+    if (rest.height > size.height + 0.5f) {
+        val destLeft = size.width / 2f + trans.x - destW / 2f
+        val destTop = size.height / 2f + trans.y - destH / 2f
+        val winW = destW / curScale
+        val winH = destH / curScale
+        val winLeft = (size.width - winW) / 2f
+        transformOrigin = TransformOrigin(0f, 0f)
+        scaleX = curScale
+        scaleY = curScale
+        translationX = destLeft - curScale * winLeft
+        translationY = destTop
+        shape = TopWindow(winLeft, winW, winH, radius)
+    } else {
+        transformOrigin = TransformOrigin.Center
+        scaleX = curScale
+        scaleY = curScale
+        translationX = trans.x
+        translationY = trans.y
+        shape = CenteredWindow(
+            width = destW / curScale,
+            height = destH / curScale,
+            radius = radius,
+        )
+    }
     clip = true
+}
+
+private class TopWindow(
+    private val left: Float,
+    private val width: Float,
+    private val height: Float,
+    private val radius: Float,
+) : Shape {
+    override fun createOutline(
+        size: ComposeSize,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline = Outline.Rounded(
+        RoundRect(left, 0f, left + width, height, CornerRadius(radius)),
+    )
 }
 
 private class CenteredWindow(
@@ -2600,14 +2751,18 @@ private fun VideoSpeedPill(
 }
 
 @Composable
-fun VideoScreen(nav: NavState, url: String, title: String) {
+fun VideoScreen(nav: NavState, url: String, title: String, isLive: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val browserFallbackUrl = remember(url) { unwrapSinaUrl(url) ?: url }
-    var resolved by remember(url) {
+    val liveRequested = remember(url, isLive) { isLive || isWeiboLiveLink(url) }
+    val browserFallbackUrl = remember(url) {
+        val unwrapped = unwrapWeiboLink(url)
+        resolveWeiboLink(unwrapped) ?: unwrapped
+    }
+    var resolved by remember(url, liveRequested) {
         mutableStateOf<ResolvedVideo?>(
-            if (isDirectVideoStream(url)) {
-                ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url))
+            if (!liveRequested && isDirectVideoStream(url)) {
+                ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
             } else null,
         )
     }
@@ -2672,9 +2827,9 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
         }
     }
 
-    LaunchedEffect(url) {
+    LaunchedEffect(url, liveRequested) {
         if (resolved == null) {
-            resolved = resolvePlayableVideo(url, context.cacheDir)
+            resolved = resolvePlayableVideo(url, context.cacheDir, isLiveHint = liveRequested)
         }
     }
 
@@ -2686,9 +2841,13 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    CircularProgressIndicator()
+                    CoboRefreshSpinner()
                     Spacer(Modifier.height(12.dp))
-                    Text("正在解析视频…", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+                    Text(
+                        if (liveRequested) "正在连接直播间…" else "正在解析视频…",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 13.sp,
+                    )
                 }
                 Row(
                     modifier = Modifier
@@ -2703,7 +2862,7 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        title.ifBlank { "视频" },
+                        title.ifBlank { if (liveRequested) "直播" else "视频" },
                         color = Color.White,
                         fontSize = 14.sp,
                         maxLines = 1,
@@ -2722,8 +2881,66 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
             }
         }
 
+        is ResolvedVideo.Unavailable -> {
+            CoboPredictiveBackHandler(nav)
+            val externalTarget = current.webUrl?.takeIf {
+                it.startsWith("http://", true) || it.startsWith("https://", true)
+            } ?: browserFallbackUrl.takeIf {
+                it.startsWith("http://", true) || it.startsWith("https://", true)
+            }
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = current.message,
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (externalTarget != null) {
+                        Spacer(Modifier.height(14.dp))
+                        MediaMaterialPill(onClick = { openExternalUrl(context, externalTarget) }) {
+                            Text("用浏览器打开", color = Color.White, fontSize = 13.sp)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HighlightedIconButton(onClick = { nav.pop() }, size = VideoTopBarButtonHeight) {
+                        Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        current.title?.takeIf { it.isNotBlank() } ?: title.ifBlank { "直播" },
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    )
+                    if (externalTarget != null) {
+                        HighlightedIconButton(
+                            onClick = { openExternalUrl(context, externalTarget) },
+                            size = VideoTopBarButtonHeight,
+                        ) {
+                            Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+        }
+
         is ResolvedVideo.DirectStream -> {
-            val effectiveTitle = current.title?.takeIf { it.isNotBlank() } ?: title
+            val effectiveTitle = current.title?.takeIf { it.isNotBlank() }
+                ?: title.ifBlank { if (current.isLive || liveRequested) "直播" else "" }
             val externalTarget = when {
                 browserFallbackUrl.startsWith("http://", true) || browserFallbackUrl.startsWith("https://", true) -> browserFallbackUrl
                 else -> current.url
@@ -2731,8 +2948,10 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
             DirectVideoPlayer(
                 nav = nav,
                 streamUrl = current.url,
+                fallbackStreamUrl = current.fallbackUrl,
                 referer = current.referer,
                 title = effectiveTitle,
+                isLive = current.isLive,
                 hud = hud,
                 flash = ::flash,
                 onDownload = { startVideoDownload(current.url, current.referer) },
@@ -2744,7 +2963,8 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
             WebVideoPlayer(
                 nav = nav,
                 pageUrl = current.url,
-                title = current.title?.takeIf { it.isNotBlank() } ?: title.ifBlank { "视频" },
+                title = current.title?.takeIf { it.isNotBlank() }
+                    ?: title.ifBlank { if (current.isLive || liveRequested) "直播" else "视频" },
                 hud = hud,
                 flash = ::flash,
                 onDownload = { detectedUrl -> startVideoDownload(detectedUrl, current.url) },
@@ -2758,8 +2978,10 @@ fun VideoScreen(nav: NavState, url: String, title: String) {
 private fun DirectVideoPlayer(
     nav: NavState,
     streamUrl: String,
+    fallbackStreamUrl: String?,
     referer: String?,
     title: String,
+    isLive: Boolean,
     hud: String,
     flash: (String) -> Unit,
     onDownload: () -> Unit,
@@ -2771,8 +2993,9 @@ private fun DirectVideoPlayer(
     val audio = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
-    val player = remember(streamUrl, referer) {
-        val effectiveReferer = referer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(streamUrl)
+    var activeStreamUrl by remember(streamUrl) { mutableStateOf(streamUrl) }
+    val player = remember(activeStreamUrl, referer) {
+        val effectiveReferer = referer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             setUserAgent(Api.WEB_UA)
             setAllowCrossProtocolRedirects(true)
@@ -2788,12 +3011,17 @@ private fun DirectVideoPlayer(
                 addListener(
                     object : Player.Listener {
                         override fun onPlayerError(error: PlaybackException) {
-                            Log.e("CoboVideo", "ExoPlayer error for $streamUrl: ${error.errorCodeName}", error)
-                            flash("视频播放失败（${error.errorCodeName}）")
+                            Log.e("CoboVideo", "ExoPlayer error for $activeStreamUrl: ${error.errorCodeName}", error)
+                            val fallback = fallbackStreamUrl?.takeIf { it.isNotBlank() && it != activeStreamUrl }
+                            if (fallback != null) {
+                                activeStreamUrl = fallback
+                                return
+                            }
+                            flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
                         }
                     },
                 )
-                setMediaItem(MediaItem.fromUri(streamUrl))
+                setMediaItem(MediaItem.fromUri(activeStreamUrl))
                 prepare()
                 playWhenReady = true
             }
@@ -2802,6 +3030,9 @@ private fun DirectVideoPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+    var playerIsLive by remember(activeStreamUrl) { mutableStateOf(false) }
+    val liveMode = isLive || playerIsLive
+    val currentLiveMode by rememberUpdatedState(liveMode)
     var durationMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var bufferedPositionMs by remember { mutableLongStateOf(0L) }
@@ -2811,15 +3042,37 @@ private fun DirectVideoPlayer(
     var speedMenu by remember { mutableStateOf(false) }
     var longPressSpeedActive by remember { mutableStateOf(false) }
     var longPressSpeedLocked by remember { mutableStateOf(false) }
-    val effectivePlaybackSpeed = if (longPressSpeedActive || longPressSpeedLocked) 3f else speed
+    val effectivePlaybackSpeed = if (liveMode) {
+        1f
+    } else if (longPressSpeedActive || longPressSpeedLocked) {
+        3f
+    } else {
+        speed
+    }
 
     LaunchedEffect(player, effectivePlaybackSpeed) {
         player.setPlaybackSpeed(effectivePlaybackSpeed)
     }
 
+    LaunchedEffect(player, liveMode) {
+        if (liveMode) {
+            speedMenu = false
+            longPressSpeedActive = false
+            longPressSpeedLocked = false
+            isScrubbing = false
+            if (!player.isPlaying && player.playbackState != Player.STATE_ENDED) {
+                player.playWhenReady = true
+                player.play()
+            }
+        }
+    }
+
     fun syncPlayerState() {
         isPlaying = player.isPlaying
         isBuffering = player.playbackState == Player.STATE_BUFFERING
+        if (player.isCurrentMediaItemLive) {
+            playerIsLive = true
+        }
         durationMs = player.duration.coerceAtLeast(0L)
         bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L)
         if (!isScrubbing) {
@@ -2828,6 +3081,7 @@ private fun DirectVideoPlayer(
     }
 
     fun seekBy(deltaMs: Long) {
+        if (currentLiveMode) return
         val raw = (player.currentPosition + deltaMs).coerceAtLeast(0L)
         val dur = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
         val target = raw.coerceAtMost(dur)
@@ -2837,6 +3091,7 @@ private fun DirectVideoPlayer(
     }
 
     fun togglePlayPause() {
+        if (currentLiveMode) return
         if (player.isPlaying) {
             player.pause()
             flash("已暂停")
@@ -2906,26 +3161,35 @@ private fun DirectVideoPlayer(
                 PlayerView(ctx).apply {
                     useController = false
                     controllerAutoShow = false
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                     this.player = player
                 }
             },
             modifier = Modifier.fillMaxSize(),
         )
 
+        if (isBuffering) {
+            CoboRefreshSpinner(
+                modifier = Modifier.align(Alignment.Center),
+                size = 30.dp,
+            )
+        }
+
         // 手势层铺在底部与顶部控件下面：单点切换整套控件显隐，左/中/右双击快退5秒/暂停播放/快进5秒，
         // 左右拖动联动底部进度条快进/快退，左半上下划调亮度、右半上下划调音量，长按临时 3× 倍速并支持下滑锁定。
+        // 直播模式下仅保留单点显隐与亮度/音量手势，禁用倍速、进度拖动、快进/快退与暂停。
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(liveMode) {
+                    if (currentLiveMode) return@pointerInput
                     var startPos = 0L
                     var dur = 0L
                     var draggedX = 0f
                     var active = false
                     detectHorizontalDragGestures(
                         onDragStart = {
-                            if (longPressSpeedActive) {
+                            if (currentLiveMode || longPressSpeedActive) {
                                 active = false
                                 return@detectHorizontalDragGestures
                             }
@@ -2941,7 +3205,7 @@ private fun DirectVideoPlayer(
                             }
                         },
                         onHorizontalDrag = { change, dx ->
-                            if (!active || longPressSpeedActive) return@detectHorizontalDragGestures
+                            if (!active || currentLiveMode || longPressSpeedActive) return@detectHorizontalDragGestures
                             change.consume()
                             draggedX += dx
                             val target = calculateHorizontalScrubTargetMs(
@@ -3013,7 +3277,7 @@ private fun DirectVideoPlayer(
                         onDragCancel = { verticalActive = false },
                     )
                 }
-                .pointerInput(Unit) {
+                .pointerInput(liveMode) {
                     detectTapGestures(
                         onTap = {
                             if (speedMenu) {
@@ -3027,6 +3291,7 @@ private fun DirectVideoPlayer(
                                 speedMenu = false
                                 return@detectTapGestures
                             }
+                            if (currentLiveMode) return@detectTapGestures
                             val w = size.width.toFloat().coerceAtLeast(1f)
                             when {
                                 offset.x < w / 3f -> seekBy(-SeekStepMs)
@@ -3037,10 +3302,12 @@ private fun DirectVideoPlayer(
                         onLongPress = { /* 长按 3× 倍速与锁定解锁由下方 awaitEachGesture 接管 */ },
                     )
                 }
-                .pointerInput(Unit) {
+                .pointerInput(liveMode) {
+                    if (currentLiveMode) return@pointerInput
                     val lockDragThresholdPx = with(this) { 48.dp.toPx() }
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        if (currentLiveMode) return@awaitEachGesture
                         var lastPos = down.position
                         val movedOrLifted = withTimeoutOrNull(
                             viewConfiguration.longPressTimeoutMillis
@@ -3120,6 +3387,25 @@ private fun DirectVideoPlayer(
                 HighlightedIconButton(onClick = { nav.pop() }, size = VideoTopBarButtonHeight) {
                     Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
                 }
+                if (liveMode) {
+                    Spacer(Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.14f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFF3B30)),
+                        )
+                        Text("直播", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
                 Spacer(Modifier.width(10.dp))
                 Text(
                     title,
@@ -3129,41 +3415,43 @@ private fun DirectVideoPlayer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
-                Box {
-                    VideoSpeedPill(
-                        text = speedLabel(effectivePlaybackSpeed),
-                        onClick = { speedMenu = !speedMenu },
-                    )
-                    OverlayListPopup(
-                        show = speedMenu,
-                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-                        onDismissRequest = { speedMenu = false },
-                    ) {
-                        val dismiss = LocalDismissState.current
-                        ListPopupColumn {
-                            Speeds.forEachIndexed { index, value ->
-                                DropdownImpl(
-                                    item = DropdownItem(text = speedLabel(value)),
-                                    optionSize = Speeds.size,
-                                    isSelected = !longPressSpeedLocked && speed == value,
-                                    index = index,
-                                    groupKey = "video_speed",
-                                    onSelectedIndexChange = {
-                                        speed = value
-                                        longPressSpeedLocked = false
-                                        flash("${speedLabel(value)} 倍速")
-                                        dismiss?.invoke()
-                                    },
-                                )
+                if (!liveMode) {
+                    Box {
+                        VideoSpeedPill(
+                            text = speedLabel(effectivePlaybackSpeed),
+                            onClick = { speedMenu = !speedMenu },
+                        )
+                        OverlayListPopup(
+                            show = speedMenu,
+                            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                            onDismissRequest = { speedMenu = false },
+                        ) {
+                            val dismiss = LocalDismissState.current
+                            ListPopupColumn {
+                                Speeds.forEachIndexed { index, value ->
+                                    DropdownImpl(
+                                        item = DropdownItem(text = speedLabel(value)),
+                                        optionSize = Speeds.size,
+                                        isSelected = !longPressSpeedLocked && speed == value,
+                                        index = index,
+                                        groupKey = "video_speed",
+                                        onSelectedIndexChange = {
+                                            speed = value
+                                            longPressSpeedLocked = false
+                                            flash("${speedLabel(value)} 倍速")
+                                            dismiss?.invoke()
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
+                    Spacer(Modifier.width(6.dp))
+                    HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
+                        Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
                 }
-                Spacer(Modifier.width(6.dp))
-                HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
-                    Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(6.dp))
                 HighlightedIconButton(onClick = onOpenInBrowser, size = VideoTopBarButtonHeight) {
                     Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
@@ -3171,7 +3459,7 @@ private fun DirectVideoPlayer(
         }
 
         AnimatedVisibility(
-            visible = controlsVisible || speedMenu,
+            visible = !liveMode && (controlsVisible || speedMenu),
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
             modifier = Modifier
@@ -3286,7 +3574,7 @@ private fun DirectVideoPlayer(
         }
 
         AnimatedVisibility(
-            visible = longPressSpeedActive || longPressSpeedLocked,
+            visible = !liveMode && (longPressSpeedActive || longPressSpeedLocked),
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
             modifier = Modifier
@@ -3529,7 +3817,12 @@ private fun WebVideoPlayer(
                                 if (target.startsWith("http://", true) || target.startsWith("https://", true)) {
                                     return false
                                 }
-                                extractIntentFallbackUrl(target)?.let { view.loadUrl(it) }
+                                val resolvedPrivate = resolveWeiboLink(target)
+                                if (resolvedPrivate != null && resolvedPrivate != view.url) {
+                                    view.loadUrl(resolvedPrivate)
+                                } else {
+                                    extractIntentFallbackUrl(target)?.let { view.loadUrl(it) }
+                                }
                                 return true
                             }
 

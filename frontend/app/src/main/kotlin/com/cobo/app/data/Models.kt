@@ -336,32 +336,111 @@ private fun videoGridPicOf(data: JSONObject): Pic? {
     )
 }
 
+internal fun isLivePageInfo(page: JSONObject): Boolean {
+    val type = page.str("type").lowercase()
+    val objType = page.str("object_type").lowercase()
+    if (type == "live" || objType == "live" || objType == "wblive" || objType == "chatroom") return true
+    val media = page.optJSONObject("media_info")
+    if (media != null && (
+            media.str("live_id").isNotBlank() ||
+                media.has("live_status") ||
+                media.optInt("is_live", 0) == 1 ||
+                media.optBoolean("is_live", false)
+            )
+    ) {
+        return true
+    }
+    val urlCandidates = listOf(
+        page.str("page_url"),
+        page.str("scheme"),
+        page.optJSONObject("page_pic")?.str("scheme").orEmpty(),
+        media?.str("open_scheme").orEmpty(),
+        media?.str("stream_url").orEmpty(),
+        media?.str("h5_url").orEmpty(),
+    )
+    return urlCandidates.any { it.isNotBlank() && com.cobo.app.ui.isWeiboLiveLink(it) }
+}
+
 internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyList()): VideoInfo? {
     val media = page.optJSONObject("media_info")
     val urlsObj = page.optJSONObject("urls")
-    val directUrl = media?.str("stream_url_hd")
-        ?.ifBlank { media.str("stream_url") }
-        ?.ifBlank { media.str("mp4_720p_mp4") }
-        ?.ifBlank { media.str("mp4_hd_url") }
-        ?.ifBlank { media.str("mp4_sd_url") }
-        .orEmpty()
-        .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
-        .ifBlank { urlsObj?.str("mp4_720p_mp4").orEmpty() }
-        .ifBlank { urlsObj?.str("mp4_hd_mp4").orEmpty() }
-        .ifBlank { urlsObj?.str("mp4_ld_mp4").orEmpty() }
-        .ifBlank { urlsObj?.str("hevc_mp4_hd").orEmpty() }
-        .ifBlank { urlsObj?.str("stream_url_hd").orEmpty() }
-        .ifBlank { urlsObj?.str("stream_url").orEmpty() }
-    val fallbackPageUrl = media?.str("h5_url").orEmpty()
-        .ifBlank { page.str("page_url") }
-        .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
-        .ifBlank {
-            page.str("object_id").takeIf { it.isNotBlank() }
-                ?.let { "https://video.weibo.com/show?fid=$it" }
-                .orEmpty()
+    val livePage = isLivePageInfo(page)
+    val liveStatus = media?.optInt("live_status", -1)?.takeIf { it >= 0 }
+        ?: media?.optInt("real_status", -1)?.takeIf { it >= 0 }
+        ?: page.optInt("live_status", -1).takeIf { it >= 0 }
+        ?: media?.optInt("status", -1)?.takeIf { it >= 0 }
+        ?: -1
+    val liveId = if (livePage) {
+        media?.str("live_id")?.takeIf { it.isNotBlank() }
+            ?: page.str("object_id").takeIf { it.contains(":") && !it.startsWith("1034:") }
+            ?: listOf(
+                page.str("page_url"),
+                page.str("scheme"),
+                page.optJSONObject("page_pic")?.str("scheme").orEmpty(),
+                media?.str("open_scheme").orEmpty(),
+                media?.str("stream_url").orEmpty(),
+                media?.str("h5_url").orEmpty(),
+            ).firstNotNullOfOrNull { candidate ->
+                candidate.takeIf { it.isNotBlank() }?.let { com.cobo.app.ui.extractWeiboLiveId(it) }
+            }
+    } else {
+        null
+    }
+    val liveIsReplay = livePage && liveStatus == 3
+    val directUrl = if (livePage) {
+        if (liveIsReplay) {
+            media?.str("replay_hd").orEmpty()
+                .ifBlank { media?.str("replay_ld").orEmpty() }
+                .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
+                .ifBlank { media?.str("stream_url_hd").orEmpty() }
+                .ifBlank { media?.str("stream_url").orEmpty() }
+        } else {
+            ""
         }
+    } else {
+        media?.str("stream_url_hd")
+            ?.ifBlank { media.str("stream_url") }
+            ?.ifBlank { media.str("mp4_720p_mp4") }
+            ?.ifBlank { media.str("mp4_hd_url") }
+            ?.ifBlank { media.str("mp4_sd_url") }
+            .orEmpty()
+            .ifBlank { firstPlaybackUrl(media?.optJSONArray("playback_list")) }
+            .ifBlank { urlsObj?.str("mp4_720p_mp4").orEmpty() }
+            .ifBlank { urlsObj?.str("mp4_hd_mp4").orEmpty() }
+            .ifBlank { urlsObj?.str("mp4_ld_mp4").orEmpty() }
+            .ifBlank { urlsObj?.str("hevc_mp4_hd").orEmpty() }
+            .ifBlank { urlsObj?.str("stream_url_hd").orEmpty() }
+            .ifBlank { urlsObj?.str("stream_url").orEmpty() }
+    }
+    val fallbackLiveStream = if (livePage && !liveIsReplay) {
+        media?.str("live_hd").orEmpty()
+            .ifBlank { media?.str("live_ld").orEmpty() }
+            .ifBlank { media?.str("stream_url_hd").orEmpty() }
+            .ifBlank { media?.str("stream_url").orEmpty() }
+    } else {
+        ""
+    }
+    val fallbackPageUrl = if (livePage && liveId != null) {
+        "https://weibo.com/l/wblive/m/show/$liveId"
+    } else {
+        media?.str("h5_url").orEmpty()
+            .ifBlank { page.str("page_url") }
+            .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
+            .ifBlank { media?.str("open_scheme").orEmpty() }
+            .ifBlank {
+                page.str("object_id").takeIf { it.isNotBlank() }
+                    ?.let { "https://video.weibo.com/show?fid=$it" }
+                    .orEmpty()
+            }
+    }
     val resolvedUrl = directUrl.ifBlank {
-        com.cobo.app.ui.unwrapSinaUrl(fallbackPageUrl) ?: fallbackPageUrl
+        if (livePage && liveId != null) {
+            "https://weibo.com/l/wblive/m/show/$liveId"
+        } else {
+            val unwrapped = com.cobo.app.ui.unwrapWeiboLink(fallbackPageUrl)
+            com.cobo.app.ui.resolveWeiboLink(unwrapped)
+                ?: unwrapped.ifBlank { fallbackLiveStream }
+        }
     }
     if (resolvedUrl.isBlank()) return null
     val title = page.str("page_title")
@@ -373,7 +452,8 @@ internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyL
         title = title,
         cover = videoCoverUrl(page, media, fallbackPics),
         url = resolvedUrl,
-        durationSec = videoDurationSec(page, media),
+        durationSec = if (livePage && !liveIsReplay) 0 else videoDurationSec(page, media),
+        isLive = livePage && !liveIsReplay,
     )
 }
 
@@ -393,6 +473,7 @@ data class VideoInfo(
     val cover: String,
     val url: String,
     val durationSec: Int = 0,
+    val isLive: Boolean = false,
 )
 
 data class BigPicInfo(
@@ -622,20 +703,23 @@ data class Status(
                     )
                     pics = emptyList()
                 }
-            } else if (page != null && (page.str("type") == "video" || page.str("object_type") == "video")) {
+            } else if (page != null && (page.str("type") == "video" || page.str("object_type") == "video" || isLivePageInfo(page))) {
                 // m.weibo.cn 把视频标成 type=video；weibo.com 网页版（关注分组那条流）给的是
                 // type=11 + object_type=video，只认 type 会把视频当成纯文字。
                 video = extractVideoInfo(page, pics)
             } else if (page != null && pics.isEmpty()) {
                 val pageUrlRaw = page.str("page_url")
                     .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
-                val pageUrl = com.cobo.app.ui.unwrapSinaUrl(pageUrlRaw) ?: pageUrlRaw
+                    .ifBlank { page.str("scheme") }
+                val pageUrl = com.cobo.app.ui.unwrapWeiboLink(pageUrlRaw)
                 val resolvedTarget = com.cobo.app.ui.resolveWeiboLink(pageUrl) ?: pageUrl
-                if (com.cobo.app.ui.isVideoLink(resolvedTarget)) {
+                val isLiveTarget = com.cobo.app.ui.isWeiboLiveLink(resolvedTarget)
+                if (isLiveTarget || com.cobo.app.ui.isVideoLink(resolvedTarget)) {
                     video = VideoInfo(
                         title = page.str("page_title").ifBlank { page.str("content1") },
                         cover = videoCoverUrl(page, page.optJSONObject("media_info"), emptyList()),
                         url = resolvedTarget,
+                        isLive = isLiveTarget,
                     )
                 }
             }
@@ -847,11 +931,17 @@ private fun resolveShortUrlLabel(
     val lowerPic = picHint.lowercase()
     val isWeiboTarget = com.cobo.app.ui.weiboStatusId(target) != null ||
         lowerPic.contains("timeline_card_small_weibo")
-    val isVideoTarget = com.cobo.app.ui.isVideoLink(target) ||
-        lowerPic.contains("timeline_card_small_video")
+    val isLiveTarget = com.cobo.app.ui.isWeiboLiveLink(target) ||
+        lowerPic.contains("timeline_card_small_live")
+    val isVideoTarget = !isLiveTarget && (
+        com.cobo.app.ui.isVideoLink(target) ||
+            lowerPic.contains("timeline_card_small_video")
+        )
     return when {
         isWeiboTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
             "微博正文"
+        isLiveTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
+            "微博直播"
         rawTitle.isNotBlank() &&
             !com.cobo.app.ui.isWeiboShortLink(rawTitle) &&
             rawTitle != short &&
@@ -1220,7 +1310,7 @@ internal fun extractBigPicInfo(
     if (page == null || hasVideo || isVote) return null
     val pageType = page.str("type").lowercase()
     val objType = page.str("object_type").lowercase()
-    if (pageType == "video" || objType == "video" || objType == "hudongvote") return null
+    if (pageType == "video" || objType == "video" || isLivePageInfo(page) || objType == "hudongvote") return null
 
     val picUrl = pageCardImageUrl(page)
     if (picUrl.isBlank()) return null

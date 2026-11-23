@@ -113,10 +113,12 @@ import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ComposerBottomSheet
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.LongImageBadge
 import com.cobo.app.ui.components.MemberBadge
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
+import com.cobo.app.ui.isLongImageAspect
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
@@ -374,7 +376,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             onDeleted = { nav.pop() },
                             onUser = { nav.push(Route.Profile(it.id)) },
                             onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                            onVideo = { nav.push(Route.Video(it.url, it.title)) },
+                            onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
                             onLike = {
                                 val s = status ?: return@StatusCard
                                 scope.launch {
@@ -616,7 +618,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         onClick = {
                             val s = status ?: return@DetailFloatingToolbarItem
                             val next = App.repo.toggleLocalFavorite(s)
-                            status = s.copy(favorited = next)
+                            status = s
                             App.toast(if (next) "已收藏" else "已取消收藏")
                         },
                         modifier = Modifier.testTag("detail_favorite"),
@@ -748,11 +750,14 @@ internal fun CommentThumbnails(
     val single = pics.size == 1
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         pics.take(4).forEachIndexed { index, pic ->
-            val aspect = if (pic.width > 0 && pic.height > 0) {
+            val declaredAspect = if (pic.width > 0 && pic.height > 0) {
                 pic.width.toFloat() / pic.height
             } else {
                 null
             }
+            var measuredAspect by remember(pic.large) { mutableStateOf<Float?>(null) }
+            val aspect = declaredAspect ?: measuredAspect
+            val isLong = !pic.isVideo && isLongImageAspect(aspect)
             val width = if (single) {
                 (height * (aspect ?: 1.4f)).coerceIn(72.dp, 200.dp)
             } else {
@@ -770,8 +775,18 @@ internal fun CommentThumbnails(
                     model = pic.thumb.ifBlank { pic.large },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
+                    onSuccess = { state ->
+                        if (declaredAspect == null) {
+                            val s = state.painter.intrinsicSize
+                            if (s.width > 0f && s.height > 0f) measuredAspect = s.width / s.height
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (isLong) {
+                    LongImageBadge(pic.large, Modifier.align(Alignment.BottomEnd).padding(4.dp))
+                }
             }
         }
     }

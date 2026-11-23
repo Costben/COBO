@@ -55,6 +55,7 @@ import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.components.EmptyState
+import com.cobo.app.ui.components.CoboRefreshSpinner
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
@@ -65,7 +66,6 @@ import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
@@ -1000,7 +1000,7 @@ private fun TimelinePage(
                             onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
                             onUser = { nav.push(Route.Profile(it.id)) },
                             onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                            onVideo = { nav.push(Route.Video(it.url, it.title)) },
+                            onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
                             onLike = { scope.launch { store.like(index) } },
                             onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
                             onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
@@ -1091,7 +1091,7 @@ private fun FeedGapCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (gap.loading) {
-                CircularProgressIndicator(size = 16.dp, strokeWidth = 2.dp)
+                CoboRefreshSpinner(size = 16.dp, strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "正在加载中间未读微博…",
@@ -1149,7 +1149,7 @@ private fun FeedReadMarker(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (refreshing) {
-                    CircularProgressIndicator(size = 16.dp, strokeWidth = 2.dp)
+                    CoboRefreshSpinner(size = 16.dp, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "正在刷新…",
@@ -1177,7 +1177,7 @@ private fun FeedReadMarker(
             Box(Modifier.weight(1f).height(1.dp).background(lineColor))
             Spacer(Modifier.width(12.dp))
             if (refreshing) {
-                CircularProgressIndicator(size = 14.dp, strokeWidth = 1.8.dp)
+                CoboRefreshSpinner(size = 14.dp, strokeWidth = 1.8.dp)
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "正在刷新…",

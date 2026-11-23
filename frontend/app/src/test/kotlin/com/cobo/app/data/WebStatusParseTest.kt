@@ -402,4 +402,70 @@ class WebStatusParseTest {
         assertEquals("本地跑大模型的同学，可以试一下新出的推理引擎 Strata", linkCard.subtitle)
         assertEquals("https://wx1.sinaimg.cn/thumbnail/thumb.jpg", linkCard.url)
     }
+
+    @Test
+    fun parsesWeiboLivePageInfoAsLiveAndReplayRespectively() {
+        val liveId = "1022:2321325160873118269706"
+        val ongoingStatus = JSONObject(
+            """
+            {
+              "id": "5370000000000010",
+              "mid": "5370000000000010",
+              "text": "正在直播 http://t.cn/A6live",
+              "url_struct": [
+                {
+                  "short_url": "http://t.cn/A6live",
+                  "ori_url": "sinaweibo://chatroom?live_id=$liveId&livetype=wblive",
+                  "url_title": "网页链接",
+                  "url_type_pic": "https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_live_default.png"
+                }
+              ],
+              "page_info": {
+                "type": "11",
+                "object_type": "live",
+                "object_id": "$liveId",
+                "page_title": "现场直播中",
+                "page_pic": {"url": "https://wblive.sinaimg.cn/live_cover.jpg"},
+                "media_info": {
+                  "live_id": "$liveId",
+                  "live_status": 1,
+                  "stream_url": "https://wblive-out.api.weibo.com/2/wblive/room/play?id=$liveId",
+                  "open_scheme": "sinaweibo://chatroom?container_id=2321325160873118269706&live_id=$liveId&livetype=wblive"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedOngoing = Status.from(ongoingStatus)!!
+        assertNotNull(parsedOngoing.video)
+        assertTrue(parsedOngoing.video!!.isLive)
+        assertEquals("https://weibo.com/l/wblive/m/show/$liveId", parsedOngoing.video!!.url)
+        assertEquals("现场直播中", parsedOngoing.video!!.title)
+        assertTrue(parsedOngoing.textHtml.contains(">微博直播</a>"))
+        assertNull(parsedOngoing.bigPic)
+
+        val replayStatus = JSONObject(
+            """
+            {
+              "id": "5370000000000011",
+              "mid": "5370000000000011",
+              "text": "直播回放",
+              "page_info": {
+                "type": "live",
+                "object_type": "live",
+                "page_title": "直播回放标题",
+                "media_info": {
+                  "live_id": "$liveId",
+                  "live_status": 3,
+                  "replay_hd": "https://live.video.weibocdn.com/replay_index.m3u8"
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val parsedReplay = Status.from(replayStatus)!!
+        assertNotNull(parsedReplay.video)
+        assertFalse(parsedReplay.video!!.isLive)
+        assertEquals("https://live.video.weibocdn.com/replay_index.m3u8", parsedReplay.video!!.url)
+    }
 }

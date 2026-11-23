@@ -1,5 +1,11 @@
 package com.cobo.app.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,10 +27,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
@@ -46,7 +55,6 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.VerifiedKind
 import io.github.suqi8.coui.kmp.basic.BasicComponentDefaults
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshTexts
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
@@ -206,10 +214,49 @@ private val MemberSvipRed = Color(0xFFC4000B)
 private val MemberVvipBg = Color(0xFF231F20)
 private val MemberVvipGold = Color(0xFFF5D17A)
 
+/**
+ * 复用 ColorOS 下拉刷新（`FullPagePullToRefresh`）的转圈进度条样式：
+ * 无底环、270° 单段圆弧、两端圆角半球帽（[StrokeCap.Round]），按 1000ms 线性旋转一周。
+ */
+@Composable
+fun CoboRefreshSpinner(
+    modifier: Modifier = Modifier,
+    color: Color = COUITheme.colorScheme.primary,
+    size: Dp = 26.dp,
+    strokeWidth: Dp = Dp.Unspecified,
+) {
+    val transition = rememberInfiniteTransition(label = "cobo_refresh_spinner")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "cobo_refresh_spinner_angle",
+    )
+    Canvas(modifier = modifier.size(size)) {
+        val widthPx = if (strokeWidth != Dp.Unspecified) {
+            strokeWidth.toPx()
+        } else {
+            this.size.minDimension / 10f
+        }
+        drawArc(
+            color = color,
+            startAngle = -90f + rotation,
+            sweepAngle = 270f,
+            useCenter = false,
+            topLeft = Offset(widthPx / 2f, widthPx / 2f),
+            size = ComposeSize(this.size.width - widthPx, this.size.height - widthPx),
+            style = Stroke(width = widthPx, cap = StrokeCap.Round),
+        )
+    }
+}
+
 @Composable
 fun LoadingState(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
+        CoboRefreshSpinner()
     }
 }
 

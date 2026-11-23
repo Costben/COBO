@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
@@ -362,7 +361,7 @@ private fun ImageCropDialog(
                         )
                     }
                     else -> {
-                        CircularProgressIndicator(size = 24.dp, strokeWidth = 2.4.dp)
+                        CoboRefreshSpinner(size = 24.dp, strokeWidth = 2.4.dp)
                     }
                 }
             }

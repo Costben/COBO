@@ -1908,8 +1908,7 @@ class Repo(private val context: Context, private val store: Store) {
             Status.from(root.optJSONObject("data"))
         }
         if (parsed == null) return null
-        val favorited = isFavorited(id)
-        return if (parsed.favorited == favorited) parsed else parsed.copy(favorited = favorited)
+        return parsed
     }
 
     suspend fun editHistory(mid: String, page: Int = 1): List<EditVersion> {
@@ -2435,22 +2434,51 @@ class Repo(private val context: Context, private val store: Store) {
         return ok
     }
 
+    /** 切换微博账号里的收藏状态，[favorited] 表示切换前的状态，不影响本地收藏。 */
     suspend fun favorite(id: String, favorited: Boolean): Boolean {
-        if (favorited) {
-            store.removeFavorite(id)
-            withContext(Dispatchers.Main.immediate) {
-                localFavoriteIds.remove(id)
-                favoritesVersion++
-            }
-            return true
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
+        if (isClientChannel()) {
+            containerPost(
+                if (favorited) "favorites/destroy" else "favorites/create",
+                form = mapOf("id" to id),
+            )
+        } else {
+            postOk(
+                "https://m.weibo.cn/api/favorites/${if (favorited) "destroy" else "create"}",
+                mapOf("id" to id),
+            )
         }
-        val status = detail(id) ?: throw ApiException("微博不存在")
-        store.addFavorite(status)
-        withContext(Dispatchers.Main.immediate) {
-            localFavoriteIds[id] = true
-            favoritesVersion++
-        }
+        App.cache.invalidate(
+            Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
+            cookie(),
+        )
         return true
+    }
+
+    /** 将当前账号的微博收藏合并到全局本地收藏，保留已有的本地收藏。 */
+    suspend fun syncLocalFavorites(): Int {
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
+        var cursor: String? = null
+        val seenCursors = HashSet<String>()
+        var added = 0
+        var changed = false
+        while (true) {
+            val page = cloudFavorites(cursor, force = true)
+            withContext(Dispatchers.Main.immediate) {
+                page.items.forEach { status ->
+                    if (!isFavorited(status.id)) added++
+                    store.addFavorite(status)
+                    localFavoriteIds[status.id] = true
+                }
+            }
+            changed = changed || page.items.isNotEmpty()
+            val next = page.sinceId?.takeIf { it.isNotBlank() && seenCursors.add(it) } ?: break
+            cursor = next
+        }
+        if (changed) {
+            withContext(Dispatchers.Main.immediate) { favoritesVersion++ }
+        }
+        return added
     }
 
     suspend fun follow(uid: String, follow: Boolean): Boolean {

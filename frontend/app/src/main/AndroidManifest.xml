@@ -52,6 +52,9 @@
                 <data android:host="s.weibo.com" />
                 <data android:host="video.weibo.com" />
                 <data android:host="h5.video.weibo.com" />
+                <data android:host="live.weibo.com" />
+                <data android:host="live.media.weibo.com" />
+                <data android:host="wblive.media.weibo.com" />
                 <data android:host="vote.weibo.com" />
             </intent-filter>
         </activity>

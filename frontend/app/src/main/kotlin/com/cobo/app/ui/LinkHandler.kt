@@ -24,7 +24,7 @@ val LocalLinkHandler = staticCompositionLocalOf<(String) -> Unit> { {} }
  * 这里把它们翻成 m.weibo.cn / video.weibo.com 的网页地址，交给内置 WebView。
  */
 fun resolveWeiboLink(raw: String): String? {
-    val url = raw.trim()
+    val url = unwrapWeiboLink(raw)
     if (url.isEmpty()) return null
     weiboPrivateLink(url)?.let { return it }
     return when {
@@ -38,6 +38,7 @@ fun resolveWeiboLink(raw: String): String? {
 }
 
 private const val WeiboMobile = "https://m.weibo.cn"
+private const val WeiboLiveWebShowPrefix = "https://weibo.com/l/wblive/m/show/"
 
 /** `?a=1&b=2` → `a=1&b=2`，没有查询串时返回空串。 */
 private fun queryOf(link: String): String {
@@ -51,6 +52,9 @@ private fun param(query: String, name: String): String? =
         ?.substringAfter('=', "")
         ?.takeIf { it.isNotEmpty() }
 
+private fun decodeUrlParam(value: String): String =
+    runCatching { java.net.URLDecoder.decode(value, "UTF-8") }.getOrDefault(value).trim()
+
 /**
  * 微博私有 scheme → 网页地址。认不出来就返回 null，交给上层按普通链接处理。
  */
@@ -61,13 +65,22 @@ private fun weiboPrivateLink(raw: String): String? {
         val body = raw.substring("intent://".length).substringBefore("#Intent")
         val path = body.substringBefore('?')
         val query = queryOf(body)
+        val liveId = extractWeiboLiveId(raw)
+        if (liveId != null) return "$WeiboLiveWebShowPrefix$liveId"
         return when {
             path.contains("video", ignoreCase = true) || query.contains("fid=", ignoreCase = true) ->
                 param(query, "fid")?.let { "https://video.weibo.com/show?fid=$it" }
                     ?: "$WeiboMobile/s/video/index?$query".takeIf { query.isNotEmpty() }
             path.contains("pageinfo", ignoreCase = true) ->
                 "$WeiboMobile/p/index?$query".takeIf { query.isNotEmpty() }
-            else -> null
+            else -> {
+                val intentTail = raw.substringAfter("#Intent;", "")
+                intentTail.split(';')
+                    .firstOrNull { it.startsWith("S.browser_fallback_url=", ignoreCase = true) }
+                    ?.substringAfter('=')
+                    ?.let(::decodeUrlParam)
+                    ?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+            }
         }
     }
     val isSinaWeibo = lower.startsWith("sinaweibo://")
@@ -76,6 +89,7 @@ private fun weiboPrivateLink(raw: String): String? {
     val body = raw.substring(if (isSinaWeibo) "sinaweibo://".length else "weibo://".length)
     val path = body.substringBefore('?')
     val query = queryOf(body)
+    extractWeiboLiveId(raw)?.let { return "$WeiboLiveWebShowPrefix$it" }
     return when {
         // 超话：sinaweibo://pageinfo?containerid=100808...&extparam=...
         path.startsWith("pageinfo") || query.contains("containerid=100808", ignoreCase = true) ->
@@ -105,9 +119,7 @@ private fun weiboPrivateLink(raw: String): String? {
 
         // 内置浏览器跳转：sinaweibo://browser?url=...
         path.startsWith("browser") -> {
-            val target = param(query, "url")?.let {
-                runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it)
-            }
+            val target = param(query, "url")?.let(::decodeUrlParam)
             target?.takeIf {
                 it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
             }
@@ -126,8 +138,33 @@ fun unwrapWeiboBrowserUrl(raw: String): String? {
     val lower = trimmed.lowercase()
     if (!lower.startsWith("sinaweibo://browser") && !lower.startsWith("weibo://browser")) return null
     val target = param(queryOf(trimmed), "url") ?: return null
-    val decoded = runCatching { java.net.URLDecoder.decode(target, "UTF-8") }.getOrDefault(target).trim()
-    return decoded.takeIf { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
+    val decoded = decodeUrlParam(target)
+    return decoded.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+}
+
+/** 拆掉 `m.weibo.cn/feature/openapp?scheme=<encoded>` 跳端包装，还原真实目标 scheme 或 URL。 */
+fun unwrapWeiboOpenAppUrl(raw: String): String? {
+    val trimmed = raw.trim()
+    val path = trimmed.substringBefore('?').substringBefore('#').lowercase()
+    if (!path.contains("/feature/openapp")) return null
+    val query = queryOf(trimmed)
+    val rawTarget = param(query, "scheme") ?: param(query, "url") ?: return null
+    val decoded = decodeUrlParam(rawTarget)
+    return decoded.takeIf { it.isNotBlank() && it != trimmed }
+}
+
+/** 剥除 `sinaweibo://browser`、`m.weibo.cn/feature/openapp` 与 `weibo.cn/sinaurl` 多层包装。 */
+fun unwrapWeiboLink(raw: String): String {
+    var current = raw.trim()
+    repeat(4) {
+        val next = unwrapWeiboBrowserUrl(current)
+            ?: unwrapWeiboOpenAppUrl(current)
+            ?: unwrapSinaUrl(current)
+            ?: return current
+        if (next == current || next.isBlank()) return current
+        current = next.trim()
+    }
+    return current
 }
 
 /**
@@ -223,18 +260,113 @@ private val ExternalVideoHosts = listOf(
     "tv.sohu.com",
 )
 
+private val LivePathIdRegex = Regex(
+    """/(?:(?:l/)?(?:wblive|weibolive)/(?:m|p)/)?show/([0-9]+:[0-9a-zA-Z_-]+|[0-9]{10,})""",
+    RegexOption.IGNORE_CASE,
+)
+private val LiveNumericCompoundRegex = Regex("""\b((?:1022|1042):232[0-9a-zA-Z_-]{6,})\b""")
+
+private fun normalizeWeiboLiveId(rawId: String?): String? {
+    val trimmed = rawId?.let(::decodeUrlParam)?.trim().orEmpty()
+    if (trimmed.isBlank()) return null
+    if (trimmed.contains(':')) return trimmed
+    return if (trimmed.all(Char::isDigit) && trimmed.startsWith("232") && trimmed.length >= 12) {
+        "1022:$trimmed"
+    } else if (trimmed.all(Char::isDigit) && trimmed.length >= 10) {
+        trimmed
+    } else {
+        trimmed.takeIf { it.any(Char::isLetterOrDigit) }
+    }
+}
+
+private fun hasLiveContextHints(unwrapped: String): Boolean {
+    val lower = unwrapped.lowercase()
+    if (lower.startsWith("sinaweibo://chatroom") || lower.startsWith("weibo://chatroom") ||
+        lower.startsWith("sinaweibo://liveloom") || lower.startsWith("weibo://liveloom") ||
+        lower.startsWith("sinaweibo://wblive") || lower.startsWith("weibo://wblive") ||
+        lower.startsWith("sinaweibo://live") || lower.startsWith("weibo://live")
+    ) {
+        return true
+    }
+    if (lower.startsWith("intent://") &&
+        (lower.contains("chatroom") || lower.contains("liveloom") || lower.contains("wblive") || lower.contains("live_id="))
+    ) {
+        return true
+    }
+    if (lower.contains("/l/wblive") || lower.contains("/weibolive") ||
+        lower.contains("/tv/live") || lower.contains("livetype=wblive") ||
+        lower.contains("live_status=")
+    ) {
+        return true
+    }
+    val uri = runCatching { java.net.URI(unwrapped) }.getOrNull() ?: return false
+    val host = uri.host?.lowercase().orEmpty()
+    return host == "live.weibo.com" ||
+        host == "live.media.weibo.com" ||
+        host == "wblive.media.weibo.com" ||
+        host == "wblive-out.api.weibo.com" ||
+        host == "zhibo.weibo.com" ||
+        host == "live.video.weibocdn.com" ||
+        host.endsWith(".live.weibo.com")
+}
+
+/** 从微博直播链接、私有 scheme 或房间参数中提取 `live_id`（例如 `1022:232132...`）。 */
+fun extractWeiboLiveId(raw: String): String? {
+    val unwrapped = unwrapWeiboLink(raw)
+    if (unwrapped.isEmpty()) return null
+    val query = queryOf(unwrapped.substringBefore("#Intent"))
+    val liveContext = hasLiveContextHints(unwrapped)
+
+    param(query, "live_id")?.let(::normalizeWeiboLiveId)?.let { return it }
+    if (liveContext) {
+        val cidParam = param(query, "container_id")
+            ?: param(query, "containerid")
+            ?: param(query, "id")
+            ?: param(query, "room_id")
+            ?: param(query, "object_id")
+            ?: param(query, "oid")
+            ?: param(query, "fid")
+        cidParam?.let(::normalizeWeiboLiveId)?.let { return it }
+    } else {
+        for (key in listOf("container_id", "containerid", "object_id", "oid", "fid", "id")) {
+            val candidate = param(query, key)?.let(::decodeUrlParam).orEmpty()
+            if (candidate.startsWith("1022:232")) return candidate
+        }
+    }
+
+    val uriPath = runCatching { java.net.URI(unwrapped).rawPath }.getOrNull()
+        ?: unwrapped.substringBefore('?').substringBefore('#')
+    if (liveContext || uriPath.contains("wblive", ignoreCase = true) || uriPath.contains("weibolive", ignoreCase = true)) {
+        LivePathIdRegex.find(uriPath)?.groupValues?.getOrNull(1)
+            ?.let(::normalizeWeiboLiveId)
+            ?.let { return it }
+    }
+
+    LiveNumericCompoundRegex.find(unwrapped)?.groupValues?.getOrNull(1)?.let { return it }
+    return null
+}
+
+/** 判断链接或 scheme 是否指向微博直播间或直播流。 */
+fun isWeiboLiveLink(raw: String): Boolean {
+    val unwrapped = unwrapWeiboLink(raw)
+    if (unwrapped.isEmpty()) return false
+    if (hasLiveContextHints(unwrapped)) return true
+    return extractWeiboLiveId(unwrapped) != null
+}
+
 /**
  * 判断链接是否为视频直链、微博视频页或主流第三方视频官链（爱奇艺、B站、腾讯视频、优酷等）。
  * 命中后交给内置视频解析/播放页处理，避免在普通 WebView 里跳端失败或无法下载。
  */
 fun isVideoLink(raw: String): Boolean {
-    val trimmed = raw.trim()
+    val trimmed = unwrapWeiboLink(raw)
     if (trimmed.isEmpty()) return false
+    if (isWeiboLiveLink(trimmed)) return false
     val lower = trimmed.lowercase()
     if (lower.startsWith("sinaweibo://video") || lower.startsWith("intent://gotovideo")) return true
     val path = lower.substringBefore('?').substringBefore('#')
     if (path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") ||
-        path.endsWith(".webm") || path.endsWith(".m3u8")
+        path.endsWith(".webm") || path.endsWith(".m3u8") || path.endsWith(".flv")
     ) {
         return true
     }

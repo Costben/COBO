@@ -7,9 +7,11 @@ import android.os.Environment
 import android.provider.MediaStore
 import com.cobo.app.App
 import com.cobo.app.data.Api
+import com.cobo.app.ui.extractWeiboLiveId
+import com.cobo.app.ui.isWeiboLiveLink
 import com.cobo.app.ui.isWeiboShortLink
 import com.cobo.app.ui.resolveWeiboLink
-import com.cobo.app.ui.unwrapSinaUrl
+import com.cobo.app.ui.unwrapWeiboLink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -35,10 +37,19 @@ internal sealed interface ResolvedVideo {
         val url: String,
         val referer: String? = null,
         val title: String? = null,
+        val isLive: Boolean = false,
+        val fallbackUrl: String? = null,
     ) : ResolvedVideo
 
     data class WebPage(
         val url: String,
+        val title: String? = null,
+        val isLive: Boolean = false,
+    ) : ResolvedVideo
+
+    data class Unavailable(
+        val message: String,
+        val webUrl: String? = null,
         val title: String? = null,
     ) : ResolvedVideo
 }
@@ -66,7 +77,9 @@ internal fun isDirectVideoStream(url: String): Boolean {
     if (trimmed.startsWith("file:", ignoreCase = true)) return true
     val path = trimmed.substringBefore('?').substringBefore('#').lowercase()
     if (!path.startsWith("http://") && !path.startsWith("https://")) return false
-    if (path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") || path.endsWith(".webm")) {
+    if (path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") ||
+        path.endsWith(".webm") || path.endsWith(".flv")
+    ) {
         return true
     }
     val host = runCatching { URI(trimmed).host?.lowercase().orEmpty() }.getOrDefault("")
@@ -92,8 +105,8 @@ internal fun isSniffableMediaUrl(url: String): Boolean {
         return false
     }
     return isM3u8Stream(trimmed) || path.endsWith(".mp4") || path.endsWith(".m4v") ||
-        path.endsWith(".mov") || trimmed.contains(".mp4?", ignoreCase = true) ||
-        trimmed.contains(".m3u8?", ignoreCase = true)
+        path.endsWith(".mov") || path.endsWith(".flv") || trimmed.contains(".mp4?", ignoreCase = true) ||
+        trimmed.contains(".m3u8?", ignoreCase = true) || trimmed.contains(".flv?", ignoreCase = true)
 }
 
 internal fun extractWeiboVideoFid(rawUrl: String): String? {
@@ -141,37 +154,304 @@ internal fun extractHtmlVideoUrl(html: String, baseUrl: String): String? {
     return null
 }
 
-internal suspend fun resolvePlayableVideo(
-    rawUrl: String,
-    cacheDir: File? = null,
-): ResolvedVideo = withContext(Dispatchers.IO) {
-    val unwrapped = unwrapSinaUrl(rawUrl) ?: rawUrl
-    val normalized = resolveWeiboLink(unwrapped) ?: unwrapped
-    val finalUrl = if (isWeiboShortLink(normalized) || normalized.contains("b23.tv/", ignoreCase = true)) {
-        val cookie = runCatching { App.repo.cookie() }.getOrNull()
-        val redirected = runCatching { Api.resolveRedirect(normalized, cookie) }.getOrDefault(normalized)
-        unwrapSinaUrl(redirected) ?: redirected
+private fun normalizeWeiboStreamUrl(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isBlank()) return ""
+    val absolute = if (trimmed.startsWith("//")) "https:$trimmed" else trimmed
+    return if (absolute.startsWith("http://", ignoreCase = true) &&
+        (absolute.contains("weibocdn.com", ignoreCase = true) ||
+            absolute.contains("live.weibo.com", ignoreCase = true) ||
+            absolute.contains("alicdn.com", ignoreCase = true))
+    ) {
+        "https://" + absolute.substring("http://".length)
     } else {
-        normalized
+        absolute
+    }
+}
+
+private fun isLiveM3u8Playlist(url: String, referer: String?): Boolean = runCatching {
+    val content = fetchText(url, referer)
+    if (content.contains("#EXT-X-STREAM-INF:")) return@runCatching false
+    !content.contains("#EXT-X-ENDLIST")
+}.getOrDefault(false)
+
+internal fun parseWeiboLiveRoomJson(
+    root: JSONObject,
+    liveId: String,
+): ResolvedVideo? {
+    val webUrl = "https://weibo.com/l/wblive/m/show/$liveId"
+    val code = root.optInt("code", -1)
+    val errorCode = root.optInt("error_code", 0)
+    if (errorCode == 27401 || (code != -1 && code != 100000 && root.optString("msg").contains("not exists", ignoreCase = true))) {
+        return ResolvedVideo.Unavailable(
+            message = "该直播已结束或直播间已关闭",
+            webUrl = webUrl,
+        )
+    }
+    if (code != -1 && code != 100000) return null
+    val data = root.optJSONObject("data") ?: return null
+    val item = data.optJSONObject("item") ?: data
+    val userInfo = data.optJSONObject("user_info")
+        ?: data.optJSONObject("anchor_info")
+        ?: item.optJSONObject("user_info")
+    val authorName = userInfo?.optString("screen_name").orEmpty()
+        .ifBlank { userInfo?.optString("name").orEmpty() }
+    val title = item.optString("title")
+        .ifBlank { item.optString("desc") }
+        .ifBlank { data.optString("title") }
+        .ifBlank { data.optString("desc") }
+        .ifBlank { authorName.takeIf { it.isNotBlank() }?.let { "${it}的直播" }.orEmpty() }
+        .takeIf { it.isNotBlank() }
+
+    val watchLimit = item.optJSONObject("watch_limit_info")?.optInt("type", 0)
+        ?: data.optJSONObject("watch_limit_info")?.optInt("type", 0)
+        ?: 0
+    if (watchLimit != 0) {
+        return ResolvedVideo.Unavailable(
+            message = "该直播需在微博官方客户端观看",
+            webUrl = webUrl,
+            title = title,
+        )
     }
 
-    if (isM3u8Stream(finalUrl)) {
-        if (cacheDir != null) {
-            resolveM3u8ToCachedTs(cacheDir, finalUrl, defaultRefererFor(finalUrl))?.let { file ->
-                return@withContext ResolvedVideo.DirectStream(file.toURI().toString())
+    val status = item.optInt("status", -1).takeIf { it >= 0 }
+        ?: item.optInt("live_status", -1).takeIf { it >= 0 }
+        ?: data.optInt("status", -1)
+    val streamInfo = item.optJSONObject("stream_info")
+    val pull = streamInfo?.optJSONObject("pull")
+
+    if (status == 1) {
+        val hls = listOf(
+            item.optString("live_origin_hls_url"),
+            pull?.optString("live_origin_hls_url").orEmpty(),
+            item.optString("live_hd"),
+            item.optString("live_ld"),
+            pull?.optString("live_hls").orEmpty(),
+        ).map(::normalizeWeiboStreamUrl).firstOrNull { it.isNotBlank() }
+        val flv = listOf(
+            item.optString("live_origin_flv_url"),
+            pull?.optString("live_origin_flv_url").orEmpty(),
+            pull?.optString("live_flv").orEmpty(),
+        ).map(::normalizeWeiboStreamUrl).firstOrNull { it.isNotBlank() }
+        val primary = hls ?: flv
+        val fallback = if (hls != null && flv != null && flv != hls) flv else null
+        if (!primary.isNullOrBlank()) {
+            return ResolvedVideo.DirectStream(
+                url = primary,
+                referer = "https://weibo.com/",
+                title = title,
+                isLive = true,
+                fallbackUrl = fallback,
+            )
+        }
+    }
+
+    if (status == 3) {
+        val replayObj = streamInfo?.optJSONObject("replay_url")
+        val replay = listOf(
+            item.optString("replay_origin_url"),
+            replayObj?.optString("origin").orEmpty(),
+            item.optString("replay_hd"),
+            item.optString("replay_ld"),
+            replayObj?.optString("hd").orEmpty(),
+            replayObj?.optString("ld").orEmpty(),
+        ).map(::normalizeWeiboStreamUrl).firstOrNull { it.isNotBlank() }
+        if (!replay.isNullOrBlank()) {
+            return ResolvedVideo.DirectStream(
+                url = replay,
+                referer = "https://weibo.com/",
+                title = title,
+                isLive = false,
+            )
+        }
+        return ResolvedVideo.Unavailable(
+            message = "直播已结束，暂无回放",
+            webUrl = webUrl,
+            title = title,
+        )
+    }
+
+    if (status == 0) {
+        return ResolvedVideo.Unavailable(
+            message = "直播未开始",
+            webUrl = webUrl,
+            title = title,
+        )
+    }
+    if (status >= 2) {
+        return ResolvedVideo.Unavailable(
+            message = "直播已结束",
+            webUrl = webUrl,
+            title = title,
+        )
+    }
+    return null
+}
+
+private fun resolveWeiboLiveRoom(
+    liveId: String,
+    cacheDir: File?,
+): ResolvedVideo? {
+    val cookie = runCatching { App.repo.cookie() }.getOrNull()
+    val encodedId = java.net.URLEncoder.encode(liveId, "UTF-8")
+
+    fun finishLiveResult(result: ResolvedVideo): ResolvedVideo = when (result) {
+        is ResolvedVideo.DirectStream -> if (result.isLive) {
+            result
+        } else {
+            normalizeResolvedStream(result, cacheDir)
+        }
+        else -> result
+    }
+
+    val endpoints = listOf(
+        Triple(
+            "https://weibo.com/l/!/2/wblive/room/show_pc_live.json?live_id=$encodedId",
+            Api.DESKTOP_UA,
+            "https://weibo.com/l/wblive/p/show/$encodedId",
+        ),
+        Triple(
+            "https://weibo.com/l/pc/anchor/live?live_id=$encodedId",
+            Api.WEB_UA,
+            "https://weibo.com/l/wblive/m/show/$encodedId",
+        ),
+    )
+
+    var unavailableFallback: ResolvedVideo.Unavailable? = null
+    for ((endpoint, ua, referer) in endpoints) {
+        runCatching {
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("User-Agent", ua)
+                .header("Referer", referer)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+                .get()
+                .build()
+            VideoHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (body.startsWith("{")) {
+                    val parsed = parseWeiboLiveRoomJson(JSONObject(body), liveId)
+                    when (parsed) {
+                        is ResolvedVideo.Unavailable -> if (unavailableFallback == null) unavailableFallback = parsed
+                        null -> Unit
+                        else -> return finishLiveResult(parsed)
+                    }
+                }
             }
         }
     }
 
+    // 兜底调 room/play（部分帖子仅给出 live_id 或 stream_url 指到这里，返回 302 或 media_info JSON）。
+    runCatching {
+        val noRedirectClient = VideoHttpClient.newBuilder().followRedirects(false).build()
+        val request = Request.Builder()
+            .url("https://wblive-out.api.weibo.com/2/wblive/room/play?id=$encodedId")
+            .header("User-Agent", Api.WEB_UA)
+            .header("Referer", "https://weibo.com/")
+            .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
+            .get()
+            .build()
+        noRedirectClient.newCall(request).execute().use { response ->
+            val loc = response.header("Location")?.let(::normalizeWeiboStreamUrl).orEmpty()
+            if (loc.isNotBlank() && (isDirectVideoStream(loc) || isM3u8Stream(loc))) {
+                return ResolvedVideo.DirectStream(
+                    url = loc,
+                    referer = "https://weibo.com/",
+                    isLive = true,
+                )
+            }
+            if (response.isSuccessful) {
+                val body = response.body?.string().orEmpty()
+                if (body.startsWith("{")) {
+                    val root = JSONObject(body)
+                    val media = root.optJSONObject("media_info") ?: root
+                    val liveUrl = listOf(
+                        media.optString("live_hd"),
+                        media.optString("live_ld"),
+                        media.optString("replay_hd"),
+                        media.optString("replay_ld"),
+                        media.optString("stream_url"),
+                    ).map(::normalizeWeiboStreamUrl).firstOrNull {
+                        it.isNotBlank() && (isDirectVideoStream(it) || isM3u8Stream(it))
+                    }
+                    if (!liveUrl.isNullOrBlank()) {
+                        val isReplay = media.optInt("live_status", -1) == 3 || media.optInt("real_status", -1) == 3
+                        val raw = ResolvedVideo.DirectStream(
+                            url = liveUrl,
+                            referer = "https://weibo.com/",
+                            isLive = !isReplay,
+                        )
+                        return finishLiveResult(raw)
+                    }
+                }
+            }
+        }
+    }
+
+    return unavailableFallback
+}
+
+internal suspend fun resolvePlayableVideo(
+    rawUrl: String,
+    cacheDir: File? = null,
+    isLiveHint: Boolean = false,
+): ResolvedVideo = withContext(Dispatchers.IO) {
+    val unwrapped = unwrapWeiboLink(rawUrl)
+    val normalized = resolveWeiboLink(unwrapped) ?: unwrapped
+    val initialLiveId = extractWeiboLiveId(rawUrl) ?: extractWeiboLiveId(unwrapped)
+    val finalUrl = if (isWeiboShortLink(normalized) || normalized.contains("b23.tv/", ignoreCase = true)) {
+        val cookie = runCatching { App.repo.cookie() }.getOrNull()
+        val redirected = runCatching { Api.resolveRedirect(normalized, cookie) }.getOrDefault(normalized)
+        unwrapWeiboLink(redirected)
+    } else {
+        normalized
+    }
+    val liveId = extractWeiboLiveId(finalUrl) ?: initialLiveId
+    val isLiveTarget = isLiveHint || liveId != null || isWeiboLiveLink(finalUrl) || isWeiboLiveLink(rawUrl)
+
+    var liveUnavailable: ResolvedVideo.Unavailable? = null
+    if (liveId != null) {
+        when (val liveResult = resolveWeiboLiveRoom(liveId, cacheDir)) {
+            is ResolvedVideo.Unavailable -> liveUnavailable = liveResult
+            null -> Unit
+            else -> return@withContext liveResult
+        }
+    }
+
+    if (isM3u8Stream(finalUrl)) {
+        val referer = defaultRefererFor(finalUrl)
+        val liveM3u8 = isLiveTarget || isLiveM3u8Playlist(finalUrl, referer)
+        if (!liveM3u8 && cacheDir != null) {
+            resolveM3u8ToCachedTs(cacheDir, finalUrl, referer)?.let { file ->
+                return@withContext ResolvedVideo.DirectStream(file.toURI().toString(), isLive = false)
+            }
+        }
+        return@withContext ResolvedVideo.DirectStream(
+            url = normalizeWeiboStreamUrl(finalUrl),
+            referer = referer,
+            isLive = liveM3u8,
+        )
+    }
+
     if (isDirectVideoStream(finalUrl)) {
-        return@withContext ResolvedVideo.DirectStream(finalUrl, referer = defaultRefererFor(finalUrl))
+        return@withContext ResolvedVideo.DirectStream(
+            url = normalizeWeiboStreamUrl(finalUrl),
+            referer = defaultRefererFor(finalUrl),
+            isLive = isLiveTarget,
+        )
     }
 
     extractWeiboVideoFid(finalUrl)?.let { fid ->
-        resolveWeiboVideoByFid(fid)?.let { stream ->
-            return@withContext normalizeResolvedStream(stream, cacheDir)
+        when (val fidResult = resolveWeiboVideoByFid(fid, cacheDir)) {
+            is ResolvedVideo.DirectStream -> return@withContext fidResult
+            is ResolvedVideo.Unavailable -> if (liveUnavailable == null) liveUnavailable = fidResult
+            is ResolvedVideo.WebPage -> return@withContext fidResult
+            null -> Unit
         }
     }
+
+    if (liveUnavailable != null) return@withContext liveUnavailable
 
     extractBilibiliBvid(finalUrl)?.let { bvid ->
         resolveBilibiliVideo(bvid)?.let { stream ->
@@ -181,27 +461,56 @@ internal suspend fun resolvePlayableVideo(
 
     val htmlResolved = resolveHtmlDirectVideo(finalUrl)
     if (htmlResolved != null) {
-        return@withContext normalizeResolvedStream(htmlResolved, cacheDir)
+        val tagged = htmlResolved.copy(isLive = isLiveTarget || htmlResolved.isLive)
+        return@withContext if (tagged.isLive) tagged else normalizeResolvedStream(tagged, cacheDir)
     }
 
-    ResolvedVideo.WebPage(finalUrl)
+    val webTarget = resolveWeiboLink(finalUrl) ?: finalUrl
+    ResolvedVideo.WebPage(webTarget, isLive = isLiveTarget)
 }
 
 private fun normalizeResolvedStream(
     stream: ResolvedVideo.DirectStream,
     cacheDir: File?,
 ): ResolvedVideo {
+    if (stream.isLive) return stream
     val effectiveReferer = stream.referer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(stream.url)
-    if (cacheDir != null && (isM3u8Stream(stream.url) || checkIsM3u8(stream.url, effectiveReferer))) {
-        resolveM3u8ToCachedTs(cacheDir, stream.url, effectiveReferer)?.let { cached ->
-            return stream.copy(url = cached.toURI().toString(), referer = null)
+    if (isM3u8Stream(stream.url) || checkIsM3u8(stream.url, effectiveReferer)) {
+        if (isLiveM3u8Playlist(stream.url, effectiveReferer)) {
+            return stream.copy(
+                url = normalizeWeiboStreamUrl(stream.url),
+                referer = effectiveReferer,
+                isLive = true,
+            )
+        }
+        if (cacheDir != null) {
+            resolveM3u8ToCachedTs(cacheDir, stream.url, effectiveReferer)?.let { cached ->
+                return stream.copy(url = cached.toURI().toString(), referer = null)
+            }
         }
     }
     return stream.copy(referer = effectiveReferer)
 }
 
-private fun resolveWeiboVideoByFid(fid: String): ResolvedVideo.DirectStream? {
+private fun firstPlayInfoPlaybackUrl(playInfo: JSONObject): String {
+    val arr = playInfo.optJSONArray("playback_list") ?: return ""
+    var fallback = ""
+    for (i in 0 until arr.length()) {
+        val play = arr.optJSONObject(i)?.optJSONObject("play_info") ?: continue
+        val url = play.optString("url").trim()
+        if (url.isBlank()) continue
+        if (fallback.isBlank()) fallback = url
+        val mime = play.optString("mime")
+        if (mime.contains("mp4", ignoreCase = true) || url.contains(".mp4", ignoreCase = true)) {
+            return url
+        }
+    }
+    return fallback
+}
+
+private fun resolveWeiboVideoByFid(fid: String, cacheDir: File? = null): ResolvedVideo? {
     val cookie = runCatching { App.repo.cookie() }.getOrNull()
+    var confirmedUnavailable: ResolvedVideo.Unavailable? = null
     runCatching {
         val payload = JSONObject().put("Component_Play_Playinfo", JSONObject().put("oid", fid)).toString()
         val request = Request.Builder()
@@ -218,13 +527,39 @@ private fun resolveWeiboVideoByFid(fid: String): ResolvedVideo.DirectStream? {
             val root = JSONObject(response.body?.string().orEmpty())
             val playInfo = root.optJSONObject("data")?.optJSONObject("Component_Play_Playinfo") ?: return@use
             val title = playInfo.optString("title").takeIf { it.isNotBlank() }
+
+            val liveIdFromPlay = playInfo.optString("live_id").takeIf { it.isNotBlank() }
+                ?: playInfo.optJSONObject("live_info")?.optString("live_id")?.takeIf { it.isNotBlank() }
+            if (liveIdFromPlay != null) {
+                resolveWeiboLiveRoom(liveIdFromPlay, cacheDir)?.let { return it }
+            }
+
+            val isLivePlay = playInfo.optInt("is_live", 0) == 1 ||
+                playInfo.optBoolean("is_live", false) ||
+                playInfo.optString("object_type").equals("live", ignoreCase = true)
+            val liveStatus = playInfo.optInt("live_status", -1)
+
             val urls = playInfo.optJSONObject("urls")
             val picked = pickBestQualityUrl(urls)
+                ?: playInfo.optString("replay_hd").takeIf { it.isNotBlank() }
+                ?: playInfo.optString("replay_ld").takeIf { it.isNotBlank() }
+                ?: playInfo.optString("live_hd").takeIf { it.isNotBlank() }
+                ?: playInfo.optString("live_ld").takeIf { it.isNotBlank() }
+                ?: firstPlayInfoPlaybackUrl(playInfo).takeIf { it.isNotBlank() }
                 ?: playInfo.optString("stream_url_hd").takeIf { it.isNotBlank() }
                 ?: playInfo.optString("stream_url").takeIf { it.isNotBlank() }
             if (!picked.isNullOrBlank()) {
-                val url = if (picked.startsWith("//")) "https:$picked" else picked
-                return ResolvedVideo.DirectStream(url, referer = "https://weibo.com/", title = title)
+                val url = normalizeWeiboStreamUrl(picked)
+                val isLive = (isLivePlay || liveStatus == 1) && liveStatus != 3
+                val stream = ResolvedVideo.DirectStream(url, referer = "https://weibo.com/", title = title, isLive = isLive)
+                return if (isLive) stream else normalizeResolvedStream(stream, cacheDir)
+            }
+            if (isLivePlay || liveStatus >= 0) {
+                confirmedUnavailable = ResolvedVideo.Unavailable(
+                    message = if (liveStatus == 0) "直播未开始" else "该直播已结束或暂无回放",
+                    webUrl = "https://video.weibo.com/show?fid=$fid",
+                    title = title,
+                )
             }
         }
     }
@@ -239,20 +574,37 @@ private fun resolveWeiboVideoByFid(fid: String): ResolvedVideo.DirectStream? {
             .build()
         VideoHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use
-            val obj = JSONObject(response.body?.string().orEmpty())
-                .optJSONObject("data")?.optJSONObject("object") ?: return@use
+            val root = JSONObject(response.body?.string().orEmpty())
+            val obj = root.optJSONObject("data")?.optJSONObject("object")
+            if (obj == null) {
+                if (confirmedUnavailable == null && root.optInt("ok", 1) == 0) {
+                    val msg = root.optString("msg").ifBlank { "视频或直播已失效" }
+                    confirmedUnavailable = ResolvedVideo.Unavailable(
+                        message = msg,
+                        webUrl = "https://video.weibo.com/show?fid=$fid",
+                    )
+                }
+                return@use
+            }
+            val objLiveId = obj.optString("live_id").takeIf { it.isNotBlank() }
+            if (objLiveId != null) {
+                resolveWeiboLiveRoom(objLiveId, cacheDir)?.let { return it }
+            }
             val stream = obj.optJSONObject("stream") ?: return@use
+            val isLiveObj = obj.optString("object_type").equals("live", ignoreCase = true) ||
+                stream.optInt("live_status", -1) == 1
             val picked = stream.optString("hd_url")
                 .ifBlank { stream.optString("url") }
                 .ifBlank { stream.optString("ld_url") }
             if (picked.isNotBlank()) {
-                val url = if (picked.startsWith("//")) "https:$picked" else picked
-                val title = obj.optJSONObject("summary")?.toString()?.takeIf { it.isNotBlank() }
-                return ResolvedVideo.DirectStream(url, referer = "https://m.weibo.cn/", title = title)
+                val url = normalizeWeiboStreamUrl(picked)
+                val title = obj.optString("summary").takeIf { it.isNotBlank() }
+                val res = ResolvedVideo.DirectStream(url, referer = "https://m.weibo.cn/", title = title, isLive = isLiveObj)
+                return if (isLiveObj) res else normalizeResolvedStream(res, cacheDir)
             }
         }
     }
-    return null
+    return confirmedUnavailable
 }
 
 private fun pickBestQualityUrl(urls: JSONObject?): String? {

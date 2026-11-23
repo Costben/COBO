@@ -233,6 +233,7 @@ private fun videoToSnapshot(v: VideoInfo): JSONObject = JSONObject().apply {
     put("cover", v.cover)
     put("url", v.url)
     if (v.durationSec > 0) put("durationSec", v.durationSec)
+    if (v.isLive) put("isLive", true)
 }
 
 private fun bigPicToSnapshot(p: BigPicInfo): JSONObject = JSONObject().apply {
@@ -297,6 +298,7 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
                 cover = it.str("cover"),
                 url = it.str("url"),
                 durationSec = it.int("durationSec"),
+                isLive = it.optBoolean("isLive", false),
             )
         },
         bigPic = o.optJSONObject("bigPic")?.let {

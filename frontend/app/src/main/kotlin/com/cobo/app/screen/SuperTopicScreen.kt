@@ -309,7 +309,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                     },
                                     onUser = { if (it.id.isNotBlank()) nav.push(Route.Profile(it.id)) },
                                     onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
-                                    onVideo = { nav.push(Route.Video(it.url, it.title)) },
+                                    onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
                                     onLike = {},
                                 )
                             }

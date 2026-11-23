@@ -178,9 +178,8 @@ fun CoboRoot() {
     val linkHandler = remember(nav, scope, context) {
         { raw: String ->
             // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，流体云深链会包一层 sinaweibo://browser?url=<真实地址>，
-            // 先拆出真实地址再决定去哪。
-            val unwrapped = unwrapWeiboBrowserUrl(raw) ?: raw
-            val url = unwrapSinaUrl(unwrapped) ?: unwrapped
+            // 或 m.weibo.cn/feature/openapp?scheme=...，先统一拆出真实地址再决定去哪。
+            val url = unwrapWeiboLink(raw)
             val voteId = weiboVoteId(url)
             val statusId = weiboStatusId(url)
             val uid = weiboUserId(url)
@@ -204,6 +203,7 @@ fun CoboRoot() {
                     Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
                 } else Route.Vote(voteId))
                 isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
+                isWeiboLiveLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "直播", isLive = true))
                 isVideoLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "视频"))
                 isWeiboWboxLink(url) ->
                     App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
@@ -228,7 +228,7 @@ fun CoboRoot() {
                 }
                 isWeiboShortLink(url) -> scope.launch {
                     val rawResolved = App.repo.resolveShortUrl(url)
-                    val resolved = unwrapSinaUrl(rawResolved) ?: rawResolved
+                    val resolved = unwrapWeiboLink(rawResolved)
                     val vid = weiboVoteId(resolved)
                     val resolvedTopicId = superTopicId(resolved)
                     if (resolvedTopicId != null) {
@@ -253,6 +253,8 @@ fun CoboRoot() {
                             }
                         } else if (resolvedTopicQuery != null) {
                             nav.push(Route.TopicFeed(resolvedTopicQuery))
+                        } else if (isWeiboLiveLink(resolved)) {
+                            nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "直播", isLive = true))
                         } else if (isVideoLink(resolved)) {
                             nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "视频"))
                         } else {
@@ -855,7 +857,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Topic -> TopicScreen(nav, route.name)
         is Route.TopicFeed -> TopicFeedScreen(nav, route.topic)
         is Route.Images -> ImageViewerScreen(nav, route.pics, route.index, route.editableAvatar)
-        is Route.Video -> VideoScreen(nav, route.url, route.title)
+        is Route.Video -> VideoScreen(nav, route.url, route.title, route.isLive)
         is Route.Vote -> VoteScreen(nav, route.voteId)
         Route.TabLab -> TabBarLabScreen()
     }

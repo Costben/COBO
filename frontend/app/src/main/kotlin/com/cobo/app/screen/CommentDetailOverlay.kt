@@ -69,13 +69,13 @@ import com.cobo.app.ui.components.WeiboText
 import com.cobo.app.ui.components.fmtCount
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.components.CoboRefreshSpinner
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -571,7 +571,7 @@ private fun CommentDetailSheetContent(
                                         modifier = Modifier.fillMaxWidth().height(44.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        CircularProgressIndicator(size = 18.dp, strokeWidth = 2.dp)
+                                        CoboRefreshSpinner(size = 18.dp, strokeWidth = 2.dp)
                                     }
                                 }
                             }

@@ -215,7 +215,7 @@ sealed interface Route {
         val index: Int,
         val editableAvatar: Boolean = false,
     ) : Route
-    data class Video(val url: String, val title: String) : Route
+    data class Video(val url: String, val title: String, val isLive: Boolean = false) : Route
     data class Vote(val voteId: String) : Route
     /** 临时对比页，验完删。 */
     data object TabLab : Route

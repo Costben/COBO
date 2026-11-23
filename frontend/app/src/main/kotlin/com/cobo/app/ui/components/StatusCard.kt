@@ -74,6 +74,7 @@ import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
 import com.cobo.app.ui.LocalLinkHandler
 import com.cobo.app.ui.LiveBadgeSize
+import com.cobo.app.ui.isLongImageAspect
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.imageOrigin
@@ -100,8 +101,6 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Community
 import io.github.suqi8.coui.kmp.icon.extended.Contacts
 import io.github.suqi8.coui.kmp.icon.extended.Delete
-import io.github.suqi8.coui.kmp.icon.extended.Favorites
-import io.github.suqi8.coui.kmp.icon.extended.FavoritesFill
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
@@ -141,6 +140,7 @@ fun StatusCard(
     val scheme = COUITheme.colorScheme
     val scope = rememberCoroutineScope()
     val effectiveFavorited = App.repo.isFavorited(status.id)
+    var cloudFavorited by remember(status.id) { mutableStateOf(status.favorited) }
     val canDelete = !App.repo.guest &&
         !status.user?.id.isNullOrBlank() &&
         status.user?.id == App.repo.session?.uid
@@ -157,6 +157,21 @@ fun StatusCard(
             compact = compact,
             favorited = effectiveFavorited,
             onToggleFavorite = handleFavorite,
+            cloudFavorited = cloudFavorited,
+            onToggleCloudFavorite = {
+                if (App.repo.guest) {
+                    App.toast("请先登录微博")
+                } else {
+                    scope.launch {
+                        runCatching { App.repo.favorite(status.id, cloudFavorited) }
+                            .onSuccess {
+                                cloudFavorited = !cloudFavorited
+                                App.toast(if (cloudFavorited) "已收藏到微博" else "已取消微博收藏")
+                            }
+                            .onFailure { App.toast(it.message ?: "操作失败") }
+                    }
+                }
+            },
             onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
         )
         if (status.textHtml.isNotBlank()) {
@@ -282,8 +297,10 @@ fun StatusHeader(
     onUser: (User) -> Unit,
     compact: Boolean,
     favorited: Boolean = App.repo.isFavorited(status.id),
+    cloudFavorited: Boolean = status.favorited,
     showMore: Boolean = true,
     onToggleFavorite: (() -> Unit)? = null,
+    onToggleCloudFavorite: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
@@ -329,12 +346,14 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onDelete != null)) {
+                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
                         favorited = favorited,
+                        cloudFavorited = cloudFavorited,
                         onToggleFavorite = onToggleFavorite,
+                        onToggleCloudFavorite = onToggleCloudFavorite,
                         onDelete = onDelete,
                     )
                 }
@@ -398,12 +417,17 @@ private fun StatusVisibilityIcon(
 private fun StatusMoreButton(
     statusId: String,
     favorited: Boolean,
+    cloudFavorited: Boolean,
     onToggleFavorite: (() -> Unit)?,
+    onToggleCloudFavorite: (() -> Unit)?,
     onDelete: (() -> Unit)?,
 ) {
     val scheme = COUITheme.colorScheme
     var expanded by remember(statusId) { mutableStateOf(false) }
-    val optionSize = (if (onToggleFavorite != null) 1 else 0) + (if (onDelete != null) 1 else 0)
+    val optionSize =
+        (if (onToggleCloudFavorite != null) 1 else 0) +
+            (if (onToggleFavorite != null) 1 else 0) +
+            (if (onDelete != null) 1 else 0)
     Box {
         Box(
             modifier = Modifier
@@ -435,12 +459,35 @@ private fun StatusMoreButton(
             val dismiss = LocalDismissState.current
             ListPopupColumn {
                 var idx = 0
+                if (onToggleCloudFavorite != null) {
+                    val favIcon = if (cloudFavorited) CoboIcons.StarFill else CoboIcons.Star
+                    val favTint = if (cloudFavorited) scheme.primary else scheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = if (cloudFavorited) "取消微博收藏" else "收藏微博",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(favIcon, null, Modifier.size(18.dp), tint = favTint)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onToggleCloudFavorite()
+                        },
+                    )
+                }
                 if (onToggleFavorite != null) {
-                    val favIcon = if (favorited) COUIIcons.FavoritesFill else COUIIcons.Favorites
+                    val favIcon = if (favorited) CoboIcons.StarFill else CoboIcons.Star
                     val favTint = if (favorited) scheme.primary else scheme.onSurfaceContainer
                     DropdownImpl(
                         item = DropdownItem(
-                            text = if (favorited) "取消收藏" else "收藏微博",
+                            text = if (favorited) "取消本地收藏" else "本地收藏",
                             icon = { iconModifier ->
                                 Box(iconModifier, contentAlignment = Alignment.Center) {
                                     Icon(favIcon, null, Modifier.size(18.dp), tint = favTint)
@@ -682,7 +729,10 @@ fun ImageGrid(
             1.45f
         }
         // 真实的宽高比（不是裁切后的格子比例）交给看图页，它才能把第一帧摆得和这张缩略图一模一样。
-        val aspect = if (pic.width > 0 && pic.height > 0) pic.width.toFloat() / pic.height else null
+        val declaredAspect = if (pic.width > 0 && pic.height > 0) pic.width.toFloat() / pic.height else null
+        var measuredAspect by remember(urls[0]) { mutableStateOf<Float?>(null) }
+        val aspect = declaredAspect ?: measuredAspect
+        val isLong = !pic.isVideo && isLongImageAspect(aspect)
         val precise = rememberPreciseClickState()
         Box(
             modifier = Modifier
@@ -711,7 +761,14 @@ fun ImageGrid(
                 model = pic.large,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                onSuccess = { state -> origins.putCacheKey(urls[0], state.result.memoryCacheKey) },
+                alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
+                onSuccess = { state ->
+                    origins.putCacheKey(urls[0], state.result.memoryCacheKey)
+                    if (declaredAspect == null) {
+                        val s = state.painter.intrinsicSize
+                        if (s.width > 0f && s.height > 0f) measuredAspect = s.width / s.height
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             when {
@@ -724,7 +781,14 @@ fun ImageGrid(
                         )
                     }
                 }
-                pic.isLive -> LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
+                else -> {
+                    if (pic.isLive) {
+                        LiveBadge(urls[0], Modifier.align(Alignment.BottomStart).padding(SingleBadgeInset))
+                    }
+                    if (isLong) {
+                        LongImageBadge(urls[0], Modifier.align(Alignment.BottomEnd).padding(SingleBadgeInset))
+                    }
+                }
             }
         }
         return
@@ -741,11 +805,14 @@ fun ImageGrid(
                         val precise = rememberPreciseClickState()
                         val pic = pics[index]
                         val shown = pic.thumb.ifBlank { pic.large }
-                        val aspect = if (pic.width > 0 && pic.height > 0) {
+                        val declaredAspect = if (pic.width > 0 && pic.height > 0) {
                             pic.width.toFloat() / pic.height
                         } else {
                             null
                         }
+                        var measuredAspect by remember(urls[index]) { mutableStateOf<Float?>(null) }
+                        val aspect = declaredAspect ?: measuredAspect
+                        val isLong = !pic.isVideo && isLongImageAspect(aspect)
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -776,7 +843,14 @@ fun ImageGrid(
                                 model = shown,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
-                                onSuccess = { state -> origins.putCacheKey(urls[index], state.result.memoryCacheKey) },
+                                alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
+                                onSuccess = { state ->
+                                    origins.putCacheKey(urls[index], state.result.memoryCacheKey)
+                                    if (declaredAspect == null) {
+                                        val s = state.painter.intrinsicSize
+                                        if (s.width > 0f && s.height > 0f) measuredAspect = s.width / s.height
+                                    }
+                                },
                                 modifier = Modifier.fillMaxSize(),
                             )
                             when {
@@ -789,7 +863,14 @@ fun ImageGrid(
                                         )
                                     }
                                 }
-                                pic.isLive -> LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
+                                else -> {
+                                    if (pic.isLive) {
+                                        LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
+                                    }
+                                    if (isLong) {
+                                        LongImageBadge(urls[index], Modifier.align(Alignment.BottomEnd).padding(4.dp))
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -838,6 +919,28 @@ private fun VideoDurationBadge(seconds: Int, modifier: Modifier = Modifier) {
         fontSize = 10.sp,
         fontWeight = FontWeight.Medium,
         modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.58f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+/** 缩略图右下角的「长图」角标，看图页覆盖当前图时先隐去，退场落位后再淡回。 */
+@Composable
+internal fun LongImageBadge(url: String, modifier: Modifier = Modifier) {
+    val covered = LocalImageOrigins.current.viewing == url
+    val fade = animateFloatAsState(
+        targetValue = if (covered) 0f else 1f,
+        animationSpec = tween(LiveBadgeFadeMillis),
+        label = "longImageBadge",
+    )
+    Text(
+        text = "长图",
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = modifier
+            .graphicsLayer { alpha = fade.value }
             .clip(RoundedCornerShape(4.dp))
             .background(Color.Black.copy(alpha = 0.58f))
             .padding(horizontal = 5.dp, vertical = 1.dp),
@@ -920,6 +1023,31 @@ fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) 
             contentAlignment = Alignment.Center,
         ) {
             Icon(COUIIcons.Play, "播放", Modifier.size(26.dp), tint = Color.White)
+        }
+        if (video.isLive) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(10.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.56f))
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF3B30)),
+                )
+                Text(
+                    text = "直播",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
         if (video.title.isNotBlank()) {
             Text(

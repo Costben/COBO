@@ -169,6 +169,7 @@ private class SettingsUiState(context: Context) {
     var pickImageBrowseQuality by mutableStateOf(false)
     var pickHotBoards by mutableStateOf(false)
     var pickAccentColor by mutableStateOf(false)
+    var syncingLocalFavorites by mutableStateOf(false)
 }
 
 @Composable
@@ -201,6 +202,7 @@ fun SettingsScreen(nav: NavState) {
         accountSettingsItems(
             nav = nav,
             state = state,
+            scope = scope,
             showHeader = true,
             includeLibraryShortcuts = true,
         )
@@ -239,6 +241,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
             SettingsGroup.AccountAndContent -> accountSettingsItems(
                 nav = nav,
                 state = state,
+                scope = scope,
                 showHeader = false,
                 includeLibraryShortcuts = false,
             )
@@ -620,6 +623,7 @@ private fun LazyListScope.feedSettingsItems(
 private fun LazyListScope.accountSettingsItems(
     nav: NavState,
     state: SettingsUiState,
+    scope: CoroutineScope,
     showHeader: Boolean,
     includeLibraryShortcuts: Boolean,
 ) {
@@ -677,8 +681,30 @@ private fun LazyListScope.accountSettingsItems(
                     title = "本地关注使用账号",
                     modifier = Modifier.testTag("settings_local_follow"),
                     summary = localFollowSummary,
-                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Tail,
+                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Middle,
                     onClick = { state.pickLocalFollow = true },
+                )
+                PreferenceDivider()
+                ArrowPreference(
+                    title = "同步本地收藏",
+                    summary = if (state.syncingLocalFavorites) {
+                        "正在同步微博收藏"
+                    } else {
+                        "将微博收藏复制到本地收藏"
+                    },
+                    modifier = Modifier.testTag("settings_sync_local_favorites"),
+                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Tail,
+                    onClick = {
+                        if (!state.syncingLocalFavorites) {
+                            state.syncingLocalFavorites = true
+                            scope.launch {
+                                runCatching { App.repo.syncLocalFavorites() }
+                                    .onSuccess { count -> App.toast("已同步 $count 条微博到本地收藏") }
+                                    .onFailure { App.toast(it.message ?: "同步失败") }
+                                state.syncingLocalFavorites = false
+                            }
+                        }
+                    },
                 )
             }
             if (includeLibraryShortcuts) {

@@ -1,5 +1,6 @@
 package com.cobo.app.screen
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -129,5 +130,94 @@ class VideoSupportTest {
         // Clamps to [0, duration]
         assertEquals(0L, calculateHorizontalScrubTargetMs(5_000L, 60_000L, -500f, 1000f))
         assertEquals(60_000L, calculateHorizontalScrubTargetMs(50_000L, 60_000L, 500f, 1000f))
+    }
+
+    @Test
+    fun parsesWeiboLiveRoomPayloadsAcrossStatuses() {
+        val id = "1022:2321325160873118269706"
+        val activeJson = JSONObject(
+            """
+            {
+              "code": 100000,
+              "data": {
+                "item": {
+                  "title": "晚间新闻直播",
+                  "status": 1,
+                  "watch_limit_info": {"type": 0},
+                  "stream_info": {
+                    "pull": {
+                      "live_origin_hls_url": "http://al.pull.live.weibo.com/live/room.m3u8",
+                      "live_origin_flv_url": "http://plwb02.live.weibo.com/alicdn/room.flv"
+                    }
+                  }
+                }
+              }
+            }
+            """.trimIndent(),
+        )
+        val active = parseWeiboLiveRoomJson(activeJson, id) as ResolvedVideo.DirectStream
+        assertTrue(active.isLive)
+        assertEquals("晚间新闻直播", active.title)
+        assertEquals("https://al.pull.live.weibo.com/live/room.m3u8", active.url)
+        assertEquals("https://plwb02.live.weibo.com/alicdn/room.flv", active.fallbackUrl)
+
+        val replayJson = JSONObject(
+            """
+            {
+              "code": 100000,
+              "data": {
+                "status": 3,
+                "replay_origin_url": "http://live.video.weibocdn.com/replay_index.m3u8",
+                "user_info": {"screen_name": "主播A"}
+              }
+            }
+            """.trimIndent(),
+        )
+        val replay = parseWeiboLiveRoomJson(replayJson, id) as ResolvedVideo.DirectStream
+        assertFalse(replay.isLive)
+        assertEquals("主播A的直播", replay.title)
+        assertEquals("https://live.video.weibocdn.com/replay_index.m3u8", replay.url)
+
+        val notStartedJson = JSONObject(
+            """
+            {
+              "code": 100000,
+              "data": {
+                "status": 0,
+                "title": "预告直播"
+              }
+            }
+            """.trimIndent(),
+        )
+        val unavailable = parseWeiboLiveRoomJson(notStartedJson, id) as ResolvedVideo.Unavailable
+        assertEquals("直播未开始", unavailable.message)
+        assertEquals("https://weibo.com/l/wblive/m/show/$id", unavailable.webUrl)
+
+        val appOnlyJson = JSONObject(
+            """
+            {
+              "code": 100000,
+              "data": {
+                "status": 1,
+                "watch_limit_info": {"type": 1}
+              }
+            }
+            """.trimIndent(),
+        )
+        val restricted = parseWeiboLiveRoomJson(appOnlyJson, id) as ResolvedVideo.Unavailable
+        assertEquals("该直播需在微博官方客户端观看", restricted.message)
+
+        val notExistsJson = JSONObject(
+            """
+            {
+              "code": 999999,
+              "msg": "LiveRoom does not exists! ($id).",
+              "error_code": 27401,
+              "data": []
+            }
+            """.trimIndent(),
+        )
+        val missing = parseWeiboLiveRoomJson(notExistsJson, id) as ResolvedVideo.Unavailable
+        assertEquals("该直播已结束或直播间已关闭", missing.message)
     }
 }

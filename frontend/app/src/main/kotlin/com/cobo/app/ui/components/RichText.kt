@@ -88,7 +88,8 @@ internal fun glyphFor(url: String, label: String): LinkGlyph? {
             lower.contains("/s/video/") ||
             lower.contains("video/index?") ||
             lower.startsWith("sinaweibo://video") ||
-            lower.startsWith("intent://gotovideo") -> LinkGlyph.Video
+            lower.startsWith("intent://gotovideo") ||
+            com.cobo.app.ui.isWeiboLiveLink(url) -> LinkGlyph.Video
 
         trimmed == "查看图片" ||
             lower.contains("photo.weibo.com") -> LinkGlyph.Image

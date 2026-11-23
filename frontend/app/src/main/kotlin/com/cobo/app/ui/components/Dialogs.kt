@@ -35,7 +35,6 @@ import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.data.User
 import io.github.suqi8.coui.kmp.basic.Checkbox
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TextField
@@ -287,8 +286,8 @@ fun UpdateDialog(
                             .padding(horizontal = textMargin, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(44.dp),
+                        CoboRefreshSpinner(
+                            size = 44.dp,
                             strokeWidth = 3.dp,
                         )
                         Spacer(Modifier.height(16.dp))

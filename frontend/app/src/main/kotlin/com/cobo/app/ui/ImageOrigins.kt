@@ -42,6 +42,12 @@ internal class ThumbSlot {
 /** 缩略图左下角实况标记的直径。 */
 internal val LiveBadgeSize = 17.dp
 
+/** 宽高比低于此值时视为竖向长图（缩略图与看图页均以顶部对齐裁切）。 */
+internal const val LongImageAspect = 9f / 22f
+
+internal fun isLongImageAspect(aspect: Float?): Boolean =
+    aspect != null && aspect > 0f && aspect < LongImageAspect
+
 /**
  * Where the thumbnails on screen sit, by picture URL, so the viewer can grow out of the one that
  * was tapped and shrink back into the one it ends on. Keyed by URL rather than by route argument
@@ -91,6 +97,9 @@ class ImageOrigins {
 
     /** The address the feed drew for [url], so the viewer can reuse that decoded image. */
     internal fun modelOf(url: String): String? = slots[url]?.model
+
+    /** 卡片登记的真实宽高比，未携带尺寸字段时可先于大图解码对齐容器大小。 */
+    internal fun aspectOf(url: String): Float? = slots[url]?.aspect
 
     /** Memory cache key of the decoded thumbnail for [url], for synchronous first-frame painting. */
     internal fun cacheKeyOf(url: String): MemoryCache.Key? = slots[url]?.cacheKey ?: cacheKeys[url]
