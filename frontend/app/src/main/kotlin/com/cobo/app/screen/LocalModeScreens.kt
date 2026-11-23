@@ -31,7 +31,6 @@ import com.cobo.app.ui.NavState
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
-import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.SectionTitle
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
@@ -136,7 +135,6 @@ fun LocalHome(
                     weight = CardDefaults.GroupWeight,
                 ) {
                     uids.forEachIndexed { index, uid ->
-                        if (index > 0) PreferenceDivider()
                         LocalFollowRow(
                             user = users[uid],
                             uid = uid,
@@ -162,7 +160,6 @@ fun LocalHome(
                     cardListPosition = CardListPosition.Head,
                     onClick = { nav.push(Route.History) },
                 )
-                PreferenceDivider()
                 ArrowPreference(
                     title = "收藏",
                     modifier = Modifier.testTag("local_favorites"),
@@ -170,7 +167,6 @@ fun LocalHome(
                     cardListPosition = CardListPosition.Middle,
                     onClick = { nav.push(Route.Favorites) },
                 )
-                PreferenceDivider()
                 ArrowPreference(
                     title = "话题 / 超话",
                     modifier = Modifier.testTag("local_topic"),

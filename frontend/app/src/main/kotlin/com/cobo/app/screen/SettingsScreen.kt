@@ -74,7 +74,6 @@ import com.cobo.app.ui.accentColorSummary
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
-import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.SectionTitle
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.formatHexColor
@@ -330,7 +329,6 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Head,
                 onClick = { state.darkMode = App.settings.cycleDarkMode() },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "强调色",
                 modifier = Modifier.testTag("settings_accent_color"),
@@ -348,14 +346,13 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickAccentColor = true },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "字号",
                 modifier = Modifier.testTag("settings_font"),
                 summary = "${(state.fontScale * 100).toInt()}%",
+                cardListPosition = CardListPosition.Middle,
                 onClick = { state.fontScale = App.settings.cycleFontScale() },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "预测性返回手势设置",
                 summary = if (App.settings.predictiveBack) "已开启" else "已关闭",
@@ -363,7 +360,6 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { nav.push(Route.PredictiveBackSettings) },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.blurEffects,
                 onCheckedChange = {
@@ -375,7 +371,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_blur"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.allowLandscape,
                 onCheckedChange = {
@@ -387,7 +382,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_allow_landscape"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.profileShowStatuses,
                 onCheckedChange = {
@@ -403,7 +397,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_profile_show_statuses"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "搜索面板动画",
                 modifier = Modifier.testTag("settings_search_panel_anim"),
@@ -411,7 +404,6 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickSearchPanelAnimation = true },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "底栏左下角按钮",
                 modifier = Modifier.testTag("settings_bottom_left_action"),
@@ -419,7 +411,6 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickBottomLeftAction = true },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "浏览图片",
                 modifier = Modifier.testTag("settings_image_browse_quality"),
@@ -427,7 +418,6 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickImageBrowseQuality = true },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = App.settings.livePhotoAutoPlay,
                 onCheckedChange = { App.settings.applyLivePhotoAutoPlay(it) },
@@ -436,7 +426,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_live_photo_auto_play"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = App.settings.livePhotoSound,
                 onCheckedChange = { App.settings.applyLivePhotoSound(it) },
@@ -445,7 +434,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_live_photo_sound"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.inAppBrowser,
                 onCheckedChange = {
@@ -457,7 +445,6 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_in_app_browser"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.confirmLike,
                 onCheckedChange = {
@@ -500,7 +487,6 @@ private fun LazyListScope.feedSettingsItems(
                 cardListPosition = CardListPosition.Head,
                 onClick = { state.pickFeedLeft = true },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "微博中间栏",
                 modifier = Modifier.testTag("settings_feed_center_tab"),
@@ -508,7 +494,6 @@ private fun LazyListScope.feedSettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickFeedCenter = true },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "微博右侧栏",
                 modifier = Modifier.testTag("settings_feed_right_tab"),
@@ -516,7 +501,6 @@ private fun LazyListScope.feedSettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickFeedRight = true },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.collapseFollowGroups,
                 onCheckedChange = {
@@ -528,7 +512,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_collapse_follow_groups"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "搜索页热搜榜单",
                 modifier = Modifier.testTag("settings_hot_boards"),
@@ -536,7 +519,6 @@ private fun LazyListScope.feedSettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickHotBoards = true },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.reverseBrowse,
                 onCheckedChange = {
@@ -548,7 +530,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_reverse_browse"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.feedCardFrame,
                 onCheckedChange = {
@@ -564,7 +545,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_feed_card_frame"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.detailCardFrame,
                 onCheckedChange = {
@@ -580,7 +560,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_detail_card_frame"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.showVipLevel,
                 onCheckedChange = {
@@ -592,7 +571,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_show_vip_level"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.showFanLevel,
                 onCheckedChange = {
@@ -604,7 +582,6 @@ private fun LazyListScope.feedSettingsItems(
                 modifier = Modifier.testTag("settings_show_fan_level"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.showVerifiedBadge,
                 onCheckedChange = {
@@ -650,7 +627,6 @@ private fun LazyListScope.accountSettingsItems(
                 cardListPosition = CardListPosition.Head,
                 onClick = { nav.push(Route.Accounts) },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.quickSwitchAccount,
                 onCheckedChange = {
@@ -662,7 +638,6 @@ private fun LazyListScope.accountSettingsItems(
                 modifier = Modifier.testTag("settings_quick_switch_account"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.profileTabAvatar,
                 onCheckedChange = {
@@ -676,15 +651,13 @@ private fun LazyListScope.accountSettingsItems(
             )
             // 纯本地模式一律用访客身份取数，没有账号可选。
             if (!state.guest) {
-                PreferenceDivider()
                 ArrowPreference(
                     title = "本地关注使用账号",
                     modifier = Modifier.testTag("settings_local_follow"),
                     summary = localFollowSummary,
-                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Middle,
+                    cardListPosition = CardListPosition.Middle,
                     onClick = { state.pickLocalFollow = true },
                 )
-                PreferenceDivider()
                 ArrowPreference(
                     title = "同步本地收藏",
                     summary = if (state.syncingLocalFavorites) {
@@ -693,7 +666,7 @@ private fun LazyListScope.accountSettingsItems(
                         "将微博收藏复制到本地收藏"
                     },
                     modifier = Modifier.testTag("settings_sync_local_favorites"),
-                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.None else CardListPosition.Tail,
+                    cardListPosition = if (includeLibraryShortcuts) CardListPosition.Middle else CardListPosition.Tail,
                     onClick = {
                         if (!state.syncingLocalFavorites) {
                             state.syncingLocalFavorites = true
@@ -708,37 +681,35 @@ private fun LazyListScope.accountSettingsItems(
                 )
             }
             if (includeLibraryShortcuts) {
-                PreferenceDivider()
                 ArrowPreference(
                     title = "草稿箱",
                     modifier = Modifier.testTag("settings_drafts"),
                     summary = "${App.store.drafts().size} 条草稿",
+                    cardListPosition = CardListPosition.Middle,
                     onClick = { nav.push(Route.Drafts) },
                 )
-                PreferenceDivider()
                 ArrowPreference(
                     title = "浏览历史",
                     modifier = Modifier.testTag("settings_history"),
                     summary = "${App.store.history().size} 条记录",
+                    cardListPosition = CardListPosition.Middle,
                     onClick = { nav.push(Route.History) },
                 )
                 // 本地收藏全局共用，纯本地模式下同样可直接打开。
-                PreferenceDivider()
                 ArrowPreference(
                     title = "收藏",
                     modifier = Modifier.testTag("settings_favorites"),
                     summary = "${App.repo.localFavoriteIds.size} 条收藏",
+                    cardListPosition = CardListPosition.Middle,
                     onClick = { nav.push(Route.Favorites) },
                 )
-                PreferenceDivider()
                 ArrowPreference(
                     title = "话题 / 超话",
                     modifier = Modifier.testTag("settings_topic"),
-                    cardListPosition = if (state.guest) CardListPosition.Tail else CardListPosition.None,
+                    cardListPosition = if (state.guest) CardListPosition.Tail else CardListPosition.Middle,
                     onClick = { nav.push(Route.Topic()) },
                 )
                 if (!state.guest) {
-                    PreferenceDivider()
                     ArrowPreference(
                         title = "附近",
                         modifier = Modifier.testTag("settings_nearby"),
@@ -774,14 +745,12 @@ private fun LazyListScope.updateSettingsItems(
                 cardListPosition = CardListPosition.Head,
                 onClick = { scope.launch { App.checkUpdate(manual = true) } },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "更新日志",
                 modifier = Modifier.testTag("settings_changelog"),
                 cardListPosition = CardListPosition.Middle,
                 onClick = { nav.push(Route.Changelog) },
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.autoCheckUpdate,
                 onCheckedChange = {
@@ -792,7 +761,6 @@ private fun LazyListScope.updateSettingsItems(
                 modifier = Modifier.testTag("settings_auto_update"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.acceptPrerelease,
                 onCheckedChange = {
@@ -803,7 +771,6 @@ private fun LazyListScope.updateSettingsItems(
                 modifier = Modifier.testTag("settings_prerelease"),
                 cardListPosition = CardListPosition.Middle,
             )
-            PreferenceDivider()
             SwitchPreference(
                 checked = state.inAppUpdate,
                 onCheckedChange = {
@@ -849,7 +816,6 @@ private fun LazyListScope.otherSettingsItems(
                     state.message = "已清理图片与内容缓存"
                 },
             )
-            PreferenceDivider()
             ArrowPreference(
                 title = "关于",
                 modifier = Modifier.testTag("settings_about"),
@@ -1690,7 +1656,6 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
                                 modifier = Modifier.testTag("settings_predictive_back_card_fling"),
                                 cardListPosition = CardListPosition.Head,
                             )
-                            PreferenceDivider()
                             SwitchPreference(
                                 checked = predictiveBackImageFling,
                                 onCheckedChange = {
@@ -1702,7 +1667,6 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
                                 modifier = Modifier.testTag("settings_predictive_back_image_fling"),
                                 cardListPosition = CardListPosition.Middle,
                             )
-                            PreferenceDivider()
                             SwitchPreference(
                                 checked = predictiveBackBlur,
                                 onCheckedChange = {

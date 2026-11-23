@@ -120,7 +120,6 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
-import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.ProfileEditDialog
 import com.cobo.app.ui.components.ProfileGroupDialog
 import com.cobo.app.ui.components.ProfileInfoDialog
@@ -759,9 +758,11 @@ fun ProfileContent(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
+                // 先反向抵消 FullPagePullToRefresh 的下移，再套 overScrollVertical() 的 clipToBounds()，
+                // 避免下拉时把封面顶部裁掉只剩固定高度的窄条。
+                .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) }
                 .scrollEndHaptic()
-                .overScrollVertical()
-                .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) },
+                .overScrollVertical(),
             // 封面从屏幕最顶上铺起，顶栏的玻璃直接压在封面上；顶栏的高度由封面自己让出来。
             contentPadding = PaddingValues(
                 top = 0.dp,
@@ -950,11 +951,13 @@ fun ProfileHubContent(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .scrollEndHaptic()
-                .overScrollVertical()
+                // 先反向抵消 FullPagePullToRefresh 的下移，再套 overScrollVertical() 的 clipToBounds()，
+                // 避免下拉时把封面顶部裁掉只剩固定高度的窄条。
                 .let {
                     if (guest) it else it.offset { IntOffset(0, -pullState.dragOffset.roundToInt()) }
-                },
+                }
+                .scrollEndHaptic()
+                .overScrollVertical(),
             contentPadding = PaddingValues(
                 top = if (guest) topInset + 14.dp else 0.dp,
                 bottom = 16.dp + navBottomPadding() + extraBottom,
@@ -1053,7 +1056,6 @@ fun ProfileHubContent(
                                 if (!targetUid.isNullOrBlank()) nav.push(Route.Profile(targetUid))
                             },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "我的收藏",
                             startAction = { HubRowIcon(MeIcons.Favorites) },
@@ -1062,7 +1064,6 @@ fun ProfileHubContent(
                             modifier = Modifier.testTag("hub_favorites"),
                             onClick = { nav.push(Route.Favorites) },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "我赞过的",
                             startAction = { HubRowIcon(MeIcons.MyLikes) },
@@ -1071,7 +1072,6 @@ fun ProfileHubContent(
                             modifier = Modifier.testTag("hub_my_likes"),
                             onClick = { nav.push(Route.MyLikes) },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "收到的赞",
                             startAction = { HubRowIcon(MeIcons.ReceivedLikes) },
@@ -1080,7 +1080,6 @@ fun ProfileHubContent(
                             modifier = Modifier.testTag("hub_received_likes"),
                             onClick = { nav.push(Route.Notifications(NotificationTab.Like)) },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "收到的评论",
                             startAction = { HubRowIcon(MeIcons.ReceivedComments) },
@@ -1089,7 +1088,6 @@ fun ProfileHubContent(
                             modifier = Modifier.testTag("hub_received_comments"),
                             onClick = { nav.push(Route.Notifications(NotificationTab.Comment)) },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "发出的评论",
                             startAction = { HubRowIcon(MeIcons.SentComments) },
@@ -1120,7 +1118,6 @@ fun ProfileHubContent(
                             modifier = Modifier.testTag("local_favorites"),
                             onClick = { nav.push(Route.Favorites) },
                         )
-                        PreferenceDivider()
                     }
                     ArrowPreference(
                         title = "草稿箱",
@@ -1130,7 +1127,6 @@ fun ProfileHubContent(
                         modifier = Modifier.testTag("hub_drafts"),
                         onClick = { nav.push(Route.Drafts) },
                     )
-                    PreferenceDivider()
                     ArrowPreference(
                         title = "浏览历史",
                         startAction = { HubRowIcon(MeIcons.History) },
@@ -1139,7 +1135,6 @@ fun ProfileHubContent(
                         modifier = Modifier.testTag("hub_history"),
                         onClick = { nav.push(Route.History) },
                     )
-                    PreferenceDivider()
                     ArrowPreference(
                         title = "话题 / 超话",
                         startAction = { HubRowIcon(MeIcons.Topic) },
@@ -1149,7 +1144,6 @@ fun ProfileHubContent(
                         onClick = { nav.push(Route.Topic()) },
                     )
                     if (!guest) {
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "附近",
                             startAction = { HubRowIcon(MeIcons.Nearby) },
@@ -1173,7 +1167,6 @@ fun ProfileHubContent(
                 ) {
                     val groups = SettingsGroup.entries
                     groups.forEachIndexed { index, group ->
-                        if (index > 0) PreferenceDivider()
                         val pos = when (index) {
                             0 -> CardListPosition.Head
                             groups.lastIndex -> CardListPosition.Tail

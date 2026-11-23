@@ -37,7 +37,6 @@ import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.components.BackIconButton
-import com.cobo.app.ui.components.PreferenceDivider
 import com.cobo.app.ui.components.SectionTitle
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.glassBarContentTop
@@ -202,7 +201,6 @@ fun AboutScreen(nav: NavState) {
                             cardListPosition = CardListPosition.Head,
                             onClick = { openExternalUrl(context, "https://github.com/Costben/COBO") },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "检查更新",
                             summary = if (App.checkingUpdate) "正在检查…" else "当前版本 $versionName",
@@ -210,7 +208,6 @@ fun AboutScreen(nav: NavState) {
                             cardListPosition = CardListPosition.Middle,
                             onClick = { scope.launch { App.checkUpdate(manual = true) } },
                         )
-                        PreferenceDivider()
                         ArrowPreference(
                             title = "更新日志",
                             summary = "查看历史版本与发布说明",
@@ -300,7 +297,6 @@ private fun UpstreamGroupCard(
                 index == items.lastIndex -> CardListPosition.Tail
                 else -> CardListPosition.Middle
             }
-            if (index > 0) PreferenceDivider()
             ArrowPreference(
                 title = item.title,
                 summary = item.summary,
