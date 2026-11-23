@@ -272,4 +272,78 @@ class CommentPicsTest {
         assertTrue(shouldShowCommentMemberBadge(Membership.Vip, nonVipBadge, showFanLevel = true))
         assertFalse(shouldShowCommentMemberBadge(Membership.None, emptyList(), showFanLevel = true))
     }
+
+    @Test
+    fun parsesClientReplyCommentPicIdAndUrlStructShortUrlFallback() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "idstr": "5000000000000010",
+                  "text": "看看图 http://t.cn/A6clientImg",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "url_struct": [
+                    {
+                      "short_url": "http://t.cn/A6clientImg",
+                      "ori_url": "sinaweibo://commentimage?compic=1",
+                      "url_title": "网页链接",
+                      "url_type_pic": "https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_photo_default.png"
+                    }
+                  ],
+                  "reply_comment": {
+                    "idstr": "5000000000000011",
+                    "text": "被引用图评",
+                    "created_at": "Thu Nov 20 11:55:00 +0800 2025",
+                    "pic": "http://wx2.sinaimg.cn/thumb180/006ABCdefgy1p.jpg"
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(
+            listOf("http://t.cn/A6clientImg"),
+            com.cobo.app.ui.extractResolvablePhotoLinksFromHtml(comment.textHtml),
+        )
+        val quoted = comment.reply!!
+        assertEquals("5000000000000011", quoted.id)
+        assertEquals("https://wx2.sinaimg.cn/thumb180/006ABCdefgy1p.jpg", quoted.pics[0].thumb)
+        assertEquals("https://wx2.sinaimg.cn/large/006ABCdefgy1p.jpg", quoted.pics[0].large)
+    }
+
+    @Test
+    fun extractsInlineUrlStructPicInfosOnRepostAndComment() {
+        val status = Status.from(
+            JSONObject(
+                """
+                {
+                  "id": "5000000000000020",
+                  "text": "转发配图 http://t.cn/A6repostImg",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "url_struct": [
+                    {
+                      "short_url": "http://t.cn/A6repostImg",
+                      "url_title": "查看图片",
+                      "pic_infos": {
+                        "006ABCdefgy1q": {
+                          "bmiddle": {"url": "https://wx3.sinaimg.cn/orj360/006ABCdefgy1q.jpg"},
+                          "large": {"url": "https://wx3.sinaimg.cn/large/006ABCdefgy1q.jpg"}
+                        }
+                      }
+                    }
+                  ],
+                  "retweeted_status": {
+                    "id": "5000000000000019",
+                    "text": "原博",
+                    "created_at": "Thu Nov 20 11:00:00 +0800 2025"
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, status.pics.size)
+        assertEquals("https://wx3.sinaimg.cn/orj360/006ABCdefgy1q.jpg", status.pics[0].thumb)
+        assertEquals("https://wx3.sinaimg.cn/large/006ABCdefgy1q.jpg", status.pics[0].large)
+    }
 }

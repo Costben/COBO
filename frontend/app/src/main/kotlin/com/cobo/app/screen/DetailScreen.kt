@@ -321,6 +321,15 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         }
     }
 
+    val likeVersion = App.repo.likeVersion
+    LaunchedEffect(id, likeVersion) {
+        val current = status ?: return@LaunchedEffect
+        val event = App.repo.statusLikeEvents[current.id] ?: return@LaunchedEffect
+        if (current.liked != event.liked || current.attitudes != event.attitudes) {
+            status = current.copy(liked = event.liked, attitudes = event.attitudes)
+        }
+    }
+
     LaunchedEffect(listState, comments.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
@@ -383,13 +392,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             onLike = {
                                 val s = status ?: return@StatusCard
                                 scope.launch {
-                                    if (!App.confirmLike(s.liked)) return@launch
-                                    runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
-                                        status = s.copy(
-                                            liked = !s.liked,
-                                            attitudes = (s.attitudes + if (s.liked) -1 else 1).coerceAtLeast(0),
-                                        )
-                                    }.onFailure { App.toast(it.message ?: "操作失败") }
+                                    App.toggleStatusLike(s)?.let { status = it }
                                 }
                             },
                             showActions = false,
@@ -507,9 +510,11 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         val at = comments.indexOfFirst { it.id == comment.id }
                         if (at < 0) return@CommentCard
                         val current = comments[at]
+                        if (App.repo.isCommentLikeInFlight(current.id)) return@CommentCard
                         scope.launch {
                             // 先问再改：确认框弹着的这段时间列表可能刷新过，回来重新找一遍位置。
                             if (!App.confirmLike(current.liked)) return@launch
+                            if (App.repo.isCommentLikeInFlight(current.id)) return@launch
                             val now = comments.indexOfFirst { it.id == current.id }
                             if (now < 0) return@launch
                             comments[now] = current.copy(
@@ -635,13 +640,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         onClick = {
                             val s = status ?: return@DetailFloatingToolbarItem
                             scope.launch {
-                                if (!App.confirmLike(s.liked)) return@launch
-                                runCatching { App.repo.like(s.id, s.liked) }.onSuccess {
-                                    status = s.copy(
-                                        liked = !s.liked,
-                                        attitudes = (s.attitudes + if (s.liked) -1 else 1).coerceAtLeast(0),
-                                    )
-                                }.onFailure { App.toast(it.message ?: "操作失败") }
+                                App.toggleStatusLike(s)?.let { status = it }
                             }
                         },
                         modifier = Modifier.testTag("detail_like"),
@@ -1089,9 +1088,11 @@ private fun CommentCard(    comment: Comment,
         val at = replies.indexOfFirst { it.id == reply.id }
         if (at < 0) return
         val current = replies[at]
+        if (App.repo.isCommentLikeInFlight(current.id)) return
         scope.launch {
             // 同上：先问再改，确认期间列表可能刷新，回来重新找一遍位置。
             if (!App.confirmLike(current.liked)) return@launch
+            if (App.repo.isCommentLikeInFlight(current.id)) return@launch
             val now = replies.indexOfFirst { it.id == current.id }
             if (now < 0) return@launch
             replies[now] = current.copy(

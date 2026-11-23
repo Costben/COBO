@@ -18,11 +18,13 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
+import com.cobo.app.data.Status
 import com.cobo.app.data.Store
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.data.User
 import com.cobo.app.data.WeiboEmojiBitmaps
+import kotlinx.coroutines.CancellationException
 
 class CoboApplication : Application() {
     override fun onCreate() {
@@ -255,6 +257,27 @@ object App {
 
     fun answerLikeConfirm(confirmed: Boolean) {
         pendingLikeConfirm?.complete(confirmed)
+    }
+
+    /**
+     * 统一执行微博点赞/取消赞：防重复点击、询问点赞前确认、成功后同步所有列表状态，失败弹出可读提示。
+     */
+    suspend fun toggleStatusLike(status: Status): Status? {
+        if (status.id.isBlank() || repo.isLikeInFlight(status.id)) return null
+        if (!confirmLike(status.liked)) return null
+        if (repo.isLikeInFlight(status.id)) return null
+        return try {
+            repo.like(status.id, status.liked)
+            val nextLiked = !status.liked
+            val nextAttitudes = (status.attitudes + if (status.liked) -1 else 1).coerceAtLeast(0)
+            repo.recordStatusLike(status.id, nextLiked, nextAttitudes)
+            status.copy(liked = nextLiked, attitudes = nextAttitudes)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            toast(t.message ?: "操作失败")
+            null
+        }
     }
 
     fun init(context: Context) {

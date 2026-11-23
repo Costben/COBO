@@ -26,6 +26,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -245,6 +246,7 @@ class FeedStore(
 
     // 静默加载与主动刷新分开：只有后者驱动下拉动画，切 tab 触发的首次加载不播。
     private var fetching = false
+    internal var lastAppliedLikeSeq: Long = if (App.isRepoReady()) App.repo.currentLikeSeq() else 0L
 
     /**
      * 所有取数排同一队。
@@ -371,6 +373,7 @@ class FeedStore(
             }
             sinceId = page.sinceId
             end = unique.isEmpty()
+            lastAppliedLikeSeq = if (App.isRepoReady()) App.repo.currentLikeSeq() else 0L
             loaded = true
             // 这次是真的拉回来了，列表不再代表「上次的快照」，后面的刷新该照常回顶。
             resumed = false
@@ -553,19 +556,18 @@ class FeedStore(
     suspend fun like(index: Int) {
         if (readOnly) return
         val status = items.getOrNull(index) ?: return
-        if (!App.confirmLike(status.liked)) return
-        runCatching { App.repo.like(status.id, status.liked) }
-            .onSuccess {
-                val currentIdx = items.indexOfFirst { it.id == status.id }
-                if (currentIdx >= 0) {
-                    val latest = items[currentIdx]
-                    items[currentIdx] = latest.copy(
-                        liked = !latest.liked,
-                        attitudes = (latest.attitudes + if (latest.liked) -1 else 1).coerceAtLeast(0),
-                    )
-                }
-            }
-            .onFailure { App.toast(it.message ?: "操作失败") }
+        val updated = App.toggleStatusLike(status) ?: return
+        val currentIdx = items.indexOfFirst { it.id == status.id }
+        if (currentIdx >= 0) {
+            items[currentIdx] = updated
+        }
+        lastAppliedLikeSeq = if (App.isRepoReady()) App.repo.currentLikeSeq() else 0L
+    }
+
+    internal fun syncLikedStatuses(events: Map<String, com.cobo.app.data.Repo.StatusLikeEvent>) {
+        if (events.isEmpty()) return
+        val maxSeq = applyLikeEventsToList(items, events, lastAppliedLikeSeq)
+        if (maxSeq > lastAppliedLikeSeq) lastAppliedLikeSeq = maxSeq
     }
 }
 
@@ -810,6 +812,7 @@ fun SyncDeletedStatuses(store: FeedStore) {
             store.removeDeleted(App.repo.deletedStatusIds)
         }
     }
+    SyncLikedStatuses(store)
 }
 
 @Composable
@@ -821,6 +824,61 @@ fun SyncDeletedStatuses(items: SnapshotStateList<Status>) {
             items.removeAll { it.id in deleted || (it.mid.isNotBlank() && it.mid in deleted) }
         }
     }
+    SyncLikedStatuses(items)
+}
+
+@Composable
+fun SyncLikedStatuses(store: FeedStore) {
+    val version = App.repo.likeVersion
+    LaunchedEffect(store, version) {
+        store.syncLikedStatuses(App.repo.statusLikeEvents)
+    }
+}
+
+@Composable
+fun SyncLikedStatuses(vararg lists: SnapshotStateList<Status>) {
+    val version = App.repo.likeVersion
+    var appliedSeq by remember(*lists) { mutableLongStateOf(App.repo.currentLikeSeq()) }
+    LaunchedEffect(*lists, version) {
+        val events = App.repo.statusLikeEvents
+        if (events.isEmpty()) return@LaunchedEffect
+        var maxSeq = appliedSeq
+        for (items in lists) {
+            maxSeq = maxOf(maxSeq, applyLikeEventsToList(items, events, appliedSeq))
+        }
+        if (maxSeq > appliedSeq) appliedSeq = maxSeq
+    }
+}
+
+private fun applyLikeEventsToList(
+    items: MutableList<Status>,
+    events: Map<String, com.cobo.app.data.Repo.StatusLikeEvent>,
+    sinceSeq: Long,
+): Long {
+    var maxSeq = sinceSeq
+    for (idx in items.indices) {
+        val current = items[idx]
+        val event = events[current.id]?.takeIf { it.seq > sinceSeq }
+        val retweet = current.retweeted
+        val retweetEvent = retweet?.let { rt -> events[rt.id]?.takeIf { it.seq > sinceSeq } }
+        if (event == null && retweetEvent == null) continue
+        if (event != null && event.seq > maxSeq) maxSeq = event.seq
+        if (retweetEvent != null && retweetEvent.seq > maxSeq) maxSeq = retweetEvent.seq
+        val nextRetweeted = if (retweetEvent != null) {
+            retweet.copy(
+                liked = retweetEvent.liked,
+                attitudes = retweetEvent.attitudes,
+            )
+        } else {
+            retweet
+        }
+        items[idx] = current.copy(
+            liked = event?.liked ?: current.liked,
+            attitudes = event?.attitudes ?: current.attitudes,
+            retweeted = nextRetweeted,
+        )
+    }
+    return maxOf(maxSeq, events.values.maxOfOrNull { it.seq } ?: maxSeq)
 }
 
 @Composable

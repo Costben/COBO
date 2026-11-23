@@ -46,6 +46,9 @@ private const val CLIENT_REFRESH_COOLDOWN_MS = 60_000L
 /** 同一条微博两次点赞之间的最小间隔，低于这个值基本只会换来 20016。 */
 private const val LIKE_COOLDOWN_MS = 1500L
 
+/** 连续跨帖点赞的最小间隔，避免快速滑屏连赞把微博频控打满。 */
+private const val LIKE_PACING_MS = 400L
+
 /** 特别关注名单缓存时间：名单变动不频繁，翻页时不必每页重拉。 */
 private const val SPECIAL_UIDS_TTL_MS = 5 * 60 * 1000L
 
@@ -309,6 +312,36 @@ class Repo(private val context: Context, private val store: Store) {
     var deletedVersion by mutableIntStateOf(0)
         private set
 
+    data class StatusLikeEvent(
+        val id: String,
+        val liked: Boolean,
+        val attitudes: Int,
+        val seq: Long,
+    )
+
+    val statusLikeEvents = mutableStateMapOf<String, StatusLikeEvent>()
+
+    var likeVersion by mutableIntStateOf(0)
+        private set
+
+    private var likeEventSeq: Long = 0L
+
+    fun currentLikeSeq(): Long = likeEventSeq
+
+    fun recordStatusLike(id: String, liked: Boolean, attitudes: Int) {
+        if (id.isBlank()) return
+        if (statusLikeEvents.size > 400) {
+            statusLikeEvents.entries
+                .sortedBy { it.value.seq }
+                .take(100)
+                .map { it.key }
+                .forEach { statusLikeEvents.remove(it) }
+        }
+        val seq = ++likeEventSeq
+        statusLikeEvents[id] = StatusLikeEvent(id, liked, attitudes, seq)
+        likeVersion++
+    }
+
     @Volatile
     private var cachedEmotionSections: List<EmojiSection> = emptyList()
 
@@ -567,6 +600,7 @@ class Repo(private val context: Context, private val store: Store) {
 
     fun logout() {
         resetAccountCaches(clearGroupTabs = true, clearSnapshotsAndScrolls = true)
+        ClientLogin.resetValidator()
         store.clearSession()
         session = null
     }
@@ -609,6 +643,8 @@ class Repo(private val context: Context, private val store: Store) {
         clientMobileRejectedAt = 0L
         hotflowCommentIds.clear()
         hotflowReplyCids.clear()
+        statusLikeEvents.clear()
+        likeVersion++
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -1933,8 +1969,20 @@ class Repo(private val context: Context, private val store: Store) {
     private val photoPageCache = java.util.concurrent.ConcurrentHashMap<String, List<Pic>>()
     private val inlineLinkPicsCache = java.util.concurrent.ConcurrentHashMap<String, List<Pic>>()
 
+    private fun cookieForHost(host: String): String? {
+        val lower = host.lowercase()
+        return if (lower == "weibo.com" || lower.endsWith(".weibo.com")) {
+            desktopCookieOrNull()?.takeIf { it.isNotBlank() } ?: cookie()
+        } else {
+            cookie()
+        }
+    }
+
+    private fun hostOf(url: String): String =
+        runCatching { java.net.URI(url).host.orEmpty().lowercase() }.getOrDefault("")
+
     suspend fun resolveShortUrl(url: String): String =
-        runCatching { Api.resolveRedirect(url, cookie()) }.getOrDefault(url)
+        runCatching { Api.resolveRedirect(url, cookie(), ::cookieForHost) }.getOrDefault(url)
 
     /** 同步读取已解析过的内联图片缓存；只要全部链接都有缓存就立即返回（避免列表滚动时反复闪动）。 */
     fun cachedInlineImageLinks(urls: List<String>): List<Pic>? {
@@ -1967,7 +2015,10 @@ class Repo(private val context: Context, private val store: Store) {
                     com.cobo.app.ui.isWeiboPhotoPageLink(afterShort) -> resolveWeiboPhotoPics(afterShort)
                     else -> emptyList()
                 }
-                inlineLinkPicsCache[raw] = fetched
+                // 失败或暂时拿到空列表时不写永久缓存，避免单次 Cookie 失效或超时后整场再也不重试。
+                if (fetched.isNotEmpty()) {
+                    inlineLinkPicsCache[raw] = fetched
+                }
                 fetched
             }
             resolvedPics.forEach { pic -> out.putIfAbsent(pic.large, pic) }
@@ -1993,6 +2044,9 @@ class Repo(private val context: Context, private val store: Store) {
             photoPageCache[target] = pics
             return pics
         }
+        if (isClientChannel() && session?.loggedIn != true) {
+            runCatching { ensureClientSession() }
+        }
         val redirected = resolveShortUrl(target)
         if (com.cobo.app.ui.isImageLink(redirected)) {
             val normalized = normalizeWeiboMediaUrl(redirected)
@@ -2010,8 +2064,29 @@ class Repo(private val context: Context, private val store: Store) {
             photoPageCache[target] = pics
             return pics
         }
-        val html = runCatching { Api.getHtml(redirected, cookie()) }.getOrNull().orEmpty()
-        val urls = com.cobo.app.ui.extractSinaImageUrlsFromHtml(html)
+        val host = hostOf(redirected)
+        val isDesktopHost = host == "weibo.com" || host.endsWith(".weibo.com")
+        var html = runCatching {
+            Api.getHtml(redirected, cookieForHost(host), desktop = isDesktopHost)
+        }.getOrNull().orEmpty()
+        var urls = com.cobo.app.ui.extractSinaImageUrlsFromHtml(html)
+        if (urls.isEmpty() && isClientChannel() &&
+            (html.isBlank() || html.contains("P_forbid") || html.contains("passport.weibo"))
+        ) {
+            if (runCatching { refreshClientSession(force = true, bypassCooldown = true) }.getOrDefault(false)) {
+                val retried = resolveShortUrl(target)
+                val retryHost = hostOf(retried)
+                val retryDesktop = retryHost == "weibo.com" || retryHost.endsWith(".weibo.com")
+                html = runCatching {
+                    Api.getHtml(retried, cookieForHost(retryHost), desktop = retryDesktop)
+                }.getOrNull().orEmpty()
+                urls = com.cobo.app.ui.extractSinaImageUrlsFromHtml(html)
+            }
+        }
+        if (urls.isEmpty() && isDesktopHost) {
+            val mobileHtml = runCatching { Api.getHtml(redirected, cookie(), desktop = false) }.getOrNull().orEmpty()
+            urls = com.cobo.app.ui.extractSinaImageUrlsFromHtml(mobileHtml)
+        }
         if (urls.isEmpty()) return emptyList()
         val pics = urls.map { img ->
             Pic(thumb = img, large = com.cobo.app.ui.toLargeSinaImageUrl(img))
@@ -2470,54 +2545,130 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun likeComment(id: String, liked: Boolean): Boolean {
-        if (isClientChannel()) {
-            containerPost(
-                if (liked) "like/destroy" else "like/update",
-                form = mapOf("object_id" to id, "object_type" to "comment"),
-            )
-            return true
+        if (!commentLikeInFlight.add(id)) throw ApiException("正在处理点赞，请稍候")
+        return try {
+            if (isClientChannel()) {
+                containerPost(
+                    if (liked) "like/destroy" else "like/update",
+                    form = mapOf("object_id" to id, "object_type" to "comment"),
+                )
+                true
+            } else {
+                try {
+                    postOk(
+                        if (liked) "https://m.weibo.cn/comment/dislike" else "https://m.weibo.cn/comment/like",
+                        mapOf("id" to id),
+                    )
+                } catch (e: Throwable) {
+                    if (e is CancellationException || !shouldFallbackLikeToDesktop(e) || !hasDesktopCookie()) {
+                        throw e
+                    }
+                    val body = JSONObject()
+                        .put("object_id", id)
+                        .put("object_type", "comment")
+                        .toString()
+                    checkDesktopOk(
+                        desktopPost(
+                            if (liked) "/ajax/statuses/destroyLike" else "/ajax/statuses/updateLike",
+                            json = body,
+                        ),
+                        "操作失败",
+                    )
+                    true
+                }
+            }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            throw ApiException(formatLikeErrorMessage(t), (t as? ApiException)?.errno)
+        } finally {
+            commentLikeInFlight.remove(id)
         }
-        return postOk(
-            if (liked) "https://m.weibo.cn/comment/dislike" else "https://m.weibo.cn/comment/like",
-            mapOf("id" to id),
-        )
     }
 
     /** 同一条微博连点两下会连着打两次接口，微博随即回 20016「update weibo too fast!」。 */
     private val likeBusy = java.util.Collections.synchronizedMap(HashMap<String, Long>())
+    private val likeInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val commentLikeInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val likeRateLock = Mutex()
+
+    @Volatile
+    private var lastLikeApiAt: Long = 0L
+
+    fun isLikeInFlight(id: String): Boolean = id.isNotBlank() && likeInFlight.contains(id)
+
+    fun isCommentLikeInFlight(id: String): Boolean = id.isNotBlank() && commentLikeInFlight.contains(id)
+
+    private fun hasDesktopCookie(): Boolean {
+        val active = session ?: return false
+        if (!hasSession()) return false
+        val header = CookieVault.desktopAuthHeader(active.cookies, CookieVault.WEIBO_COM)
+            .ifBlank { active.cookie }
+        return header.contains("SUB=")
+    }
+
+    private suspend fun performLike(id: String, liked: Boolean) {
+        if (isClientChannel()) {
+            containerPost(
+                if (liked) "like/cancel_like" else "like/set_like",
+                form = mapOf("id" to id),
+            )
+            return
+        }
+        try {
+            postOk(
+                if (liked) "https://m.weibo.cn/api/attitudes/destroy"
+                else "https://m.weibo.cn/api/attitudes/create",
+                if (liked) mapOf("id" to id) else mapOf("id" to id, "attitude" to "heart"),
+            )
+        } catch (e: Throwable) {
+            if (e is CancellationException || !shouldFallbackLikeToDesktop(e) || !hasDesktopCookie()) {
+                throw e
+            }
+            val body = JSONObject().put("id", id).toString()
+            checkDesktopOk(
+                desktopPost(
+                    if (liked) "/ajax/statuses/cancelLike" else "/ajax/statuses/setLike",
+                    json = body,
+                ),
+                "操作失败",
+            )
+        }
+    }
 
     suspend fun like(id: String, liked: Boolean): Boolean {
-        val now = System.currentTimeMillis()
-        synchronized(likeBusy) {
-            val last = likeBusy[id]
-            if (last != null && now - last < LIKE_COOLDOWN_MS) {
-                throw ApiException("点得太快了，稍等一下")
+        if (!likeInFlight.add(id)) throw ApiException("正在处理点赞，请稍候")
+        return try {
+            likeRateLock.withLock {
+                val now = System.currentTimeMillis()
+                val sameStatusWait = synchronized(likeBusy) {
+                    val last = likeBusy[id]
+                    if (last != null) (LIKE_COOLDOWN_MS - (now - last)).coerceAtLeast(0L) else 0L
+                }
+                val pacingWait = (LIKE_PACING_MS - (now - lastLikeApiAt)).coerceAtLeast(0L)
+                val waitMs = maxOf(sameStatusWait, pacingWait)
+                if (waitMs > 0L) delay(waitMs)
+                try {
+                    performLike(id, liked)
+                } finally {
+                    val finishedAt = System.currentTimeMillis()
+                    lastLikeApiAt = finishedAt
+                    synchronized(likeBusy) { likeBusy[id] = finishedAt }
+                }
             }
-            likeBusy[id] = now
-        }
-        val ok = try {
-            if (isClientChannel()) {
-                containerPost(
-                    if (liked) "like/cancel_like" else "like/set_like",
-                    form = mapOf("id" to id),
-                )
-                true
-            } else {
-                postOk(
-                    if (liked) "https://m.weibo.cn/api/attitudes/destroy"
-                    else "https://m.weibo.cn/api/attitudes/create",
-                    if (liked) mapOf("id" to id) else mapOf("id" to id, "attitude" to "heart"),
-                )
-            }
-        } catch (e: Throwable) {
+            App.cache.invalidate(
+                Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
+                cookie(),
+            )
+            true
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
             synchronized(likeBusy) { likeBusy.remove(id) }
-            throw e
+            throw ApiException(formatLikeErrorMessage(t), (t as? ApiException)?.errno)
+        } finally {
+            likeInFlight.remove(id)
         }
-        App.cache.invalidate(
-            Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
-            cookie(),
-        )
-        return ok
     }
 
     /** 切换微博账号里的收藏状态，[favorited] 表示切换前的状态，不影响本地收藏。 */
@@ -4389,4 +4540,40 @@ internal fun resolveProfileUpdateErrorMessage(
     }
     val raw = err.message.orEmpty().trim()
     return raw.ifBlank { "修改资料失败" }
+}
+
+internal fun shouldFallbackLikeToDesktop(err: Throwable): Boolean {
+    if (err is ApiHttpException) {
+        return err.code in setOf(400, 403, 412, 418, 429, 432)
+    }
+    if (err is ApiException) {
+        val errno = err.errno.orEmpty()
+        if (errno == "-100") return false
+        val msg = err.message.orEmpty()
+        if (msg == LOGIN_REQUIRED || msg.contains("未登录")) return false
+        return errno in setOf("100005", "100006", "20016", "20031") ||
+            msg.contains("频繁") ||
+            msg.contains("too fast", ignoreCase = true) ||
+            msg.contains("非法") ||
+            msg.contains("验证") ||
+            msg == "操作失败"
+    }
+    return false
+}
+
+internal fun formatLikeErrorMessage(err: Throwable): String {
+    val errno = (err as? ApiException)?.errno.orEmpty()
+    val raw = err.message.orEmpty().trim()
+    if (errno == "20016" || raw.contains("too fast", ignoreCase = true) || raw.contains("out of limit", ignoreCase = true)) {
+        return "点赞太频繁了，请稍后再试"
+    }
+    if (errno == "20019" || raw.contains("too greedy", ignoreCase = true)) {
+        return "请勿重复操作"
+    }
+    if (err is ApiHttpException) {
+        val parsed = extractWeiboHttpErrorMessage(err.body)
+        if (parsed.isNotBlank()) return parsed
+        return if (err.code == 429) "点赞太频繁了，请稍后再试" else "操作失败（HTTP ${err.code}）"
+    }
+    return raw.ifBlank { "操作失败" }
 }

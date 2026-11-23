@@ -48,6 +48,9 @@ object ClientLogin {
     @Volatile
     private var xValidator: String = ""
 
+    @Volatile
+    private var xValidatorLoaded: Boolean = false
+
     data class Result(
         val uid: String,
         val gsid: String,
@@ -379,6 +382,13 @@ object ClientLogin {
 
     internal fun validatorHeaders(uid: String): LinkedHashMap<String, String> {
         val headers = LinkedHashMap<String, String>()
+        if (!xValidatorLoaded) {
+            xValidatorLoaded = true
+            if (xValidator.isBlank()) {
+                val persisted = runCatching { App.store.clientValidator() }.getOrDefault("")
+                if (persisted.isNotBlank()) xValidator = persisted
+            }
+        }
         val validator = xValidator
         if (validator.isNotBlank()) {
             headers["X-Log-Uid"] = uid
@@ -389,9 +399,19 @@ object ClientLogin {
     }
 
     internal fun recordValidator(value: String?) {
-        if (!value.isNullOrBlank()) {
-            xValidator = value
+        val trimmed = value?.trim().orEmpty()
+        if (trimmed.isNotBlank()) {
+            xValidatorLoaded = true
+            if (trimmed != xValidator) {
+                xValidator = trimmed
+                runCatching { App.store.saveClientValidator(trimmed) }
+            }
         }
+    }
+
+    internal fun resetValidator() {
+        xValidator = ""
+        xValidatorLoaded = false
     }
 
     internal fun putCommonParams(query: LinkedHashMap<String, String?>, from: String) {

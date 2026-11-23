@@ -293,7 +293,7 @@ private fun picOf(p: JSONObject): Pic? {
     }
     val thumbUrl = normalizeWeiboMediaUrl(url.ifBlank { videoInfo?.cover.orEmpty() })
     val largeCandidate = (large?.opt("url") as? String)?.trim()?.takeIf { it.isNotBlank() }
-        ?: if (pid.isNotBlank() && directUrl.isBlank()) "https://wx1.sinaimg.cn/large/$pid.jpg" else thumbUrl
+        ?: if (pid.isNotBlank() && directUrl.isBlank()) "https://wx1.sinaimg.cn/large/$pid.jpg" else com.cobo.app.ui.toLargeSinaImageUrl(thumbUrl)
     val largeUrl = normalizeWeiboMediaUrl(largeCandidate).ifBlank { thumbUrl }
     if (thumbUrl.isBlank() && large == null && videoInfo == null) return null
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
@@ -786,7 +786,7 @@ data class Status(
 
             // 注意：page_info.type == "23" 在微博里也是超话/网页等通用 H5 卡片类型，不能单独当作投票，
             // 否则所有带超话卡片的微博都会误显示「暂未获取到投票详情」。
-            val isVote = o.int("is_vote") == 1 ||
+            var isVote = o.int("is_vote") == 1 ||
                 page?.str("object_type") == "hudongvote" ||
                 page?.optJSONObject("card_info")?.optJSONObject("vote_object") != null ||
                 voteId != null
@@ -820,6 +820,23 @@ data class Status(
                 }
             }
 
+            // 投票后自动转发（「我投给了“...”」）或转发带投票的原博时，接口常在外层转发体与
+            // retweeted_status 上同时挂出同一个投票（或只把投票卡片挂在外层），统一归并到被转发原博，
+            // 避免外层与转发框内重复渲染两张投票卡片。
+            if (retweeted != null && isVote) {
+                val sameOrSharedVote = retweeted.isVote &&
+                    (voteId == null || retweeted.voteId == null || voteId == retweeted.voteId)
+                val hoistedVote = !retweeted.isVote && !outerOwnsPageMedia(rawText, page, retweetedObj)
+                if (sameOrSharedVote || hoistedVote) {
+                    retweeted = retweeted.copy(
+                        isVote = true,
+                        voteId = retweeted.voteId ?: voteId,
+                    )
+                    isVote = false
+                    voteId = null
+                }
+            }
+
             // 兼容同时返回 pics 与单条 page_info 视频的接口形态：把视频作为封面缩略图拼进网格。
             if (mixPics == null && pics.isNotEmpty() && video != null && video.url.isNotBlank() && pics.none { it.isVideo }) {
                 val cover = video.cover.ifBlank { pics.first().thumb }
@@ -847,8 +864,8 @@ data class Status(
                 htmlTextBase
             }
             val finalHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct)
-            if (pics.isEmpty() && mixPics == null && video == null) {
-                val inlinePics = inlinePicsFromHtml(finalHtml)
+            if (pics.isEmpty() && mixPics == null) {
+                val inlinePics = picsFromUrlStruct(mergedUrlStruct).ifEmpty { inlinePicsFromHtml(finalHtml) }
                 if (inlinePics.isNotEmpty()) pics = inlinePics
             }
 
@@ -866,7 +883,7 @@ data class Status(
                 reposts = o.int("reposts_count"),
                 comments = o.int("comments_count"),
                 attitudes = o.int("attitudes_count"),
-                liked = o.optBoolean("liked", false),
+                liked = parseStatusLiked(o),
                 favorited = o.optBoolean("favorited", false),
                 region = o.str("region_name"),
                 editCount = o.int("edit_count"),
@@ -970,11 +987,17 @@ private fun resolveShortUrlLabel(
         com.cobo.app.ui.isVideoLink(target) ||
             lowerPic.contains("timeline_card_small_video")
         )
+    val isPhotoTarget = lowerPic.contains("timeline_card_small_photo") ||
+        lowerPic.contains("card_small_photo") ||
+        com.cobo.app.ui.isWeiboPhotoPageLink(target) ||
+        com.cobo.app.ui.isImageLink(target)
     return when {
         isWeiboTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
             "微博正文"
         isLiveTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
             "微博直播"
+        isPhotoTarget && (rawTitle.isBlank() || rawTitle == "网页链接" || com.cobo.app.ui.isWeiboShortLink(rawTitle)) ->
+            "查看图片"
         rawTitle.isNotBlank() &&
             !com.cobo.app.ui.isWeiboShortLink(rawTitle) &&
             rawTitle != short &&
@@ -1112,7 +1135,7 @@ internal fun formatContainerTextToHtml(
             val long = entry.str("long_url").trim()
             val pageId = entry.str("page_id").trim()
             val rawTitle = entry.str("url_title").trim()
-            val target = when {
+            val rawTarget = when {
                 pageId.startsWith("231601") && entry.str("h5_target_url").isNotBlank() ->
                     entry.str("h5_target_url").trim()
                 pageId.startsWith("100808", ignoreCase = true) ->
@@ -1120,6 +1143,20 @@ internal fun formatContainerTextToHtml(
                 ori.isNotBlank() -> ori
                 long.isNotBlank() -> long
                 else -> short
+            }
+            // 客户端通道的「查看图片 / 评论配图」有时把 ori_url 写成无法解析的 sinaweibo://commentimage?...，
+            // 若继续覆盖 short_url 会丢失可解析的 t.cn 短链；此时保留 short_url 或提取其中携带的 pid。
+            val target = if (rawTarget.startsWith("sinaweibo://", ignoreCase = true) &&
+                com.cobo.app.ui.resolveWeiboLink(rawTarget) == null
+            ) {
+                val embeddedPid = com.cobo.app.ui.extractWeiboPhotoPid(rawTarget)
+                when {
+                    !embeddedPid.isNullOrBlank() -> "https://wx1.sinaimg.cn/large/$embeddedPid.jpg"
+                    short.startsWith("http", ignoreCase = true) -> short
+                    else -> rawTarget
+                }
+            } else {
+                rawTarget
             }
             val label = resolveShortUrlLabel(
                 rawTitle = rawTitle,
@@ -1501,7 +1538,7 @@ data class Comment(
     companion object {
         fun from(o: JSONObject?, depth: Int = 0): Comment? {
             if (o == null) return null
-            val id = o.str("id")
+            val id = o.str("id").ifBlank { o.str("idstr") }
             if (id.isBlank()) return null
             val children = if (depth < 1) o.optJSONArray("comments") else null
             val replies = if (children == null) {
@@ -1518,7 +1555,9 @@ data class Comment(
                 o.optJSONArray("url_struct"),
                 o.optJSONArray("topic_struct"),
             )
-            val parsedPics = commentPicsOf(o).ifEmpty { inlinePicsFromHtml(textHtml) }
+            val parsedPics = commentPicsOf(o)
+                .ifEmpty { picsFromUrlStruct(o.optJSONArray("url_struct")) }
+                .ifEmpty { inlinePicsFromHtml(textHtml) }
             return Comment(
                 id = id,
                 textHtml = textHtml,
@@ -1526,16 +1565,64 @@ data class Comment(
                 createdAt = o.str("created_at"),
                 // The hot list spells it `like_count`, the chronological one `like_counts`.
                 likes = if (o.has("like_count")) o.int("like_count") else o.int("like_counts"),
-                liked = o.optBoolean("liked"),
+                liked = parseCommentLiked(o),
                 pics = parsedPics,
                 badges = commentBadgesOf(o),
                 fanTier = commentFanTierOf(o),
-                reply = if (depth < 1) from(o.optJSONObject("reply"), depth + 1) else null,
+                reply = if (depth < 1) from(o.optJSONObject("reply") ?: o.optJSONObject("reply_comment"), depth + 1) else null,
                 replies = replies,
                 replyCount = o.optInt("total_number", replies.size),
             )
         }
     }
+}
+
+internal fun parseStatusLiked(o: JSONObject): Boolean =
+    o.optBoolean("liked", false) ||
+        o.int("liked") > 0 ||
+        o.int("attitudes_status") > 0
+
+internal fun parseCommentLiked(o: JSONObject): Boolean =
+    o.optBoolean("liked", false) ||
+        o.int("liked") > 0 ||
+        o.int("like_state") > 0 ||
+        o.optBoolean("isLiked", false)
+
+private fun picsFromUrlStruct(urlStruct: JSONArray?): List<Pic> {
+    if (urlStruct == null || urlStruct.length() == 0) return emptyList()
+    val out = LinkedHashMap<String, Pic>()
+    fun addPic(pic: Pic) {
+        val key = pic.large.ifBlank { pic.thumb }
+        if (key.isNotBlank()) out.putIfAbsent(key, pic)
+    }
+    for (i in 0 until urlStruct.length()) {
+        val entry = urlStruct.optJSONObject(i) ?: continue
+        picsOf(entry).forEach(::addPic)
+        entry.optJSONObject("pic")?.let(::picOf)?.let(::addPic)
+        entry.optJSONObject("pic_info")?.let(::picOf)?.let(::addPic)
+        for (field in listOf("ori_url", "long_url", "h5_target_url")) {
+            val rawUrl = entry.str(field).trim()
+            if (rawUrl.isBlank()) continue
+            val unwrapped = com.cobo.app.ui.unwrapWeiboLink(rawUrl)
+            when {
+                com.cobo.app.ui.isImageLink(unwrapped) -> {
+                    val thumb = normalizeWeiboMediaUrl(unwrapped)
+                    addPic(Pic(thumb = thumb, large = com.cobo.app.ui.toLargeSinaImageUrl(thumb)))
+                }
+                com.cobo.app.ui.isWeiboPhotoPageLink(unwrapped) -> {
+                    com.cobo.app.ui.extractWeiboPhotoPid(unwrapped)?.let { pid ->
+                        addPic(
+                            Pic(
+                                thumb = "https://wx1.sinaimg.cn/orj360/$pid.jpg",
+                                large = "https://wx1.sinaimg.cn/large/$pid.jpg",
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+    return out.values.toList()
 }
 
 private fun inlinePicsFromHtml(html: String): List<Pic> =
@@ -1564,10 +1651,21 @@ private fun commentPicsOf(o: JSONObject): List<Pic> {
     o.optJSONObject("pic_info")?.let { info ->
         picOf(info)?.let { return listOf(it) }
     }
+    val singlePid = (o.opt("pic_id") as? String)?.trim().orEmpty()
+    if (singlePid.isNotBlank() && !singlePid.equals("null", ignoreCase = true)) {
+        return listOf(
+            Pic(
+                thumb = "https://wx1.sinaimg.cn/orj360/$singlePid.jpg",
+                large = "https://wx1.sinaimg.cn/large/$singlePid.jpg",
+            ),
+        )
+    }
     val single = (o.opt("pic") as? String)?.trim().orEmpty()
     if (single.isNotBlank() && !single.equals("null", ignoreCase = true)) {
         val url = normalizeWeiboMediaUrl(single)
-        if (url.isNotBlank()) return listOf(Pic(thumb = url, large = url))
+        if (url.isNotBlank()) {
+            return listOf(Pic(thumb = url, large = com.cobo.app.ui.toLargeSinaImageUrl(url)))
+        }
     }
     return emptyList()
 }

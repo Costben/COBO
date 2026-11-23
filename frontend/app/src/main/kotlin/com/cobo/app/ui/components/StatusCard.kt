@@ -185,7 +185,11 @@ fun StatusCard(
                 lineHeight = if (compact) 20.sp else 22.sp,
             )
         }
-        if (status.isVote) {
+        val showOuterVote = status.isVote && (
+            status.retweeted?.isVote != true ||
+                (status.voteId != null && status.retweeted.voteId != null && status.voteId != status.retweeted.voteId)
+            )
+        if (showOuterVote) {
             Spacer(Modifier.height(8.dp))
             StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = keepFrame)
         }
@@ -548,8 +552,8 @@ fun StatusMedia(
         Spacer(Modifier.height(8.dp))
         VideoCard(video, compact, onVideo)
     }
-    val resolvableInlineLinks = remember(status.id, status.textHtml, status.pics, video) {
-        if (status.pics.isEmpty() && video == null) extractResolvablePhotoLinksFromHtml(status.textHtml) else emptyList()
+    val resolvableInlineLinks = remember(status.id, status.textHtml, status.pics) {
+        if (status.pics.isEmpty()) extractResolvablePhotoLinksFromHtml(status.textHtml) else emptyList()
     }
     var resolvedInlinePics by remember(status.id, resolvableInlineLinks) {
         mutableStateOf(

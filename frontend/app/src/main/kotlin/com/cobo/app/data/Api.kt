@@ -72,10 +72,15 @@ object Api {
         return builder.build().toString()
     }
 
-    private fun Request.Builder.weiboHeaders(cookie: String?, st: String? = null) = apply {
+    private fun Request.Builder.weiboHeaders(
+        cookie: String?,
+        st: String? = null,
+        includeOrigin: Boolean = false,
+    ) = apply {
         header("User-Agent", WEB_UA)
         header("Accept", "application/json")
         header("Referer", "https://m.weibo.cn/")
+        if (includeOrigin) header("Origin", "https://m.weibo.cn")
         header("X-Requested-With", "XMLHttpRequest")
         header("MWeibo-Pwa", "1")
         if (!cookie.isNullOrBlank()) header("Cookie", cookie)
@@ -263,14 +268,14 @@ object Api {
         val body = FormBody.Builder().apply {
             form.forEach { (key, value) -> add(key, value) }
         }.build()
-        execute(Request.Builder().url(url).weiboHeaders(cookie, st).post(body).build())
+        execute(Request.Builder().url(url).weiboHeaders(cookie, st, includeOrigin = true).post(body).build())
     }
 
-    suspend fun getHtml(url: String, cookie: String?): String = withContext(Dispatchers.IO) {
+    suspend fun getHtml(url: String, cookie: String?, desktop: Boolean = false): String = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", WEB_UA)
-            .header("Referer", "https://m.weibo.cn/")
+            .header("User-Agent", if (desktop) DESKTOP_UA else WEB_UA)
+            .header("Referer", if (desktop) "https://weibo.com/" else "https://m.weibo.cn/")
             .apply { if (!cookie.isNullOrBlank()) header("Cookie", cookie) }
             .get()
             .build()
@@ -280,7 +285,11 @@ object Api {
         }
     }
 
-    suspend fun resolveRedirect(url: String, cookie: String?): String = withContext(Dispatchers.IO) {
+    suspend fun resolveRedirect(
+        url: String,
+        cookie: String?,
+        cookieForHost: ((String) -> String?)? = null,
+    ): String = withContext(Dispatchers.IO) {
         val noRedirectClient = client.newBuilder().followRedirects(false).build()
         var current = com.cobo.app.ui.unwrapSinaUrl(url) ?: url
         repeat(6) {
@@ -291,12 +300,15 @@ object Api {
             }
             if (superTopicId(current) != null) return@withContext current
             val next = runCatching {
+                val host = current.toHttpUrl().host.lowercase()
+                val isDesktopHost = host == "weibo.com" || host.endsWith(".weibo.com")
+                val effectiveCookie = cookieForHost?.invoke(host) ?: cookie
                 val request = Request.Builder()
                     .url(current)
-                    .header("User-Agent", WEB_UA)
+                    .header("User-Agent", if (isDesktopHost) DESKTOP_UA else WEB_UA)
                     .apply {
-                        if (!cookie.isNullOrBlank() && CookieVault.isWeibo(current.toHttpUrl().host)) {
-                            header("Cookie", cookie)
+                        if (!effectiveCookie.isNullOrBlank() && CookieVault.isWeibo(host)) {
+                            header("Cookie", effectiveCookie)
                         }
                     }
                     .get()
@@ -364,7 +376,7 @@ object Api {
             .apply { extra.forEach { (k, v) -> addFormDataPart(k, v) } }
             .addFormDataPart(field, fileName, bytes.toRequestBody(mime.toMediaType()))
             .build()
-        execute(Request.Builder().url(url).weiboHeaders(cookie, st).post(body).build())
+        execute(Request.Builder().url(url).weiboHeaders(cookie, st, includeOrigin = true).post(body).build())
     }
 
     /**

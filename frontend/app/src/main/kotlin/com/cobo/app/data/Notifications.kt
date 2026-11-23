@@ -155,7 +155,7 @@ private fun parseNotificationPayload(container: JSONObject, tab: NotificationTab
                     targetStatus = targetStatus,
                     commentId = commentId,
                     likes = likes,
-                    liked = o.optBoolean("liked", false),
+                    liked = parseStatusLiked(o) || parseCommentLiked(o),
                 ),
             )
         }

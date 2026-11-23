@@ -192,7 +192,18 @@ class Store(private val context: Context) {
         return did
     }
 
-    fun clearSession() = file("session.json").delete()
+    fun clientValidator(): String =
+        readObject("validator.json", secret = true)?.str("validator").orEmpty()
+
+    fun saveClientValidator(validator: String) {
+        if (validator.isBlank()) return
+        write("validator.json", JSONObject().put("validator", validator), secret = true)
+    }
+
+    fun clearSession() {
+        file("session.json").delete()
+        file("validator.json").delete()
+    }
 
     /** 纯本地模式用的访客 cookie（SUB / SUBP），不对应任何账号，单独存一份免得每次启动重领。 */
     fun visitorCookie(): String? =

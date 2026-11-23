@@ -246,12 +246,13 @@ fun isImageLink(raw: String): Boolean {
 }
 
 private val PhotoPidPathRegex = Regex("""/pid/([A-Za-z0-9]{16,40})\b""", RegexOption.IGNORE_CASE)
+private val HtmlPicPidJsonRegex = Regex("""["'](?:pic_id|pid)["']\s*:\s*["']([A-Za-z0-9]{16,40})["']""")
 private val SinaImgUrlRegex = Regex(
-    """(?:https?:)?//[a-z0-9.-]*sinaimg\.(?:cn|com)/(?:large|mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>\\]*)?""",
+    """(?:https?:)?//[a-z0-9.-]*sinaimg\.(?:cn|com)/(?:large|original|woriginal|oslarge|small|square|mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>\\]*)?""",
     RegexOption.IGNORE_CASE,
 )
 private val SinaImgSizeSegmentRegex = Regex(
-    """/(?:mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/""",
+    """/(?:original|woriginal|oslarge|small|square|mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/""",
     RegexOption.IGNORE_CASE,
 )
 private val HtmlAnchorRegex = Regex(
@@ -263,7 +264,13 @@ private val AnchorHrefRegex = Regex(
     RegexOption.IGNORE_CASE,
 )
 private val HtmlTagStripRegex = Regex("""<[^>]+>""")
-private val InlinePhotoLinkLabels = setOf("查看图片", "评论配图")
+private val InlinePhotoExactLabels = setOf("查看图片", "评论配图", "查看原图", "图片评论", "转发配图", "图片")
+
+private fun isInlinePhotoLinkLabel(label: String): Boolean {
+    val trimmed = label.trim()
+    if (trimmed in InlinePhotoExactLabels) return true
+    return trimmed.startsWith("查看图片") || trimmed.startsWith("评论配图")
+}
 
 private fun unescapeHtmlAttrUrl(raw: String): String = raw
     .replace("&amp;", "&")
@@ -328,7 +335,7 @@ fun extractResolvablePhotoLinksFromHtml(html: String): List<String> {
     forEachHtmlAnchor(html) { url, label ->
         if (url.isBlank()) return@forEachHtmlAnchor
         val isPhotoPage = isWeiboPhotoPageLink(url) && extractWeiboPhotoPid(url) == null
-        val isPhotoShortLink = isWeiboShortLink(url) && label in InlinePhotoLinkLabels
+        val isPhotoShortLink = isWeiboShortLink(url) && isInlinePhotoLinkLabel(label)
         if (isPhotoPage || isPhotoShortLink) {
             out.add(normalizeProtocolUrl(url))
         }
@@ -368,7 +375,7 @@ fun toLargeSinaImageUrl(url: String): String {
     return SinaImgSizeSegmentRegex.replaceFirst(normalized, "/large/")
 }
 
-/** 从 `photo.weibo.com` 页面 HTML 中提取评论配图/相册图床直链。 */
+/** 从 `photo.weibo.com` 页面 HTML 中提取评论配图/相册图床直链，缺省时兜底 JSON 中的 `pic_id`/`pid`。 */
 fun extractSinaImageUrlsFromHtml(html: String): List<String> {
     if (html.isBlank()) return emptyList()
     val unescaped = html.replace("\\/", "/").replace("&amp;", "&")
@@ -387,6 +394,14 @@ fun extractSinaImageUrlsFromHtml(html: String): List<String> {
             else -> candidate
         }
         out.add(normalized)
+    }
+    if (out.isEmpty()) {
+        for (match in HtmlPicPidJsonRegex.findAll(unescaped)) {
+            val pid = match.groupValues[1].trim()
+            if (pid.isNotBlank()) {
+                out.add("https://wx1.sinaimg.cn/orj360/$pid.jpg")
+            }
+        }
     }
     return out.toList()
 }

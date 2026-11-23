@@ -164,4 +164,79 @@ class VoteParseTest {
         assertFalse(status!!.isVote)
         assertNull(status.voteId)
     }
+
+    @Test
+    fun voteRepostDeduplicatesSharedVoteIntoRetweetedStatus() {
+        val statusJson = JSONObject(
+            """
+            {
+                "id": "5360117360889001",
+                "mid": "5360117360889001",
+                "text": "我投给了“A.布伦特福德主场取胜”~",
+                "created_at": "Mon Nov 23 16:47:00 +0800 2026",
+                "is_vote": 1,
+                "page_info": {
+                    "object_type": "hudongvote",
+                    "card_info": {
+                        "vote_object": { "id": "2026_10794768_-_8ecd76" }
+                    }
+                },
+                "retweeted_status": {
+                    "id": "5360117360888900",
+                    "mid": "5360117360888900",
+                    "text": "你看好本场比赛是什么结果？",
+                    "created_at": "Mon Nov 23 16:13:00 +0800 2026",
+                    "is_vote": 1,
+                    "page_info": {
+                        "object_type": "hudongvote",
+                        "card_info": {
+                            "vote_object": { "id": "2026_10794768_-_8ecd76" }
+                        }
+                    }
+                }
+            }
+            """.trimIndent()
+        )
+
+        val status = Status.from(statusJson)!!
+        assertFalse(status.isVote)
+        assertNull(status.voteId)
+        assertNotNull(status.retweeted)
+        assertTrue(status.retweeted!!.isVote)
+        assertEquals("2026_10794768_-_8ecd76", status.retweeted!!.voteId)
+    }
+
+    @Test
+    fun hoistedVoteOnRepostMovesIntoRetweetedStatus() {
+        val statusJson = JSONObject(
+            """
+            {
+                "id": "5360117360889002",
+                "mid": "5360117360889002",
+                "text": "转发参与投票",
+                "created_at": "Mon Nov 23 16:50:00 +0800 2026",
+                "is_vote": 1,
+                "page_info": {
+                    "object_type": "hudongvote",
+                    "card_info": {
+                        "vote_object": { "id": "2026_99999999_-_abcdef" }
+                    }
+                },
+                "retweeted_status": {
+                    "id": "5360117360888901",
+                    "mid": "5360117360888901",
+                    "text": "原博投票",
+                    "created_at": "Mon Nov 23 16:10:00 +0800 2026"
+                }
+            }
+            """.trimIndent()
+        )
+
+        val status = Status.from(statusJson)!!
+        assertFalse(status.isVote)
+        assertNull(status.voteId)
+        assertNotNull(status.retweeted)
+        assertTrue(status.retweeted!!.isVote)
+        assertEquals("2026_99999999_-_abcdef", status.retweeted!!.voteId)
+    }
 }

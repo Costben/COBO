@@ -163,5 +163,27 @@ class LinkHandlerTest {
             ),
             extractResolvablePhotoLinksFromHtml(inlineHtml),
         )
+
+        val extraHtml = """
+            <a href="http://t.cn/A6countImg">查看图片(2)</a>
+            <a href="http://t.cn/A6plainImg">图片</a>
+        """.trimIndent()
+        assertEquals(
+            listOf("http://t.cn/A6countImg", "http://t.cn/A6plainImg"),
+            extractResolvablePhotoLinksFromHtml(extraHtml),
+        )
+
+        val scriptFallbackHtml = """
+            <script>var cfg={"pid":1}; var data={"pic_id":"006ABCdefgy1fallbackpid"};</script>
+            <img src="https://wx4.sinaimg.cn/original/006ABCdefgy1orig.jpg">
+        """.trimIndent()
+        assertEquals(
+            listOf("https://wx4.sinaimg.cn/original/006ABCdefgy1orig.jpg"),
+            extractSinaImageUrlsFromHtml(scriptFallbackHtml),
+        )
+        assertEquals(
+            listOf("https://wx1.sinaimg.cn/orj360/006ABCdefgy1fallbackpid.jpg"),
+            extractSinaImageUrlsFromHtml("""<script>var cfg={"pid":1}; var d={"pid":"006ABCdefgy1fallbackpid"};</script>"""),
+        )
     }
 }

@@ -369,7 +369,9 @@ class SearchResultsState(
 fun rememberSearchResultsState(
     scope: CoroutineScope = rememberCoroutineScope(),
 ): SearchResultsState {
-    return remember(scope) { SearchResultsState(scope) }
+    val state = remember(scope) { SearchResultsState(scope) }
+    SyncLikedStatuses(state.weibo.items, state.pictures.items, state.videos.items, state.following.items)
+    return state
 }
 
 @Composable
@@ -902,16 +904,10 @@ private fun LazyListScope.searchStatusTabItems(
                 onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
                 onLike = {
                     scope.launch {
-                        if (!App.confirmLike(status.liked)) return@launch
-                        runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
-                            val realIdx = items.indexOfFirst { it.id == status.id }
-                            if (realIdx >= 0) {
-                                val cur = items[realIdx]
-                                items[realIdx] = cur.copy(
-                                    liked = !cur.liked,
-                                    attitudes = (cur.attitudes + if (cur.liked) -1 else 1).coerceAtLeast(0),
-                                )
-                            }
+                        val updated = App.toggleStatusLike(status) ?: return@launch
+                        val realIdx = items.indexOfFirst { it.id == status.id }
+                        if (realIdx >= 0) {
+                            items[realIdx] = updated
                         }
                     }
                 },

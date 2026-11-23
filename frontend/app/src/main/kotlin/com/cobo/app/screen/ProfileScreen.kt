@@ -870,14 +870,9 @@ fun ProfileContent(
                     onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
                     onLike = {
                         scope.launch {
-                            if (!App.confirmLike(status.liked)) return@launch
-                            runCatching { App.repo.like(status.id, status.liked) }.onSuccess {
-                                tabState.items[index] = status.copy(
-                                    liked = !status.liked,
-                                    attitudes = (status.attitudes + if (status.liked) -1 else 1)
-                                        .coerceAtLeast(0),
-                                )
-                            }
+                            val updated = App.toggleStatusLike(status) ?: return@launch
+                            val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
+                            if (currentIdx >= 0) tabState.items[currentIdx] = updated
                         }
                     },
                     onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },

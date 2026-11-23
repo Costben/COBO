@@ -134,17 +134,10 @@ private class NotificationTabState(private val tab: NotificationTab) {
 
     suspend fun toggleStatusLike(index: Int) {
         val current = statuses.getOrNull(index) ?: return
-        try {
-            val nowLiked = App.repo.like(current.id, current.liked)
-            val delta = if (nowLiked == current.liked) 0 else if (nowLiked) 1 else -1
-            statuses[index] = current.copy(
-                liked = nowLiked,
-                attitudes = (current.attitudes + delta).coerceAtLeast(0),
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (t: Throwable) {
-            App.toast(t.message ?: "操作失败")
+        val updated = App.toggleStatusLike(current) ?: return
+        val realIdx = statuses.indexOfFirst { it.id == current.id }
+        if (realIdx >= 0) {
+            statuses[realIdx] = updated
         }
     }
 
@@ -236,6 +229,7 @@ fun NotificationsScreen(
                     BindScrollToTop(listState, enabled = pageIndex == pagerState.settledPage)
                     val pullState = rememberFullPagePullToRefreshState()
 
+                    SyncLikedStatuses(state.statuses)
                     LaunchedEffect(state) {
                         state.loadInitial()
                     }
