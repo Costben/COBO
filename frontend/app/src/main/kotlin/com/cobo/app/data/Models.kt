@@ -233,33 +233,46 @@ internal fun picsOf(o: JSONObject): List<Pic> {
             }
         }
     }
-    val ids = o.optJSONArray("pic_ids") ?: return emptyList()
+    val ids = o.optJSONArray("pic_ids")
     val infos = o.optJSONObject("pic_infos")
-    return buildList {
-        for (i in 0 until ids.length()) {
-            val id = ids.optString(i).orEmpty()
-            if (id.isBlank()) continue
-            val parsed = infos?.optJSONObject(id)?.let { picOf(it) }
-            if (parsed != null) {
-                add(parsed)
-            } else {
-                add(
-                    Pic(
-                        thumb = "https://wx1.sinaimg.cn/orj360/$id.jpg",
-                        large = "https://wx1.sinaimg.cn/large/$id.jpg",
-                    ),
-                )
+    if (ids != null && ids.length() > 0) {
+        return buildList {
+            for (i in 0 until ids.length()) {
+                val id = ids.optString(i).orEmpty()
+                if (id.isBlank()) continue
+                val parsed = infos?.optJSONObject(id)?.let { picOf(it) }
+                if (parsed != null) {
+                    add(parsed)
+                } else {
+                    add(
+                        Pic(
+                            thumb = "https://wx1.sinaimg.cn/orj360/$id.jpg",
+                            large = "https://wx1.sinaimg.cn/large/$id.jpg",
+                        ),
+                    )
+                }
             }
+        }
+    }
+    if (infos == null || infos.length() == 0) return emptyList()
+    return buildList {
+        val keys = infos.keys()
+        while (keys.hasNext()) {
+            val id = keys.next()
+            infos.optJSONObject(id)?.let { picOf(it) }?.let(::add)
         }
     }
 }
 
 private fun picOf(p: JSONObject): Pic? {
-    val large = p.optJSONObject("large") ?: p.optJSONObject("largest")
-    val thumbObj = p.optJSONObject("bmiddle") ?: p.optJSONObject("thumbnail")
-    val url = p.str("url")
-        .ifBlank { thumbObj?.str("url").orEmpty() }
-        .ifBlank { large?.str("url").orEmpty() }
+    val large = p.optJSONObject("large") ?: p.optJSONObject("largest") ?: p.optJSONObject("original") ?: p.optJSONObject("mw2000")
+    val thumbObj = p.optJSONObject("bmiddle") ?: p.optJSONObject("thumbnail") ?: p.optJSONObject("orj360")
+    val directUrl = (p.opt("url") as? String)?.trim().orEmpty()
+    val pid = (p.opt("pid") as? String)?.trim().orEmpty()
+    val url = directUrl
+        .ifBlank { (thumbObj?.opt("url") as? String)?.trim().orEmpty() }
+        .ifBlank { (large?.opt("url") as? String)?.trim().orEmpty() }
+        .ifBlank { if (pid.isNotBlank()) "https://wx1.sinaimg.cn/orj360/$pid.jpg" else "" }
     val videoInfo = if (p.str("type").equals("video", ignoreCase = true)) {
         p.optJSONObject("video_info")?.let { extractVideoInfo(it) } ?: run {
             val rawVideo = p.str("videoSrc").ifBlank { p.str("video") }.ifBlank { p.str("video_hd") }
@@ -278,8 +291,10 @@ private fun picOf(p: JSONObject): Pic? {
     } else {
         null
     }
-    val thumbUrl = url.ifBlank { videoInfo?.cover.orEmpty() }
-    val largeUrl = large?.str("url")?.ifBlank { thumbUrl } ?: thumbUrl
+    val thumbUrl = normalizeWeiboMediaUrl(url.ifBlank { videoInfo?.cover.orEmpty() })
+    val largeCandidate = (large?.opt("url") as? String)?.trim()?.takeIf { it.isNotBlank() }
+        ?: if (pid.isNotBlank() && directUrl.isBlank()) "https://wx1.sinaimg.cn/large/$pid.jpg" else thumbUrl
+    val largeUrl = normalizeWeiboMediaUrl(largeCandidate).ifBlank { thumbUrl }
     if (thumbUrl.isBlank() && large == null && videoInfo == null) return null
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
     return Pic(
@@ -688,6 +703,19 @@ data class Status(
 
             val mixPics = mixMediaPicsOf(o)
             var pics = mixPics ?: picsOf(o)
+            if (pics.isEmpty() && mixPics == null) {
+                val thumbSingle = normalizeWeiboMediaUrl(
+                    (o.opt("bmiddle_pic") as? String)
+                        ?: (o.opt("thumbnail_pic") as? String)
+                        ?: (o.opt("original_pic") as? String)
+                        ?: "",
+                )
+                val largeSingle = normalizeWeiboMediaUrl((o.opt("original_pic") as? String).orEmpty())
+                    .ifBlank { thumbSingle }
+                if (thumbSingle.isNotBlank()) {
+                    pics = listOf(Pic(thumb = thumbSingle, large = largeSingle))
+                }
+            }
 
             var video: VideoInfo? = null
             val page = o.optJSONObject("page_info")
@@ -818,11 +846,16 @@ data class Status(
             } else {
                 htmlTextBase
             }
+            val finalHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct)
+            if (pics.isEmpty() && mixPics == null && video == null) {
+                val inlinePics = inlinePicsFromHtml(finalHtml)
+                if (inlinePics.isNotEmpty()) pics = inlinePics
+            }
 
             return Status(
                 id = id,
                 mid = o.str("mid").ifBlank { id },
-                textHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct),
+                textHtml = finalHtml,
                 createdAt = o.str("created_at"),
                 source = stripHtml(o.str("source")),
                 user = User.from(o.optJSONObject("user")),
@@ -1338,6 +1371,8 @@ internal fun extractBigPicInfo(
         objectId.contains(":231601_")
 
     val isExplicitBigOrWbox = isBigPicCard ||
+        pageType == "photo" || objType == "photo" || objType == "picture" ||
+        com.cobo.app.ui.isWeiboPhotoPageLink(schemeUrl) ||
         pageType == "bigpic" || pageType == "big_pic" ||
         objType == "bigpic" || objType == "big_pic" ||
         pageType == "wbox" || objType == "wbox" || objType == "mini_program" ||
@@ -1478,19 +1513,21 @@ data class Comment(
                     }
                 }
             }
+            val textHtml = formatContainerTextToHtml(
+                o.str("text"),
+                o.optJSONArray("url_struct"),
+                o.optJSONArray("topic_struct"),
+            )
+            val parsedPics = commentPicsOf(o).ifEmpty { inlinePicsFromHtml(textHtml) }
             return Comment(
                 id = id,
-                textHtml = formatContainerTextToHtml(
-                    o.str("text"),
-                    o.optJSONArray("url_struct"),
-                    o.optJSONArray("topic_struct"),
-                ),
+                textHtml = textHtml,
                 user = User.from(o.optJSONObject("user")),
                 createdAt = o.str("created_at"),
                 // The hot list spells it `like_count`, the chronological one `like_counts`.
                 likes = if (o.has("like_count")) o.int("like_count") else o.int("like_counts"),
                 liked = o.optBoolean("liked"),
-                pics = commentPicsOf(o),
+                pics = parsedPics,
                 badges = commentBadgesOf(o),
                 fanTier = commentFanTierOf(o),
                 reply = if (depth < 1) from(o.optJSONObject("reply"), depth + 1) else null,
@@ -1501,6 +1538,10 @@ data class Comment(
     }
 }
 
+private fun inlinePicsFromHtml(html: String): List<Pic> =
+    com.cobo.app.ui.extractDirectImageUrlsFromHtml(html)
+        .map { (thumb, large) -> Pic(thumb = thumb, large = large) }
+
 /**
  * 评论配图。H5 的评论带 `pic_ids` + `pic_infos`（也偶尔直接给 `pics`），客户端通道只回一个
  * `pic` 字段，字符串或对象两种写法都有；都收，没图就是空表。
@@ -1508,13 +1549,27 @@ data class Comment(
 private fun commentPicsOf(o: JSONObject): List<Pic> {
     val pics = picsOf(o)
     if (pics.isNotEmpty()) return pics
-    val single = o.str("pic").trim()
-    if (single.isNotBlank()) {
-        val url = if (single.startsWith("//")) "https:$single" else single
-        return listOf(Pic(thumb = url, large = url))
+    // 优先按 JSONObject/JSONArray 解析 `pic`，不能直接调 `o.str("pic")`——JSONObject.toString() 会把对象拼成 `{"pid":...}` 当作图片地址。
+    o.optJSONObject("pic")?.let { obj ->
+        picOf(obj)?.let { return listOf(it) }
     }
-    val obj = o.optJSONObject("pic") ?: return emptyList()
-    return picOf(obj)?.let { listOf(it) } ?: emptyList()
+    o.optJSONArray("pic")?.let { arr ->
+        val parsed = buildList {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let(::picOf)?.let(::add)
+            }
+        }
+        if (parsed.isNotEmpty()) return parsed
+    }
+    o.optJSONObject("pic_info")?.let { info ->
+        picOf(info)?.let { return listOf(it) }
+    }
+    val single = (o.opt("pic") as? String)?.trim().orEmpty()
+    if (single.isNotBlank() && !single.equals("null", ignoreCase = true)) {
+        val url = normalizeWeiboMediaUrl(single)
+        if (url.isNotBlank()) return listOf(Pic(thumb = url, large = url))
+    }
+    return emptyList()
 }
 
 /**

@@ -227,6 +227,7 @@ import io.github.suqi8.coui.kmp.basic.DropdownItem
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
 import io.github.suqi8.coui.kmp.basic.IntentSlider
+import io.github.suqi8.coui.kmp.basic.IntentSliderDefaults
 import io.github.suqi8.coui.kmp.basic.IntentSliderPlaybackState
 import io.github.suqi8.coui.kmp.basic.IntentSliderSize
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
@@ -674,6 +675,7 @@ fun ImageViewerScreen(
                 ZoomableImage(
                     url = urls[page],
                     live = if (pagePic.isVideo) "" else pagePic.live,
+                    videoUrl = if (pagePic.isVideo) pagePic.videoUrl else "",
                     thumbModel = origins.modelOf(urls[page]),
                     thumbCacheKey = origins.cacheKeyOf(urls[page]),
                     original = original,
@@ -699,6 +701,16 @@ fun ImageViewerScreen(
                             chrome = true
                         }
                     },
+                    onFeedback = saver::flash,
+                    onFallbackVideoRoute = {
+                        nav.push(
+                            Route.Video(
+                                pagePic.videoUrl,
+                                pagePic.videoTitle,
+                                isLive = isWeiboLiveLink(pagePic.videoUrl),
+                            ),
+                        )
+                    },
                     onDismissRelease = { velocity, _, _ ->
                         handleDismissRelease(
                             velocity = velocity,
@@ -713,32 +725,6 @@ fun ImageViewerScreen(
                         )
                     },
                 )
-                if (pagePic.isVideo) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .clickable {
-                                nav.push(
-                                    Route.Video(
-                                        pagePic.videoUrl,
-                                        pagePic.videoTitle,
-                                        isLive = isWeiboLiveLink(pagePic.videoUrl),
-                                    ),
-                                )
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = COUIIcons.Play,
-                            contentDescription = "播放视频",
-                            modifier = Modifier.size(34.dp),
-                            tint = Color.White,
-                        )
-                    }
-                }
             }
         }
 
@@ -1100,6 +1086,7 @@ private suspend fun cacheImageFile(context: Context, url: String): File? = withC
 private fun ZoomableImage(
     url: String,
     live: String,
+    videoUrl: String = "",
     thumbModel: String?,
     thumbCacheKey: MemoryCache.Key?,
     original: Boolean,
@@ -1116,6 +1103,8 @@ private fun ZoomableImage(
     chromeVisible: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    onFeedback: (String) -> Unit = {},
+    onFallbackVideoRoute: () -> Unit = {},
     onDismissRelease: (Velocity, ComposeSize, Offset) -> Unit,
 ) {
     val context = LocalContext.current
@@ -1235,6 +1224,177 @@ private fun ZoomableImage(
     LaunchedEffect(canLivePlay) {
         if (!canLivePlay) {
             playback.onInterrupted()
+        }
+    }
+
+    // 混排图集里的视频条目：点击直接在当前看图页播放，不跳转新页面；
+    // 播放按钮与视频 TextureView 同在视觉变换层内，拖拽返回时跟着预览图一起缩放归位。
+    val hasInlineVideo = videoUrl.isNotBlank()
+    var inlineVideoActive by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineIsLive by remember(url, videoUrl) { mutableStateOf(hasInlineVideo && isWeiboLiveLink(videoUrl)) }
+    var inlineResolved by remember(url, videoUrl) {
+        mutableStateOf<ResolvedVideo?>(
+            if (hasInlineVideo && !inlineIsLive && isDirectVideoStream(videoUrl)) {
+                ResolvedVideo.DirectStream(videoUrl, referer = defaultRefererFor(videoUrl), isLive = false)
+            } else {
+                null
+            },
+        )
+    }
+    var inlineVideoPlaying by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineVideoBuffering by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineVideoReady by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineVideoMuted by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineVideoDurationMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
+    var inlineVideoPosMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
+    var inlineScrubbing by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlineScrubMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
+    val activeInlineStream = (inlineResolved as? ResolvedVideo.DirectStream)?.url.orEmpty()
+    var currentInlineStreamUrl by remember(url, activeInlineStream) { mutableStateOf(activeInlineStream) }
+
+    LaunchedEffect(hasInlineVideo, inlineVideoActive, videoUrl) {
+        if (!hasInlineVideo || !inlineVideoActive || inlineResolved != null) return@LaunchedEffect
+        val resolved = resolvePlayableVideo(videoUrl, context.cacheDir, isLiveHint = inlineIsLive)
+        when (resolved) {
+            is ResolvedVideo.DirectStream -> {
+                inlineIsLive = inlineIsLive || resolved.isLive
+                inlineResolved = resolved
+            }
+            is ResolvedVideo.WebPage -> {
+                inlineVideoActive = false
+                onFallbackVideoRoute()
+            }
+            is ResolvedVideo.Unavailable -> {
+                inlineVideoActive = false
+                onFeedback(resolved.message)
+            }
+        }
+    }
+
+    val inlineFallbackUrl = (inlineResolved as? ResolvedVideo.DirectStream)?.fallbackUrl
+    val inlineReferer = (inlineResolved as? ResolvedVideo.DirectStream)?.referer
+    val inlinePlayer = remember(hasInlineVideo, inlineVideoActive, currentInlineStreamUrl, inlineReferer) {
+        if (!hasInlineVideo || !inlineVideoActive || currentInlineStreamUrl.isBlank()) {
+            null
+        } else {
+            val effectiveReferer = inlineReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(currentInlineStreamUrl)
+            val httpFactory = DefaultHttpDataSource.Factory().apply {
+                setUserAgent(Api.WEB_UA)
+                setAllowCrossProtocolRedirects(true)
+                if (!effectiveReferer.isNullOrBlank()) {
+                    setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
+                }
+            }
+            ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, httpFactory)))
+                .build()
+                .apply {
+                    volume = if (inlineVideoMuted) 0f else 1f
+                    repeatMode = Player.REPEAT_MODE_OFF
+                    playWhenReady = true
+                    setMediaItem(MediaItem.fromUri(currentInlineStreamUrl))
+                    prepare()
+                }
+        }
+    }
+    LaunchedEffect(inlinePlayer, inlineVideoMuted) {
+        inlinePlayer?.volume = if (inlineVideoMuted) 0f else 1f
+    }
+    DisposableEffect(inlinePlayer, inlineFallbackUrl) {
+        val player = inlinePlayer ?: return@DisposableEffect onDispose {}
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                inlineVideoReady = true
+            }
+
+            override fun onIsPlayingChanged(playingNow: Boolean) {
+                inlineVideoPlaying = playingNow
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                inlineVideoBuffering = playbackState == Player.STATE_BUFFERING
+                inlineVideoPlaying = player.isPlaying
+                inlineVideoDurationMs = player.duration.coerceAtLeast(0L)
+                if (player.isCurrentMediaItemLive) inlineIsLive = true
+                if (playbackState == Player.STATE_ENDED) {
+                    player.pause()
+                    player.seekTo(0L)
+                    inlineVideoPlaying = false
+                    inlineVideoPosMs = 0L
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val fallback = inlineFallbackUrl?.takeIf { it.isNotBlank() && it != currentInlineStreamUrl }
+                if (fallback != null) {
+                    currentInlineStreamUrl = fallback
+                    return
+                }
+                inlineVideoActive = false
+                inlineVideoReady = false
+                inlineVideoPlaying = false
+                inlineVideoBuffering = false
+                onFeedback("视频播放失败（${error.errorCodeName}）")
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    LaunchedEffect(inlinePlayer, inlineVideoActive) {
+        val player = inlinePlayer ?: return@LaunchedEffect
+        while (inlineVideoActive) {
+            inlineVideoPlaying = player.isPlaying
+            inlineVideoBuffering = player.playbackState == Player.STATE_BUFFERING
+            inlineVideoDurationMs = player.duration.coerceAtLeast(0L)
+            if (player.isCurrentMediaItemLive) inlineIsLive = true
+            if (!inlineScrubbing) {
+                inlineVideoPosMs = player.currentPosition.coerceAtLeast(0L)
+            }
+            delay(200)
+        }
+    }
+    LaunchedEffect(isCurrent, inlinePlayer) {
+        if (!isCurrent && inlinePlayer != null) {
+            inlinePlayer.pause()
+            inlineVideoPlaying = false
+        }
+    }
+    DisposableEffect(lifecycleOwner, inlinePlayer) {
+        val player = inlinePlayer ?: return@DisposableEffect onDispose {}
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                player.pause()
+                inlineVideoPlaying = false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val dismissingNow = frame.dismiss.active || frame.dismiss.exiting || transition?.exiting?.invoke() == true
+    LaunchedEffect(dismissingNow, inlinePlayer) {
+        if (dismissingNow && inlinePlayer != null && inlinePlayer.isPlaying) {
+            inlinePlayer.pause()
+            inlineVideoPlaying = false
+        }
+    }
+    fun handleVideoPageTap() {
+        val player = inlinePlayer
+        when {
+            !inlineVideoActive -> inlineVideoActive = true
+            player == null -> onTap()
+            inlineIsLive -> onTap()
+            player.isPlaying -> {
+                player.pause()
+                inlineVideoPlaying = false
+            }
+            else -> {
+                if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
+                player.play()
+                inlineVideoPlaying = true
+            }
         }
     }
     LaunchedEffect(
@@ -1636,55 +1796,62 @@ private fun ZoomableImage(
                 }
             }
 
-            // 实况视频跟随视觉层一起缩放与拖拽；自身不接管触摸，手势由外层静态手势层处理。
-            // 实况视频的像素尺寸和旋转跟静图不一样，铺满整屏会拉变形。按静图的比例裁切。
-            // 层本身一直在，进出只改透明度，避免整块视图插进来时闪一下。
             if (livePlayer != null) {
                 val liveAlpha by androidx.compose.animation.core.animateFloatAsState(
                     targetValue = if (playing && liveReady) 1f else 0f,
                     animationSpec = tween(LiveFadeMillis),
                     label = "live",
                 )
-                val rest = shown()
-                val fitted = if (rest.width > 0f && rest.height > 0f && box != IntSize.Zero) {
-                    Modifier
-                        .requiredSize(
-                            with(density) { rest.width.toDp() },
-                            with(density) { rest.height.toDp() },
-                        )
-                        .align(Alignment.Center)
-                        .graphicsLayer {
-                            alpha = liveAlpha
-                            scaleX = scale
-                            scaleY = scale
-                            translationX = offset.x
-                            translationY = offset.y
-                        }
-                        .clipToBounds()
-                } else {
-                    Modifier.fillMaxSize().graphicsLayer { alpha = liveAlpha }
-                }
-                AndroidView(
-                    factory = { ctx ->
-                        playerView(ctx, livePlayer, controls = false).apply {
-                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        }
-                    },
-                    modifier = fitted,
-                    update = { view ->
-                        view.player = livePlayer
-                        val format = livePlayer.videoFormat
-                        if (format != null && format.height > 0) {
-                            val turned = format.rotationDegrees % 180 != 0
-                            view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
-                                androidx.media3.ui.R.id.exo_content_frame,
-                            )?.setAspectRatio(
-                                if (turned) format.height.toFloat() / format.width
-                                else format.width.toFloat() / format.height,
+                FittedVideoTextureOverlay(
+                    player = livePlayer,
+                    alpha = liveAlpha,
+                    rest = shown(),
+                    box = box,
+                    scale = scale,
+                    offset = offset,
+                )
+            }
+
+            if (inlinePlayer != null) {
+                val videoAlpha by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (inlineVideoActive && inlineVideoReady) 1f else 0f,
+                    animationSpec = tween(LiveFadeMillis),
+                    label = "inlineVideo",
+                )
+                FittedVideoTextureOverlay(
+                    player = inlinePlayer,
+                    alpha = videoAlpha,
+                    rest = shown(),
+                    box = box,
+                    scale = scale,
+                    offset = offset,
+                )
+            }
+
+            if (hasInlineVideo) {
+                val showSpinner = inlineVideoActive && (!inlineVideoReady || inlineVideoBuffering)
+                val showPlayBadge = !showSpinner && !inlineVideoPlaying
+                if (showSpinner || showPlayBadge) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (showSpinner) {
+                            CoboRefreshSpinner(size = 24.dp, strokeWidth = 2.5.dp, color = Color.White)
+                        } else {
+                            Icon(
+                                imageVector = COUIIcons.Play,
+                                contentDescription = "播放视频",
+                                modifier = Modifier.size(34.dp),
+                                tint = Color.White,
                             )
                         }
-                    },
-                )
+                    }
+                }
             }
         }
 
@@ -1723,11 +1890,19 @@ private fun ZoomableImage(
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(live) {
+                .pointerInput(live, hasInlineVideo, inlineVideoActive, inlineIsLive, inlinePlayer) {
                     if (live.isBlank()) {
                         detectTapGestures(
-                            onTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) onTap() },
-                            onDoubleTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) toggleZoom(it) },
+                            onTap = {
+                                if (!frame.dismiss.active && !frame.dismiss.exiting) {
+                                    if (hasInlineVideo) handleVideoPageTap() else onTap()
+                                }
+                            },
+                            onDoubleTap = {
+                                if (!frame.dismiss.active && !frame.dismiss.exiting && !hasInlineVideo) {
+                                    toggleZoom(it)
+                                }
+                            },
                             onLongPress = { if (!frame.dismiss.active && !frame.dismiss.exiting) onLongPress() },
                         )
                     } else {
@@ -1855,7 +2030,129 @@ private fun ZoomableImage(
                     }
                 },
         )
+
+        if (hasInlineVideo && inlineVideoActive && inlinePlayer != null && chromeVisible && !frame.dismiss.dragging && !frame.dismiss.exiting) {
+            val effectiveDur = inlineVideoDurationMs.coerceAtLeast(1L)
+            val displayPos = if (inlineScrubbing) inlineScrubMs else inlineVideoPosMs
+            val intentState = when {
+                inlineVideoDurationMs <= 0L -> IntentSliderPlaybackState.LoadingInitial
+                inlineVideoBuffering -> IntentSliderPlaybackState.LoadingBuffering
+                inlineVideoPlaying -> IntentSliderPlaybackState.Playing
+                else -> IntentSliderPlaybackState.Paused
+            }
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HighlightedIconButton(
+                    size = MediaControlHeight,
+                    onClick = { inlineVideoMuted = !inlineVideoMuted },
+                ) {
+                    Icon(
+                        imageVector = if (inlineVideoMuted) CoboIcons.VolumeOff else CoboIcons.VolumeOn,
+                        contentDescription = if (inlineVideoMuted) "取消静音" else "静音",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                if (!inlineIsLive) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = formatVideoTime(displayPos),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                    )
+                    IntentSlider(
+                        value = displayPos.coerceIn(0L, effectiveDur).toFloat(),
+                        onValueChange = { next ->
+                            inlineScrubbing = true
+                            inlineScrubMs = next.roundToLong()
+                        },
+                        onValueChangeFinished = {
+                            inlinePlayer.seekTo(inlineScrubMs)
+                            inlineVideoPosMs = inlineScrubMs
+                            inlineScrubbing = false
+                        },
+                        valueRange = 0f..effectiveDur.toFloat(),
+                        enabled = inlineVideoDurationMs > 0L,
+                        followSystemTheme = false,
+                        materialBackdrop = false,
+                        conicLight = true,
+                        showThumb = false,
+                        playbackState = intentState,
+                        size = IntentSliderSize.Default,
+                        colors = IntentSliderDefaults.fixedColors(
+                            conicLightColor = COUITheme.colorScheme.primary,
+                        ),
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    )
+                    Text(
+                        text = formatVideoTime(inlineVideoDurationMs),
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
     }
+}
+
+/**
+ * 实况与混排内联视频共用的 TextureView 浮层：跟随视觉层一起缩放与拖拽，自身不抢触摸，
+ * 按静态封面尺寸居中裁切并随退场缩放动画一起缩回原缩略图。
+ */
+@Composable
+private fun BoxScope.FittedVideoTextureOverlay(
+    player: ExoPlayer,
+    alpha: Float,
+    rest: ComposeSize,
+    box: IntSize,
+    scale: Float,
+    offset: Offset,
+) {
+    val density = LocalDensity.current
+    val fitted = if (rest.width > 0f && rest.height > 0f && box != IntSize.Zero) {
+        Modifier
+            .requiredSize(
+                with(density) { rest.width.toDp() },
+                with(density) { rest.height.toDp() },
+            )
+            .align(Alignment.Center)
+            .graphicsLayer {
+                this.alpha = alpha
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            }
+            .clipToBounds()
+    } else {
+        Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }
+    }
+    AndroidView(
+        factory = { ctx ->
+            playerView(ctx, player, controls = false).apply {
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            }
+        },
+        modifier = fitted,
+        update = { view ->
+            view.player = player
+            val format = player.videoFormat
+            if (format != null && format.height > 0) {
+                val turned = format.rotationDegrees % 180 != 0
+                view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
+                    androidx.media3.ui.R.id.exo_content_frame,
+                )?.setAspectRatio(
+                    if (turned) format.height.toFloat() / format.width
+                    else format.width.toFloat() / format.height,
+                )
+            }
+        },
+    )
 }
 
 private const val RegionTilePx = 2048
@@ -3556,10 +3853,14 @@ private fun DirectVideoPlayer(
                         valueRange = 0f..effectiveDur.toFloat(),
                         enabled = durationMs > 0L,
                         followSystemTheme = false,
+                        materialBackdrop = false,
                         conicLight = true,
                         showThumb = false,
                         playbackState = intentState,
                         size = IntentSliderSize.Default,
+                        colors = IntentSliderDefaults.fixedColors(
+                            conicLightColor = COUITheme.colorScheme.primary,
+                        ),
                         modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                     )
                     Text(

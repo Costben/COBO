@@ -1930,9 +1930,95 @@ class Repo(private val context: Context, private val store: Store) {
 
     private val voteCache = java.util.concurrent.ConcurrentHashMap<String, VoteInfo>()
     private val statusVoteIdCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val photoPageCache = java.util.concurrent.ConcurrentHashMap<String, List<Pic>>()
+    private val inlineLinkPicsCache = java.util.concurrent.ConcurrentHashMap<String, List<Pic>>()
 
     suspend fun resolveShortUrl(url: String): String =
         runCatching { Api.resolveRedirect(url, cookie()) }.getOrDefault(url)
+
+    /** 同步读取已解析过的内联图片缓存；只要全部链接都有缓存就立即返回（避免列表滚动时反复闪动）。 */
+    fun cachedInlineImageLinks(urls: List<String>): List<Pic>? {
+        if (urls.isEmpty()) return emptyList()
+        val out = LinkedHashMap<String, Pic>()
+        for (url in urls) {
+            val cached = inlineLinkPicsCache[url] ?: return null
+            cached.forEach { pic -> out.putIfAbsent(pic.large, pic) }
+        }
+        return out.values.toList()
+    }
+
+    /** 批量解析「查看图片 / 评论配图」短链与 `photo.weibo.com` 链接，供卡片直接内联展示缩略图。 */
+    suspend fun resolveInlineImageLinks(urls: List<String>): List<Pic> {
+        if (urls.isEmpty()) return emptyList()
+        val out = LinkedHashMap<String, Pic>()
+        for (raw in urls) {
+            val resolvedPics = inlineLinkPicsCache[raw] ?: run {
+                val target = com.cobo.app.ui.unwrapWeiboLink(raw)
+                val afterShort = if (com.cobo.app.ui.isWeiboShortLink(target)) {
+                    com.cobo.app.ui.unwrapWeiboLink(resolveShortUrl(target))
+                } else {
+                    target
+                }
+                val fetched = when {
+                    com.cobo.app.ui.isImageLink(afterShort) -> {
+                        val thumb = normalizeWeiboMediaUrl(afterShort)
+                        listOf(Pic(thumb = thumb, large = com.cobo.app.ui.toLargeSinaImageUrl(thumb)))
+                    }
+                    com.cobo.app.ui.isWeiboPhotoPageLink(afterShort) -> resolveWeiboPhotoPics(afterShort)
+                    else -> emptyList()
+                }
+                inlineLinkPicsCache[raw] = fetched
+                fetched
+            }
+            resolvedPics.forEach { pic -> out.putIfAbsent(pic.large, pic) }
+        }
+        return out.values.toList()
+    }
+
+    /**
+     * 解析 `photo.weibo.com` 评论配图或图片链接页，尽量抽取出 `sinaimg.cn` 直链以原生看图页打开；
+     * 若目标页本身直接 302 到图片直链也一并兼容。解析失败时返回空列表交回网页兜底。
+     */
+    suspend fun resolveWeiboPhotoPics(url: String): List<Pic> {
+        val target = com.cobo.app.ui.resolveWeiboLink(url) ?: url
+        if (target.isBlank()) return emptyList()
+        photoPageCache[target]?.let { return it }
+        com.cobo.app.ui.extractWeiboPhotoPid(target)?.let { pid ->
+            val pics = listOf(
+                Pic(
+                    thumb = "https://wx1.sinaimg.cn/orj360/$pid.jpg",
+                    large = "https://wx1.sinaimg.cn/large/$pid.jpg",
+                ),
+            )
+            photoPageCache[target] = pics
+            return pics
+        }
+        val redirected = resolveShortUrl(target)
+        if (com.cobo.app.ui.isImageLink(redirected)) {
+            val normalized = normalizeWeiboMediaUrl(redirected)
+            val pics = listOf(Pic(thumb = normalized, large = com.cobo.app.ui.toLargeSinaImageUrl(normalized)))
+            photoPageCache[target] = pics
+            return pics
+        }
+        com.cobo.app.ui.extractWeiboPhotoPid(redirected)?.let { pid ->
+            val pics = listOf(
+                Pic(
+                    thumb = "https://wx1.sinaimg.cn/orj360/$pid.jpg",
+                    large = "https://wx1.sinaimg.cn/large/$pid.jpg",
+                ),
+            )
+            photoPageCache[target] = pics
+            return pics
+        }
+        val html = runCatching { Api.getHtml(redirected, cookie()) }.getOrNull().orEmpty()
+        val urls = com.cobo.app.ui.extractSinaImageUrlsFromHtml(html)
+        if (urls.isEmpty()) return emptyList()
+        val pics = urls.map { img ->
+            Pic(thumb = img, large = com.cobo.app.ui.toLargeSinaImageUrl(img))
+        }
+        photoPageCache[target] = pics
+        return pics
+    }
 
     suspend fun resolveStatusVoteId(statusId: String, textHtml: String): String? {
         statusVoteIdCache[statusId]?.let { return it }

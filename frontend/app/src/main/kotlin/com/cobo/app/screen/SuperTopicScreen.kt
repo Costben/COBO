@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
@@ -117,6 +117,7 @@ import java.net.URLEncoder
 /** Keeps the existing feed's request serialization, refresh and duplicate filtering. */
 class SuperTopicStore(
     containerId: String,
+    val readOnly: Boolean = false,
     loader: suspend (String?) -> SuperTopicPage,
 ) {
     var info by mutableStateOf<SuperTopicInfo?>(null)
@@ -126,7 +127,7 @@ class SuperTopicStore(
     var lastRequestWasRefresh = true
         private set
     private val cursors = HashSet<String>()
-    val feed = FeedStore(containerId, readOnly = true) { cursor, _ ->
+    val feed = FeedStore(containerId, readOnly = readOnly) { cursor, _ ->
         lastRequestWasRefresh = cursor == null
         val page = loader(cursor)
         if (cursor == null) cursors.clear() else cursors.add(cursor)
@@ -149,7 +150,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
 
     fun storeFor(tab: SuperTopicTab): SuperTopicStore =
         stores.getOrPut(tab.containerId) {
-            SuperTopicStore(tab.containerId) { cursor ->
+            SuperTopicStore(tab.containerId, readOnly = App.repo.guest) { cursor ->
                 App.repo.superTopicTab(baseId, tab.containerId, cursor)
             }
         }
@@ -270,11 +271,6 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                             }
                                             Spacer(Modifier.height(8.dp))
                                         }
-                                        Text(
-                                            "赞、评、转暂未验证，当前仅浏览",
-                                            fontSize = 12.sp,
-                                            color = COUITheme.colorScheme.onSurfaceSecondary,
-                                        )
                                         if (feed.error?.contains("登录") == true) {
                                             TextButton(text = "前往登录", onClick = { nav.push(Route.Login()) })
                                         }
@@ -297,20 +293,22 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                     }
                                 }
                             }
-                            items(feed.items, key = { "${tab.containerId}-${it.id}" }) { status ->
+                            itemsIndexed(feed.items, key = { _, status -> "${tab.containerId}-${status.id}" }) { index, status ->
                                 val origin = rememberExpandOrigin()
                                 StatusCard(
                                     status = status,
                                     modifier = Modifier.expandOrigin(origin),
-                                    actionsEnabled = false,
-                                    onOpen = { nav.push(Route.Detail(status.id, status.mid, readOnly = true), origin) },
+                                    actionsEnabled = !feed.readOnly,
+                                    onOpen = { nav.push(Route.Detail(status.id, status.mid, feed.readOnly), origin) },
                                     onOpenQuoted = { quoted, quotedOrigin ->
-                                        nav.push(Route.Detail(quoted.id, quoted.mid, readOnly = true), quotedOrigin)
+                                        nav.push(Route.Detail(quoted.id, quoted.mid, feed.readOnly), quotedOrigin)
                                     },
                                     onUser = { if (it.id.isNotBlank()) nav.push(Route.Profile(it.id)) },
-                                    onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
+                                    onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
                                     onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
-                                    onLike = {},
+                                    onLike = { scope.launch { feed.like(index) } },
+                                    onRepost = { nav.push(Route.Detail(status.id, status.mid, feed.readOnly), origin) },
+                                    onComment = { nav.push(Route.Detail(status.id, status.mid, feed.readOnly), origin) },
                                 )
                             }
                             if (feed.items.isNotEmpty()) {

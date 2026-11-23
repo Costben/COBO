@@ -65,6 +65,74 @@ class CommentPicsTest {
     }
 
     @Test
+    fun readsPicObjectWithoutTurningJsonIntoUrl() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "id": "5000000000000007",
+                  "text": "图片评论",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "pic": {
+                    "pid": "006ABCdefgy1k",
+                    "url": "http://wx1.sinaimg.cn/orj360/006ABCdefgy1k.jpg",
+                    "geo": {"width": 360, "height": 480},
+                    "large": {
+                      "url": "http://wx1.sinaimg.cn/large/006ABCdefgy1k.jpg",
+                      "geo": {"width": 1080, "height": 1440}
+                    }
+                  },
+                  "reply": {
+                    "id": "5000000000000008",
+                    "text": "被回复图",
+                    "created_at": "Thu Nov 20 11:50:00 +0800 2025",
+                    "pic": {
+                      "pid": "006ABCdefgy1m"
+                    }
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, comment.pics.size)
+        assertEquals("https://wx1.sinaimg.cn/orj360/006ABCdefgy1k.jpg", comment.pics[0].thumb)
+        assertEquals("https://wx1.sinaimg.cn/large/006ABCdefgy1k.jpg", comment.pics[0].large)
+        assertEquals(1080, comment.pics[0].width)
+        assertEquals(1440, comment.pics[0].height)
+
+        val replyPics = comment.reply?.pics.orEmpty()
+        assertEquals(1, replyPics.size)
+        assertEquals("https://wx1.sinaimg.cn/orj360/006ABCdefgy1m.jpg", replyPics[0].thumb)
+        assertEquals("https://wx1.sinaimg.cn/large/006ABCdefgy1m.jpg", replyPics[0].large)
+    }
+
+    @Test
+    fun readsPicInfosWithoutPicIds() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "id": "5000000000000009",
+                  "text": "只有 pic_infos",
+                  "created_at": "Thu Nov 20 12:00:00 +0800 2025",
+                  "pic_infos": {
+                    "006ABCdefgy1n": {
+                      "bmiddle": {"url": "//wx2.sinaimg.cn/wap360/006ABCdefgy1n.jpg"},
+                      "large": {"url": "//wx2.sinaimg.cn/large/006ABCdefgy1n.jpg"}
+                    }
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, comment.pics.size)
+        assertEquals("https://wx2.sinaimg.cn/wap360/006ABCdefgy1n.jpg", comment.pics[0].thumb)
+        assertEquals("https://wx2.sinaimg.cn/large/006ABCdefgy1n.jpg", comment.pics[0].large)
+    }
+
+    @Test
     fun commentWithoutPictureHasNoPics() {        val comment = Comment.from(
             JSONObject(
                 """

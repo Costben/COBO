@@ -110,4 +110,58 @@ class LinkHandlerTest {
         assertNull(extractWeiboLiveId("https://video.weibo.com/show?fid=1034:5000000001"))
         assertNull(extractWeiboLiveId("https://m.weibo.cn/p/index?containerid=1008086c62abc"))
     }
+
+    @Test
+    fun recognizesPhotoPagesAndExtractsCommentImages() {
+        assertTrue(isImageLink("//wx1.sinaimg.cn/large/006ABCdefgy1a.jpg"))
+        assertTrue(isImageLink("https://wx1.sinaimg.cn/orj360/006ABCdefgy1a.jpg?tags=1"))
+        assertTrue(isWeiboPhotoPageLink("https://photo.weibo.com/h5/comment/compic_id/1022:230597"))
+        assertTrue(
+            isWeiboPhotoPageLink(
+                "https://weibo.cn/sinaurl?u=https%3A%2F%2Fphoto.weibo.com%2F123456%2Fwbphotos%2Flarge%2Fmid%2F500%2Fpid%2F006ABCdefgy1k2345",
+            ),
+        )
+        assertFalse(isWeiboPhotoPageLink("https://m.weibo.cn/detail/123456"))
+
+        assertEquals(
+            "006ABCdefgy1k2345",
+            extractWeiboPhotoPid("https://photo.weibo.com/123456/wbphotos/large/mid/500/pid/006ABCdefgy1k2345"),
+        )
+        assertEquals(
+            "https://wx1.sinaimg.cn/large/006ABCdefgy1k.jpg",
+            toLargeSinaImageUrl("http://wx1.sinaimg.cn/orj360/006ABCdefgy1k.jpg"),
+        )
+
+        val html = """
+            <img src="https://h5.sinaimg.cn/upload/2015/09/25/3/timeline_card_small_photo_default.png">
+            <img src="//wx2.sinaimg.cn/orj360/006ABCdefgy1z.jpg">
+            <script>var d={"pic_url":"https:\/\/wx3.sinaimg.cn\/large\/006ABCdefgy1y.png"};</script>
+        """.trimIndent()
+        assertEquals(
+            listOf(
+                "https://wx2.sinaimg.cn/orj360/006ABCdefgy1z.jpg",
+                "https://wx3.sinaimg.cn/large/006ABCdefgy1y.png",
+            ),
+            extractSinaImageUrlsFromHtml(html),
+        )
+
+        val inlineHtml = """
+            转发微博 //<a href="/n/Alice">@Alice</a>:
+            <a href="https://weibo.cn/sinaurl?u=https%3A%2F%2Fwx1.sinaimg.cn%2Forj360%2F006ABCdefgy1a.jpg">评论配图</a>
+            <a href="https://photo.weibo.com/h5/comment/compic_id/1022:230597">查看图片</a>
+            <a href="http://t.cn/A6testImg">评论配图</a>
+            <a href="http://t.cn/A6otherWeb">网页链接</a>
+        """.trimIndent()
+        assertEquals(
+            listOf("https://wx1.sinaimg.cn/orj360/006ABCdefgy1a.jpg" to "https://wx1.sinaimg.cn/large/006ABCdefgy1a.jpg"),
+            extractDirectImageUrlsFromHtml(inlineHtml),
+        )
+        assertEquals(
+            listOf(
+                "https://photo.weibo.com/h5/comment/compic_id/1022:230597",
+                "http://t.cn/A6testImg",
+            ),
+            extractResolvablePhotoLinksFromHtml(inlineHtml),
+        )
+    }
 }

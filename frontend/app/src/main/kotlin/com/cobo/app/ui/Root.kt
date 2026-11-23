@@ -65,6 +65,7 @@ import androidx.compose.ui.zIndex
 import com.cobo.app.App
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Updater
+import com.cobo.app.data.normalizeWeiboMediaUrl
 import com.cobo.app.data.superTopicId
 import com.cobo.app.screen.AboutScreen
 import com.cobo.app.screen.AccountsScreen
@@ -177,17 +178,8 @@ fun CoboRoot() {
     val context = LocalContext.current
     val linkHandler = remember(nav, scope, context) {
         { raw: String ->
-            // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，流体云深链会包一层 sinaweibo://browser?url=<真实地址>，
-            // 或 m.weibo.cn/feature/openapp?scheme=...，先统一拆出真实地址再决定去哪。
-            val url = unwrapWeiboLink(raw)
-            val voteId = weiboVoteId(url)
-            val statusId = weiboStatusId(url)
-            val uid = weiboUserId(url)
-            val mention = weiboMentionName(url)
-            val topicId = superTopicId(url)
-            val topicQuery = weiboTopicQuery(url)
             val current = nav.stack.lastOrNull()?.route
-            val readOnly = current is Route.SuperTopic || (current is Route.Detail && current.readOnly)
+            val readOnly = (current is Route.Detail && current.readOnly) || App.repo.guest
             fun openWebPage(target: String) {
                 if (!App.settings.inAppBrowser && isExternalWebLink(target)) {
                     openExternalUrl(context, target)
@@ -195,75 +187,74 @@ fun CoboRoot() {
                     nav.push(Route.Web(target, "网页"))
                 }
             }
-            when {
-                topicId != null -> nav.push(Route.SuperTopic(topicId, resolveWeiboLink(url)
-                    ?: "https://m.weibo.cn/p/index?containerid=$topicId"))
-                topicQuery != null -> nav.push(Route.TopicFeed(topicQuery))
-                voteId != null -> nav.push(if (readOnly) {
-                    Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
-                } else Route.Vote(voteId))
-                isImageLink(url) -> nav.push(Route.Images(listOf(Pic(thumb = url, large = url)), 0))
-                isWeiboLiveLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "直播", isLive = true))
-                isVideoLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "视频"))
-                isWeiboWboxLink(url) ->
-                    App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
-                url.contains("containerid=231601_", ignoreCase = true) ->
-                    App.toast("该微博卡片详情暂不支持在第三方客户端打开，可直接查看上方卡片图")
-                statusId != null -> if (current is Route.Detail &&
-                    (current.id == statusId || (current.mid.isNotBlank() && current.mid == statusId))
-                ) {
-                    App.requestDetailRefresh(current.id)
-                } else {
-                    nav.push(Route.Detail(statusId, "", readOnly))
-                }
-                uid != null -> nav.push(Route.Profile(uid))
-                // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
-                mention != null -> scope.launch {
-                    val target = runCatching { App.repo.uidForName(mention) }.getOrNull()
-                    if (target != null) {
-                        nav.push(Route.Profile(target))
-                    } else {
-                        resolveWeiboLink(raw)?.let { nav.push(Route.Web(it, mention)) }
-                    }
-                }
-                isWeiboShortLink(url) -> scope.launch {
-                    val rawResolved = App.repo.resolveShortUrl(url)
-                    val resolved = unwrapWeiboLink(rawResolved)
-                    val vid = weiboVoteId(resolved)
-                    val resolvedTopicId = superTopicId(resolved)
-                    if (resolvedTopicId != null) {
-                        nav.push(Route.SuperTopic(resolvedTopicId, resolveWeiboLink(resolved)
-                            ?: "https://m.weibo.cn/p/index?containerid=$resolvedTopicId"))
-                    } else if (vid != null) {
-                        nav.push(if (readOnly) {
-                            Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$vid", "投票")
-                        } else Route.Vote(vid))
-                    } else if (isWeiboWboxLink(resolved)) {
-                        App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
-                    } else {
-                        val sid = weiboStatusId(resolved)
-                        val resolvedTopicQuery = weiboTopicQuery(resolved)
-                        if (sid != null) {
-                            if (current is Route.Detail &&
-                                (current.id == sid || (current.mid.isNotBlank() && current.mid == sid))
-                            ) {
-                                App.requestDetailRefresh(current.id)
-                            } else {
-                                nav.push(Route.Detail(sid, "", readOnly))
-                            }
-                        } else if (resolvedTopicQuery != null) {
-                            nav.push(Route.TopicFeed(resolvedTopicQuery))
-                        } else if (isWeiboLiveLink(resolved)) {
-                            nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "直播", isLive = true))
-                        } else if (isVideoLink(resolved)) {
-                            nav.push(Route.Video(resolveWeiboLink(resolved) ?: resolved, "视频"))
+            fun openImageViewer(imageUrl: String) {
+                val normalized = normalizeWeiboMediaUrl(imageUrl)
+                nav.push(Route.Images(listOf(Pic(thumb = normalized, large = normalized)), 0))
+            }
+            fun dispatchResolved(url: String, allowShortLink: Boolean) {
+                val voteId = weiboVoteId(url)
+                val statusId = weiboStatusId(url)
+                val uid = weiboUserId(url)
+                val mention = weiboMentionName(url)
+                val topicId = superTopicId(url)
+                val topicQuery = weiboTopicQuery(url)
+                when {
+                    topicId != null -> nav.push(
+                        Route.SuperTopic(
+                            topicId,
+                            resolveWeiboLink(url) ?: "https://m.weibo.cn/p/index?containerid=$topicId",
+                        ),
+                    )
+                    topicQuery != null -> nav.push(Route.TopicFeed(topicQuery))
+                    voteId != null -> nav.push(
+                        if (readOnly) {
+                            Route.Web("https://vote.weibo.com/h5/index/index?vote_id=$voteId", "投票")
+                        } else Route.Vote(voteId),
+                    )
+                    isImageLink(url) -> openImageViewer(url)
+                    isWeiboPhotoPageLink(url) -> scope.launch {
+                        val resolvedTarget = resolveWeiboLink(url) ?: url
+                        val pics = App.repo.resolveWeiboPhotoPics(resolvedTarget)
+                        if (pics.isNotEmpty()) {
+                            nav.push(Route.Images(pics, 0))
                         } else {
-                            resolveWeiboLink(resolved)?.let(::openWebPage)
+                            openWebPage(resolvedTarget)
                         }
                     }
+                    isWeiboLiveLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "直播", isLive = true))
+                    isVideoLink(url) -> nav.push(Route.Video(resolveWeiboLink(url) ?: url, "视频"))
+                    isWeiboWboxLink(url) ->
+                        App.toast("微博小程序（wbox）依赖官方客户端内核，第三方客户端暂不支持打开")
+                    url.contains("containerid=231601_", ignoreCase = true) ->
+                        App.toast("该微博卡片详情暂不支持在第三方客户端打开，可直接查看上方卡片图")
+                    statusId != null -> if (current is Route.Detail &&
+                        (current.id == statusId || (current.mid.isNotBlank() && current.mid == statusId))
+                    ) {
+                        App.requestDetailRefresh(current.id)
+                    } else {
+                        nav.push(Route.Detail(statusId, "", readOnly))
+                    }
+                    uid != null -> nav.push(Route.Profile(uid))
+                    // @ 只有昵称，得先换成 uid；换不到才退回内置 WebView。
+                    mention != null -> scope.launch {
+                        val target = runCatching { App.repo.uidForName(mention) }.getOrNull()
+                        if (target != null) {
+                            nav.push(Route.Profile(target))
+                        } else {
+                            resolveWeiboLink(raw)?.let { nav.push(Route.Web(it, mention)) }
+                        }
+                    }
+                    allowShortLink && isWeiboShortLink(url) -> scope.launch {
+                        val rawResolved = App.repo.resolveShortUrl(url)
+                        val resolved = unwrapWeiboLink(rawResolved)
+                        dispatchResolved(resolved, allowShortLink = false)
+                    }
+                    else -> resolveWeiboLink(url)?.let(::openWebPage)
                 }
-                else -> resolveWeiboLink(url)?.let(::openWebPage)
             }
+            // 「评论配图」是 weibo.cn/sinaurl?u=<图片直链>，流体云深链会包一层 sinaweibo://browser?url=<真实地址>，
+            // 或 m.weibo.cn/feature/openapp?scheme=...，先统一拆出真实地址再决定去哪。
+            dispatchResolved(unwrapWeiboLink(raw), allowShortLink = true)
             Unit
         }
     }

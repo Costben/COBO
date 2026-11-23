@@ -240,9 +240,155 @@ fun weiboUserId(raw: String): String? {
 /** 图片直链（sinaimg 的 large/orj360/bmiddle 等），点了应该开图而不是开网页。 */
 fun isImageLink(raw: String): Boolean {
     val path = raw.trim().substringBefore('?').substringBefore('#').lowercase()
-    if (!path.startsWith("http")) return false
+    if (!path.startsWith("http") && !path.startsWith("//")) return false
     return path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".png") ||
         path.endsWith(".gif") || path.endsWith(".webp")
+}
+
+private val PhotoPidPathRegex = Regex("""/pid/([A-Za-z0-9]{16,40})\b""", RegexOption.IGNORE_CASE)
+private val SinaImgUrlRegex = Regex(
+    """(?:https?:)?//[a-z0-9.-]*sinaimg\.(?:cn|com)/(?:large|mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>\\]*)?""",
+    RegexOption.IGNORE_CASE,
+)
+private val SinaImgSizeSegmentRegex = Regex(
+    """/(?:mw\d+|orj\d+|bmiddle|thumbnail|thumb\d+|wap\d+)/""",
+    RegexOption.IGNORE_CASE,
+)
+private val HtmlAnchorRegex = Regex(
+    """<a\b([^>]*)>(.*?)</a>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val AnchorHrefRegex = Regex(
+    """\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')""",
+    RegexOption.IGNORE_CASE,
+)
+private val HtmlTagStripRegex = Regex("""<[^>]+>""")
+private val InlinePhotoLinkLabels = setOf("查看图片", "评论配图")
+
+private fun unescapeHtmlAttrUrl(raw: String): String = raw
+    .replace("&amp;", "&")
+    .replace("&quot;", "\"")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .trim()
+
+private fun normalizeProtocolUrl(url: String): String = when {
+    url.startsWith("//") -> "https:$url"
+    url.startsWith("http://", ignoreCase = true) &&
+        (url.contains("sinaimg.", ignoreCase = true) || url.contains("weibocdn.com", ignoreCase = true)) ->
+        "https://" + url.substring("http://".length)
+    else -> url
+}
+
+private fun forEachHtmlAnchor(html: String, block: (unwrappedHref: String, plainLabel: String) -> Unit) {
+    if (html.isBlank()) return
+    for (match in HtmlAnchorRegex.findAll(html)) {
+        val attrs = match.groups[1]?.value.orEmpty()
+        val hrefMatch = AnchorHrefRegex.find(attrs) ?: continue
+        val rawHref = unescapeHtmlAttrUrl(hrefMatch.groupValues[1].ifBlank { hrefMatch.groupValues[2] })
+        if (rawHref.isBlank()) continue
+        val unwrapped = unwrapWeiboLink(rawHref)
+        val plainLabel = HtmlTagStripRegex.replace(match.groups[2]?.value.orEmpty(), "").trim()
+        block(unwrapped, plainLabel)
+    }
+}
+
+/**
+ * 从微博或评论 HTML 文本的 `<a>` 链接中直接提取「查看图片 / 评论配图」直链与带 `pid` 的相册地址，
+ * 返回 `(thumbUrl, largeUrl)` 列表（已按大图去重），供卡片免点入网页直接在正文下方内联展示。
+ */
+fun extractDirectImageUrlsFromHtml(html: String): List<Pair<String, String>> {
+    val result = LinkedHashMap<String, String>()
+    forEachHtmlAnchor(html) { url, _ ->
+        when {
+            isImageLink(url) -> {
+                val thumb = normalizeProtocolUrl(url)
+                val large = toLargeSinaImageUrl(thumb)
+                result.putIfAbsent(large, thumb)
+            }
+            else -> {
+                val pid = if (isWeiboPhotoPageLink(url)) extractWeiboPhotoPid(url) else null
+                if (!pid.isNullOrBlank()) {
+                    val thumb = "https://wx1.sinaimg.cn/orj360/$pid.jpg"
+                    val large = "https://wx1.sinaimg.cn/large/$pid.jpg"
+                    result.putIfAbsent(large, thumb)
+                }
+            }
+        }
+    }
+    return result.entries.map { (large, thumb) -> thumb to large }
+}
+
+/**
+ * 从微博或评论 HTML 文本中提取尚需异步解析真实图床地址的内联图片链接
+ * （无 `pid` 的 `photo.weibo.com` 链接，或文本明确为「查看图片 / 评论配图」的短链）。
+ */
+fun extractResolvablePhotoLinksFromHtml(html: String): List<String> {
+    val out = LinkedHashSet<String>()
+    forEachHtmlAnchor(html) { url, label ->
+        if (url.isBlank()) return@forEachHtmlAnchor
+        val isPhotoPage = isWeiboPhotoPageLink(url) && extractWeiboPhotoPid(url) == null
+        val isPhotoShortLink = isWeiboShortLink(url) && label in InlinePhotoLinkLabels
+        if (isPhotoPage || isPhotoShortLink) {
+            out.add(normalizeProtocolUrl(url))
+        }
+    }
+    return out.toList()
+}
+
+/** 微博相册与「评论配图 / 查看图片」跳转页（`photo.weibo.com`），需解出内部图片直链进原生看图页。 */
+fun isWeiboPhotoPageLink(raw: String): Boolean {
+    val unwrapped = unwrapWeiboLink(raw)
+    if (unwrapped.isEmpty()) return false
+    val uri = runCatching { java.net.URI(if (unwrapped.startsWith("//")) "https:$unwrapped" else unwrapped) }.getOrNull()
+        ?: return false
+    val host = uri.host?.lowercase() ?: return false
+    return host == "photo.weibo.com" || host.endsWith(".photo.weibo.com")
+}
+
+/** 从 `photo.weibo.com/.../pid/<pid>` 或 `?pid=<pid>` 提取微博图床 pid。 */
+fun extractWeiboPhotoPid(raw: String): String? {
+    val unwrapped = unwrapWeiboLink(raw)
+    if (unwrapped.isEmpty()) return null
+    val queryPid = param(queryOf(unwrapped), "pid")?.trim()
+    if (!queryPid.isNullOrBlank() && queryPid.length >= 16 && queryPid.all(Char::isLetterOrDigit)) {
+        return queryPid
+    }
+    return PhotoPidPathRegex.find(unwrapped)?.groupValues?.getOrNull(1)
+}
+
+/** 将缩略图尺寸路径升级为微博大图尺寸，保留已有的扩展名与查询参数。 */
+fun toLargeSinaImageUrl(url: String): String {
+    val normalized = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("http://", ignoreCase = true) && url.contains("sinaimg.", ignoreCase = true) ->
+            "https://" + url.substring("http://".length)
+        else -> url
+    }
+    return SinaImgSizeSegmentRegex.replaceFirst(normalized, "/large/")
+}
+
+/** 从 `photo.weibo.com` 页面 HTML 中提取评论配图/相册图床直链。 */
+fun extractSinaImageUrlsFromHtml(html: String): List<String> {
+    if (html.isBlank()) return emptyList()
+    val unescaped = html.replace("\\/", "/").replace("&amp;", "&")
+    val out = LinkedHashSet<String>()
+    for (match in SinaImgUrlRegex.findAll(unescaped)) {
+        val candidate = match.value.trim()
+        val lower = candidate.lowercase()
+        if (lower.contains("/upload/") || lower.contains("timeline_card_small_") ||
+            lower.contains("avatar") || lower.contains("favicon") || lower.contains("default_")
+        ) {
+            continue
+        }
+        val normalized = when {
+            candidate.startsWith("//") -> "https:$candidate"
+            candidate.startsWith("http://", ignoreCase = true) -> "https://" + candidate.substring("http://".length)
+            else -> candidate
+        }
+        out.add(normalized)
+    }
+    return out.toList()
 }
 
 private val ExternalVideoHosts = listOf(

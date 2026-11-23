@@ -92,6 +92,7 @@ internal fun glyphFor(url: String, label: String): LinkGlyph? {
             com.cobo.app.ui.isWeiboLiveLink(url) -> LinkGlyph.Video
 
         trimmed == "查看图片" ||
+            trimmed == "评论配图" ||
             lower.contains("photo.weibo.com") -> LinkGlyph.Image
 
         trimmed == "微博正文" -> LinkGlyph.Weibo

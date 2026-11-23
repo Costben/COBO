@@ -40,7 +40,13 @@ class SuperTopicStoreTest {
         assertEquals(listOf(null, "a", "b"), requests)
         assertEquals(listOf("1", "2", "3", "4"), store.feed.items.map { it.id })
         assertEquals(info, store.info)
-        assertTrue(store.feed.readOnly)
+        assertFalse(store.feed.readOnly)
+    }
+
+    @Test
+    fun guestModeMarksSuperTopicFeedReadOnly() {
+        val guestStore = SuperTopicStore(id, readOnly = true) { page(emptyList(), null) }
+        assertTrue(guestStore.feed.readOnly)
     }
 
     @Test

@@ -77,7 +77,10 @@ import com.cobo.app.ui.LiveBadgeSize
 import com.cobo.app.ui.isLongImageAspect
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.expandOrigin
+import com.cobo.app.ui.extractResolvablePhotoLinksFromHtml
 import com.cobo.app.ui.imageOrigin
+import com.cobo.app.ui.isImageLink
+import com.cobo.app.ui.isWeiboPhotoPageLink
 import com.cobo.app.ui.isWeiboWboxLink
 import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.rememberExpandOrigin
@@ -545,9 +548,24 @@ fun StatusMedia(
         Spacer(Modifier.height(8.dp))
         VideoCard(video, compact, onVideo)
     }
-    if (status.pics.isNotEmpty()) {
+    val resolvableInlineLinks = remember(status.id, status.textHtml, status.pics, video) {
+        if (status.pics.isEmpty() && video == null) extractResolvablePhotoLinksFromHtml(status.textHtml) else emptyList()
+    }
+    var resolvedInlinePics by remember(status.id, resolvableInlineLinks) {
+        mutableStateOf(
+            if (resolvableInlineLinks.isEmpty()) emptyList()
+            else App.repo.cachedInlineImageLinks(resolvableInlineLinks).orEmpty(),
+        )
+    }
+    LaunchedEffect(status.id, resolvableInlineLinks) {
+        if (resolvableInlineLinks.isNotEmpty() && resolvedInlinePics.isEmpty()) {
+            resolvedInlinePics = App.repo.resolveInlineImageLinks(resolvableInlineLinks)
+        }
+    }
+    val effectivePics = if (status.pics.isNotEmpty()) status.pics else resolvedInlinePics
+    if (effectivePics.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
-        ImageGrid(status.pics, compact, onImage, onVideo)
+        ImageGrid(effectivePics, compact, onImage, onVideo)
     }
     val bigPic = status.bigPic
     if (bigPic != null && bigPic.url.isNotBlank()) {
@@ -635,7 +653,8 @@ private fun BigPicCard(
     val targetUrl = remember(bigPic.scheme, isWbox) {
         if (isWbox) null else resolveWeiboLink(bigPic.scheme)
     }
-    val openImageFirst = isWbox || isSuperTopicScheme
+    val openImageFirst = isWbox || isSuperTopicScheme ||
+        isImageLink(bigPic.scheme) || isWeiboPhotoPageLink(bigPic.scheme)
     val singlePic = remember(bigPic.url) {
         listOf(Pic(thumb = bigPic.url, large = bigPic.url, preserveUrl = true))
     }

@@ -55,7 +55,9 @@ internal fun isLongImageAspect(aspect: Float?): Boolean =
  */
 @Stable
 class ImageOrigins {
-    private val slots = HashMap<String, ThumbSlot>()
+    // 同一张图可能在列表页、详情页、评论浮层同时挂载，按栈保留所有活跃槽位；
+    // 顶层页面退场注销自己的槽位后，下层页面原有缩略图位置会自动恢复生效。
+    private val slots = HashMap<String, MutableList<ThumbSlot>>()
     private val cacheKeys = HashMap<String, MemoryCache.Key>()
     private var viewingOwner: Any? = null
 
@@ -79,34 +81,46 @@ class ImageOrigins {
         }
     }
 
+    private fun activeSlotOf(url: String): ThumbSlot? {
+        val list = slots[url] ?: return null
+        return list.lastOrNull { it.coordinates?.isAttached == true } ?: list.lastOrNull()
+    }
+
     internal fun put(url: String, slot: ThumbSlot) {
-        slots[url] = slot
+        val list = slots.getOrPut(url) { mutableListOf() }
+        if (list.lastOrNull() !== slot) {
+            list.remove(slot)
+            list.add(slot)
+        }
         cacheKeys[url]?.let { if (slot.cacheKey == null) slot.cacheKey = it }
     }
 
     internal fun putCacheKey(url: String, key: MemoryCache.Key?) {
         if (key != null) {
             cacheKeys[url] = key
-            slots[url]?.cacheKey = key
+            slots[url]?.forEach { slot -> slot.cacheKey = key }
         }
     }
 
     internal fun remove(url: String, slot: ThumbSlot) {
-        if (slots[url] === slot) slots.remove(url)
+        val list = slots[url] ?: return
+        list.remove(slot)
+        if (list.isEmpty()) slots.remove(url)
     }
 
     /** The address the feed drew for [url], so the viewer can reuse that decoded image. */
-    internal fun modelOf(url: String): String? = slots[url]?.model
+    internal fun modelOf(url: String): String? = activeSlotOf(url)?.model
 
     /** 卡片登记的真实宽高比，未携带尺寸字段时可先于大图解码对齐容器大小。 */
-    internal fun aspectOf(url: String): Float? = slots[url]?.aspect
+    internal fun aspectOf(url: String): Float? = activeSlotOf(url)?.aspect
 
     /** Memory cache key of the decoded thumbnail for [url], for synchronous first-frame painting. */
-    internal fun cacheKeyOf(url: String): MemoryCache.Key? = slots[url]?.cacheKey ?: cacheKeys[url]
+    internal fun cacheKeyOf(url: String): MemoryCache.Key? = activeSlotOf(url)?.cacheKey ?: cacheKeys[url]
 
     /** Read live, so a closing viewer shrinks into where the thumbnail is now. */
     internal fun boundsOf(url: String, host: LayoutCoordinates, density: Float): ThumbBounds? {
-        val slot = slots[url] ?: return null
+        val list = slots[url] ?: return null
+        val slot = list.lastOrNull { it.coordinates?.isAttached == true } ?: return null
         val coordinates = slot.coordinates?.takeIf { it.isAttached } ?: return null
         if (!host.isAttached) return null
         val rect = host.localBoundingBoxOf(coordinates, clipBounds = false)

@@ -404,10 +404,7 @@ private fun CommentDetailSheetContent(
                                         fontSize = 15.sp,
                                         lineHeight = 21.sp,
                                     )
-                                    if (rootComment.pics.isNotEmpty()) {
-                                        Spacer(Modifier.height(6.dp))
-                                        CommentThumbnails(rootComment.pics, 96.dp, onImage)
-                                    }
+                                    CommentInlinePics(rootComment, 96.dp, onImage)
                                     rootComment.reply?.let { quoted ->
                                         Spacer(Modifier.height(6.dp))
                                         Column(
@@ -427,6 +424,7 @@ private fun CommentDetailSheetContent(
                                                 fontSize = 13.sp,
                                                 lineHeight = 18.sp,
                                             )
+                                            CommentInlinePics(quoted, 72.dp, onImage)
                                         }
                                     }
                                     Spacer(Modifier.height(6.dp))

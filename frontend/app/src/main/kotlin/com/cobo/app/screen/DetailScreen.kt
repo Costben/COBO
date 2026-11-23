@@ -97,7 +97,10 @@ import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
+import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.extractResolvablePhotoLinksFromHtml
+import com.cobo.app.ui.imageOrigin
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
@@ -737,6 +740,37 @@ private fun commentReportUrl(mid: String, cid: String): String {
 private const val PreviewReplies = 1
 
 /**
+ * 评论配图渲染入口：优先使用评论自带 `pics`，为空时兜底解析正文里的「评论配图 / 查看图片 / photo.weibo.com」链接并直接出图。
+ */
+@Composable
+internal fun CommentInlinePics(
+    comment: Comment,
+    height: Dp,
+    onImage: (List<Pic>, Int) -> Unit,
+    topGap: Dp = 6.dp,
+) {
+    val resolvableLinks = remember(comment.id, comment.textHtml, comment.pics) {
+        if (comment.pics.isEmpty()) extractResolvablePhotoLinksFromHtml(comment.textHtml) else emptyList()
+    }
+    var resolvedPics by remember(comment.id, resolvableLinks) {
+        mutableStateOf(
+            if (resolvableLinks.isEmpty()) emptyList()
+            else App.repo.cachedInlineImageLinks(resolvableLinks).orEmpty(),
+        )
+    }
+    LaunchedEffect(comment.id, resolvableLinks) {
+        if (resolvableLinks.isNotEmpty() && resolvedPics.isEmpty()) {
+            resolvedPics = App.repo.resolveInlineImageLinks(resolvableLinks)
+        }
+    }
+    val effectivePics = if (comment.pics.isNotEmpty()) comment.pics else resolvedPics
+    if (effectivePics.isNotEmpty()) {
+        Spacer(Modifier.height(topGap))
+        CommentThumbnails(effectivePics, height, onImage)
+    }
+}
+
+/**
  * 评论配图。放在正文下面、同一个文字列里，所以天然与文字左对齐，而不是与头像对齐。
  * 高度固定，单图按原比例收在 72–200dp；多图一律正方形，跟信息流的九宫格区分开。
  */
@@ -747,6 +781,7 @@ internal fun CommentThumbnails(
     onImage: (List<Pic>, Int) -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
+    val origins = LocalImageOrigins.current
     val single = pics.size == 1
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         pics.take(4).forEachIndexed { index, pic ->
@@ -763,20 +798,23 @@ internal fun CommentThumbnails(
             } else {
                 height
             }
+            val shown = pic.thumb.ifBlank { pic.large }
             Box(
                 modifier = Modifier
                     .size(width, height)
+                    .imageOrigin(pic.large, 8.dp, aspect = aspect, model = shown)
                     .clip(RoundedCornerShape(8.dp))
                     .background(scheme.surfaceContainerHigh)
                     .testTag("comment_pic_$index")
                     .clickable { onImage(pics, index) },
             ) {
                 AsyncImage(
-                    model = pic.thumb.ifBlank { pic.large },
+                    model = shown,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
                     onSuccess = { state ->
+                        origins.putCacheKey(pic.large, state.result.memoryCacheKey)
                         if (declaredAspect == null) {
                             val s = state.painter.intrinsicSize
                             if (s.width > 0f && s.height > 0f) measuredAspect = s.width / s.height
@@ -1152,10 +1190,7 @@ private fun CommentCard(    comment: Comment,
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                 )
-                if (comment.pics.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    CommentThumbnails(comment.pics, 96.dp, onImage)
-                }
+                CommentInlinePics(comment, 96.dp, onImage)
                 comment.reply?.let { reply ->
                     Spacer(Modifier.height(6.dp))
                     // The quoted reply is the page tone inside a card, so the app keeps exactly one
@@ -1177,6 +1212,7 @@ private fun CommentCard(    comment: Comment,
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
                         )
+                        CommentInlinePics(reply, 72.dp, onImage)
                     }
                 }
                 if (!keepFrame) {
@@ -1353,10 +1389,7 @@ internal fun ReplyRow(
                 fontSize = bodySize,
                 lineHeight = bodyLineHeight,
             )
-            if (reply.pics.isNotEmpty()) {
-                Spacer(Modifier.height(thumbGap))
-                CommentThumbnails(reply.pics, thumbSize, onImage)
-            }
+            CommentInlinePics(reply, thumbSize, onImage, topGap = thumbGap)
             Spacer(Modifier.height(bottomGap))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
