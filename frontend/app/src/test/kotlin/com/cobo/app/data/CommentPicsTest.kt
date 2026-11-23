@@ -133,6 +133,51 @@ class CommentPicsTest {
     }
 
     @Test
+    fun skipsClientPlaceholderPicsAndFallsBackToPicObject() {
+        val comment = Comment.from(
+            JSONObject(
+                """
+                {
+                  "idstr": "5368541841990139",
+                  "text": "图片评论",
+                  "created_at": "Mon Nov 23 22:40:00 +0800 2026",
+                  "like_count": 150,
+                  "pic_num": 1,
+                  "pic": {
+                    "pid": "007I2iyygy1ijchtupaxrj30u50gzn0s",
+                    "url": "https://wx4.sinaimg.cn/orj360/007I2iyygy1ijchtupaxrj30u50gzn0s.jpg",
+                    "size": "orj360",
+                    "geo": {"width": 479, "height": 270, "croped": false},
+                    "large": {
+                      "size": "large",
+                      "url": "https://wx4.sinaimg.cn/large/007I2iyygy1ijchtupaxrj30u50gzn0s.jpg",
+                      "geo": {"width": "1085", "height": "611", "croped": false}
+                    }
+                  },
+                  "pics": [
+                    {
+                      "pid": null,
+                      "url": "https://ss1.sinaimg.cn/orj360/&690",
+                      "size": "orj360",
+                      "geo": false,
+                      "large": {"size": "large", "url": "https://ss1.sinaimg.cn/large/&690", "geo": false},
+                      "duration": 0,
+                      "type": "video"
+                    }
+                  ]
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(1, comment.pics.size)
+        assertEquals("https://wx4.sinaimg.cn/orj360/007I2iyygy1ijchtupaxrj30u50gzn0s.jpg", comment.pics[0].thumb)
+        assertEquals("https://wx4.sinaimg.cn/large/007I2iyygy1ijchtupaxrj30u50gzn0s.jpg", comment.pics[0].large)
+        assertEquals(1085, comment.pics[0].width)
+        assertEquals(611, comment.pics[0].height)
+    }
+
+    @Test
     fun commentWithoutPictureHasNoPics() {        val comment = Comment.from(
             JSONObject(
                 """

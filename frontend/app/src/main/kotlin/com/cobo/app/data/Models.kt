@@ -226,12 +226,14 @@ private fun unwrapLivePhoto(raw: String): String = livePlayUrl(raw)
 internal fun picsOf(o: JSONObject): List<Pic> {
     val arr = o.optJSONArray("pics")
     if (arr != null && arr.length() > 0) {
-        return buildList {
+        val parsed = buildList {
             for (i in 0 until arr.length()) {
                 val p = arr.optJSONObject(i) ?: continue
                 picOf(p)?.let(::add)
             }
         }
+        // `pics` 可能整组都是占位项（图片评论的客户端通道就是这样），此时继续看 `pic_ids` / `pic_infos`。
+        if (parsed.isNotEmpty()) return parsed
     }
     val ids = o.optJSONArray("pic_ids")
     val infos = o.optJSONObject("pic_infos")
@@ -268,7 +270,8 @@ private fun picOf(p: JSONObject): Pic? {
     val large = p.optJSONObject("large") ?: p.optJSONObject("largest") ?: p.optJSONObject("original") ?: p.optJSONObject("mw2000")
     val thumbObj = p.optJSONObject("bmiddle") ?: p.optJSONObject("thumbnail") ?: p.optJSONObject("orj360")
     val directUrl = (p.opt("url") as? String)?.trim().orEmpty()
-    val pid = (p.opt("pid") as? String)?.trim().orEmpty()
+    val rawPid = (p.opt("pid") as? String)?.trim().orEmpty()
+    val pid = if (rawPid.equals("null", ignoreCase = true) || rawPid.equals("undefined", ignoreCase = true)) "" else rawPid
     val url = directUrl
         .ifBlank { (thumbObj?.opt("url") as? String)?.trim().orEmpty() }
         .ifBlank { (large?.opt("url") as? String)?.trim().orEmpty() }
@@ -296,17 +299,35 @@ private fun picOf(p: JSONObject): Pic? {
         ?: if (pid.isNotBlank() && directUrl.isBlank()) "https://wx1.sinaimg.cn/large/$pid.jpg" else com.cobo.app.ui.toLargeSinaImageUrl(thumbUrl)
     val largeUrl = normalizeWeiboMediaUrl(largeCandidate).ifBlank { thumbUrl }
     if (thumbUrl.isBlank() && large == null && videoInfo == null) return null
+    val liveUrl = if (videoInfo == null) liveVideoUrl(p) else ""
+    // 客户端通道的图片评论会在 `pics` 里塞一条占位项（`{"pid": null, "url": ".../orj360/&690"}`），
+    // 真图在旁边的 `pic` 字段。占位地址没有真实文件名，当成配图只会渲染出一个空灰块。
+    if (videoInfo == null && liveUrl.isBlank() &&
+        isPlaceholderWeiboPicUrl(thumbUrl) && isPlaceholderWeiboPicUrl(largeUrl)
+    ) {
+        return null
+    }
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
     return Pic(
         thumb = thumbUrl,
         large = largeUrl,
         width = geo?.int("width") ?: large?.int("width") ?: p.int("width"),
         height = geo?.int("height") ?: large?.int("height") ?: p.int("height"),
-        live = if (videoInfo == null) liveVideoUrl(p) else "",
+        live = liveUrl,
         videoUrl = videoInfo?.url.orEmpty(),
         videoTitle = videoInfo?.title.orEmpty(),
         durationSec = videoInfo?.durationSec ?: 0,
     )
+}
+
+/**
+ * 微博图床的占位地址（如 `https://ss1.sinaimg.cn/orj360/&690`）没有真实文件名，
+ * 是客户端通道给图片评论凑数的 `pics` 项；真图在同一个对象的 `pic` 字段里。
+ */
+private fun isPlaceholderWeiboPicUrl(url: String): Boolean {
+    if (url.isBlank()) return true
+    val name = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
+    return name.isBlank() || name.contains('&') || name.equals("null", ignoreCase = true)
 }
 
 /**
