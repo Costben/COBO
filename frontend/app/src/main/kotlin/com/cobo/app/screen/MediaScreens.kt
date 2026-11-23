@@ -164,6 +164,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -253,6 +256,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -905,8 +909,9 @@ fun ImageViewerScreen(
                     }
                 }
 
-                // 实况标记：与顶部控件共用同一套 HighlightedIconButton 胶囊材质。
+                // 实况标记（左下角）与声音开关（右下角）：与顶部控件共用同一套 HighlightedIconButton 胶囊材质。
                 if (currentPic?.isLive == true) {
+                    val liveSound = App.settings.livePhotoSound
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
@@ -915,6 +920,31 @@ fun ImageViewerScreen(
                             .padding(start = 12.dp, bottom = 12.dp),
                     ) {
                         LivePill()
+                    }
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .graphicsLayer { alpha = chromeFade() }
+                            .navigationBarsPadding()
+                            .padding(end = 12.dp, bottom = 12.dp),
+                    ) {
+                        HighlightedIconButton(
+                            size = MediaControlHeight,
+                            modifier = Modifier.testTag("live_photo_sound_toggle"),
+                            onClick = {
+                                if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                    val next = !liveSound
+                                    App.settings.applyLivePhotoSound(next)
+                                    saver.flash(if (next) "已开启实况声音" else "已静音实况")
+                                }
+                            },
+                        ) {
+                            Icon(
+                                imageVector = if (liveSound) CoboIcons.VolumeOn else CoboIcons.VolumeOff,
+                                contentDescription = if (liveSound) "实况静音" else "开启实况声音",
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1115,8 +1145,12 @@ private fun ZoomableImage(
         else mediaCacheFile(context, targetUrl, "img").takeIf { it.length() > 0L }
         mutableStateOf<File?>(pre)
     }
-    // 实况只在手指按住时播，松手回到静图。放大之后手势归缩放层，不再触发播放。
-    var holding by remember { mutableStateOf(false) }
+    // 开启自动播放时停稳后自动播一次并收起；播完或关闭开关时仅在手指长按时播，放大后手势归缩放层。
+    val playback = remember(live) { LivePhotoPlaybackState() }
+    val liveAutoPlay = App.settings.livePhotoAutoPlay
+    val liveSound = App.settings.livePhotoSound
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val transition = LocalRouteTransition.current
     // 第一帧出来之前不盖静图：PlayerView 默认是黑底，地址播不出来时整页会变成黑屏。
     var liveReady by remember(live) { mutableStateOf(false) }
     var liveFailed by remember(live) { mutableStateOf(false) }
@@ -1131,45 +1165,113 @@ private fun ZoomableImage(
             liveFile = cacheMedia(context, live, mediaCacheFile(context, live, "mov"))
         }
     }
-    val playing = holding && liveFile != null && isCurrent && scale <= 1f + ZoomEpsilon
+    val canLivePlay = liveFile != null &&
+        !liveFailed &&
+        isCurrent &&
+        scale <= 1f + ZoomEpsilon &&
+        !frame.dismiss.active &&
+        !frame.dismiss.exiting &&
+        transition?.exiting?.invoke() != true
+    val playing = canLivePlay && playback.isPlaying
     val livePlayer = remember(liveFile) {
         val file = liveFile
         if (file == null) {
             null
         } else {
             ExoPlayer.Builder(context).build().apply {
-                volume = 0f
-                repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
+                // 不主动抢占系统音频焦点，避免滑过实况图时打断后台音乐；仅按开关控制音量。
+                volume = if (App.settings.livePhotoSound) 1f else 0f
+                repeatMode = Player.REPEAT_MODE_OFF
                 playWhenReady = false
-                setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
-                addListener(object : androidx.media3.common.Player.Listener {
+                setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+                addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
                         liveReady = true
                     }
 
-                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_ENDED) {
+                            playback.onPlaybackEnded()
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
                         liveFailed = true
-                        android.util.Log.e("CoboLive", "${error.errorCodeName} ${file.name}", error)
+                        playback.onInterrupted()
+                        Log.e("CoboLive", "${error.errorCodeName} ${file.name}", error)
                     }
                 })
                 prepare()
             }
         }
     }
+    LaunchedEffect(livePlayer, liveSound) {
+        livePlayer?.volume = if (liveSound) 1f else 0f
+    }
     DisposableEffect(livePlayer) {
         onDispose { livePlayer?.release() }
+    }
+    DisposableEffect(lifecycleOwner, playback) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                playback.onInterrupted()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(isCurrent) {
+        if (!isCurrent) {
+            playback.onLeftPage()
+        }
+    }
+    LaunchedEffect(canLivePlay) {
+        if (!canLivePlay) {
+            playback.onInterrupted()
+        }
+    }
+    LaunchedEffect(
+        live,
+        liveAutoPlay,
+        livePlayer,
+        liveFailed,
+        isCurrent,
+        isSettledElsewhere,
+        playback.autoPlayedForVisit,
+    ) {
+        if (live.isBlank() ||
+            !liveAutoPlay ||
+            livePlayer == null ||
+            liveFailed ||
+            !isCurrent ||
+            isSettledElsewhere ||
+            playback.autoPlayedForVisit
+        ) {
+            return@LaunchedEffect
+        }
+        snapshotFlow {
+            progress() >= 0.98f &&
+                !isPagerScrolling() &&
+                !frame.dismiss.active &&
+                !frame.dismiss.exiting &&
+                transition?.exiting?.invoke() != true &&
+                scale <= 1f + ZoomEpsilon
+        }.first { it }
+        playback.tryAutoPlay(enabled = true)
     }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val couiHaptic = rememberCouiHaptic()
     var edgeHit by remember(url) { mutableIntStateOf(0) }
-    LaunchedEffect(playing) {
+    LaunchedEffect(livePlayer, playing, playback.holdSession) {
         val player = livePlayer ?: return@LaunchedEffect
         if (playing) {
-            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            if (playback.holding) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            }
             player.seekTo(0)
             player.play()
         } else {
-            // 停在松手这一帧上淡回静图。先跳回开头再淡出，第一帧会在过渡里闪一下。
+            // 停在松手或播完这一帧上淡回静图。先跳回开头再淡出，第一帧会在过渡里闪一下。
             player.pause()
             delay(LiveFadeMillis.toLong())
             if (!playing) player.seekTo(0)
@@ -1477,7 +1579,7 @@ private fun ZoomableImage(
             // 层本身一直在，进出只改透明度，避免整块视图插进来时闪一下。
             if (livePlayer != null) {
                 val liveAlpha by androidx.compose.animation.core.animateFloatAsState(
-                    targetValue = if (playing) 1f else 0f,
+                    targetValue = if (playing && liveReady) 1f else 0f,
                     animationSpec = tween(LiveFadeMillis),
                     label = "live",
                 )
@@ -1535,18 +1637,24 @@ private fun ZoomableImage(
             }
         }
         if (liveStatus.isNotEmpty() && chromeVisible) {
-            Text(
-                text = liveStatus,
-                color = Color.White,
-                fontSize = 12.sp,
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 28.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+                    .padding(bottom = 12.dp)
+                    .height(MediaControlHeight),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = liveStatus,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
         }
 
         // Gestures sit on an untransformed full-screen layer so screen-space drag and fling velocity stay exact.
@@ -1564,8 +1672,12 @@ private fun ZoomableImage(
                         detectLivePress(
                             onTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) onTap() },
                             onDoubleTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) toggleZoom(it) },
-                            onPlay = { if (!frame.dismiss.active && !frame.dismiss.exiting) holding = true },
-                            onStop = { holding = false },
+                            onPlay = {
+                                if (!frame.dismiss.active && !frame.dismiss.exiting) {
+                                    playback.onLongPressStart()
+                                }
+                            },
+                            onStop = { playback.onLongPressEnd() },
                         )
                     }
                 }
@@ -1576,7 +1688,7 @@ private fun ZoomableImage(
                             mode = GestureMode.UNDECIDED
                             glide.value?.cancel()
                             // 手指已经在滑了，这次按住不算实况。
-                            holding = false
+                            playback.onLongPressEnd()
                             if (frame.dismiss.active && !frame.dismiss.exiting) {
                                 frame.dismiss.animJob?.cancel()
                             }
@@ -1596,7 +1708,7 @@ private fun ZoomableImage(
                                 mode = GestureMode.PAGER
                                 return@detectZoomAndPan false
                             }
-                            holding = false
+                            playback.onInterrupted()
                             if (frame.dismiss.active) {
                                 // 回弹中途被手指再次接住，按当前落点重算锚点，避免画面跳变。
                                 mode = GestureMode.DISMISS
@@ -1617,7 +1729,7 @@ private fun ZoomableImage(
                                     return@detectZoomAndPan false
                                 } else if (currentCanStartDismiss()) {
                                     mode = GestureMode.DISMISS
-                                    holding = false
+                                    playback.onInterrupted()
                                     frame.dismiss.startDrag(focus)
                                 } else {
                                     mode = GestureMode.PAGER
@@ -1860,6 +1972,60 @@ private fun TiledLongImageOverlay(
  * fingers land; [onRelease] once they are all up, with the speed the last one left at and whether
  * the gesture took anything at all.
  */
+/**
+ * 单张实况图在看图页当次访问中的播放状态机：
+ * - 开启自动播放时，页面停稳后触发一次播放，播完自动收起且不再循环；
+ * - 播完（或被打断）后留在当前页只能靠长按重新触发；
+ * - 划离当前页后重置访问标记，再次划回可重新自动播放一次。
+ */
+@Stable
+internal class LivePhotoPlaybackState {
+    var holding by mutableStateOf(false)
+        private set
+    var autoPlaying by mutableStateOf(false)
+        private set
+    var autoPlayedForVisit by mutableStateOf(false)
+        private set
+    var holdSession by mutableIntStateOf(0)
+        private set
+
+    val isPlaying: Boolean
+        get() = holding || autoPlaying
+
+    fun tryAutoPlay(enabled: Boolean): Boolean {
+        if (!enabled || autoPlayedForVisit || holding) return false
+        autoPlayedForVisit = true
+        autoPlaying = true
+        return true
+    }
+
+    fun onPlaybackEnded() {
+        autoPlaying = false
+    }
+
+    fun onLongPressStart() {
+        autoPlaying = false
+        autoPlayedForVisit = true
+        holding = true
+        holdSession++
+    }
+
+    fun onLongPressEnd() {
+        holding = false
+    }
+
+    fun onInterrupted() {
+        holding = false
+        autoPlaying = false
+    }
+
+    fun onLeftPage() {
+        holding = false
+        autoPlaying = false
+        autoPlayedForVisit = false
+    }
+}
+
 /** 按住这么久、期间手指没滑开，才算要播实况。短于左右滑的判断，长于一次点按。 */
 private const val LiveHoldMillis = 280L
 

@@ -37,6 +37,8 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_show_vip_level",
             "settings_show_fan_level",
             "settings_show_verified_badge",
+            "settings_live_photo_auto_play",
+            "settings_live_photo_sound",
             "settings_in_app_browser",
             "settings_confirm_like",
             "settings_accounts",

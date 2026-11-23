@@ -329,6 +329,14 @@ class Settings(context: Context) {
     )
         private set
 
+    /** 实况图滑动自动播放：开启后进入或滑动到实况图时自动播放一次，结束后仅支持长按重播。默认开。 */
+    var livePhotoAutoPlay by mutableStateOf(sp.getBoolean("live_photo_auto_play", true))
+        private set
+
+    /** 实况图声音播放：开启后播放实况图附带的视频声音，关闭时静音播放。默认开。 */
+    var livePhotoSound by mutableStateOf(sp.getBoolean("live_photo_sound", true))
+        private set
+
     /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
@@ -608,6 +616,16 @@ class Settings(context: Context) {
     fun applyImageBrowseQuality(value: ImageBrowseQuality) {
         imageBrowseQuality = value
         sp.edit().putString("image_browse_quality", value.key).apply()
+    }
+
+    fun applyLivePhotoAutoPlay(value: Boolean) {
+        livePhotoAutoPlay = value
+        sp.edit().putBoolean("live_photo_auto_play", value).apply()
+    }
+
+    fun applyLivePhotoSound(value: Boolean) {
+        livePhotoSound = value
+        sp.edit().putBoolean("live_photo_sound", value).apply()
     }
 
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */

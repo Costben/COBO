@@ -770,4 +770,38 @@ object CoboIcons {
             }
         }.build()
     }
+
+    /** 实况图声音开启：线性扬声器与双声波。 */
+    val VolumeOn: ImageVector by lazy {
+        outline("VolumeOn") {
+            moveTo(11.0f, 5.5f)
+            lineTo(6.8f, 9.0f)
+            horizontalLineTo(3.8f)
+            verticalLineTo(15.0f)
+            horizontalLineTo(6.8f)
+            lineTo(11.0f, 18.5f)
+            close()
+            moveTo(14.8f, 8.8f)
+            curveTo(16.2f, 10.2f, 16.2f, 13.8f, 14.8f, 15.2f)
+            moveTo(17.6f, 6.2f)
+            curveTo(20.1f, 9.1f, 20.1f, 14.9f, 17.6f, 17.8f)
+        }
+    }
+
+    /** 实况图静音：线性扬声器与叉号。 */
+    val VolumeOff: ImageVector by lazy {
+        outline("VolumeOff") {
+            moveTo(11.0f, 5.5f)
+            lineTo(6.8f, 9.0f)
+            horizontalLineTo(3.8f)
+            verticalLineTo(15.0f)
+            horizontalLineTo(6.8f)
+            lineTo(11.0f, 18.5f)
+            close()
+            moveTo(15.2f, 9.6f)
+            lineTo(19.8f, 14.4f)
+            moveTo(19.8f, 9.6f)
+            lineTo(15.2f, 14.4f)
+        }
+    }
 }

@@ -426,6 +426,24 @@ private fun LazyListScope.displaySettingsItems(
             )
             PreferenceDivider()
             SwitchPreference(
+                checked = App.settings.livePhotoAutoPlay,
+                onCheckedChange = { App.settings.applyLivePhotoAutoPlay(it) },
+                title = "实况图自动播放",
+                summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
+                modifier = Modifier.testTag("settings_live_photo_auto_play"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
+                checked = App.settings.livePhotoSound,
+                onCheckedChange = { App.settings.applyLivePhotoSound(it) },
+                title = "实况图播放声音",
+                summary = "播放实况图时同步播放附带的视频声音",
+                modifier = Modifier.testTag("settings_live_photo_sound"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            PreferenceDivider()
+            SwitchPreference(
                 checked = state.inAppBrowser,
                 onCheckedChange = {
                     state.inAppBrowser = it
