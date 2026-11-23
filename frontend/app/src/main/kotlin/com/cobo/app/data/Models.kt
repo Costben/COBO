@@ -132,12 +132,16 @@ data class User(
             return User(
                 id = id,
                 name = o.str("screen_name").ifBlank { o.str("name") },
-                avatar = o.str("avatar_hd")
-                    .ifBlank { o.str("avatar_large") }
-                    .ifBlank { o.str("profile_image_url") }
-                    .ifBlank { o.str("avatar") }
-                    .ifBlank { o.str("round_avatar_large") }
-                    .ifBlank { o.str("round_profile_image_url") },
+                // 没换过头像的账号，`avatar_hd` 会给 `.../default_avatar_male_180&690` 这种占位地址（404），
+                // 直接取会一直显示灰圈；跳过占位项落到 `profile_image_url` 的默认头像。
+                avatar = listOf(
+                    o.str("avatar_hd"),
+                    o.str("avatar_large"),
+                    o.str("profile_image_url"),
+                    o.str("avatar"),
+                    o.str("round_avatar_large"),
+                    o.str("round_profile_image_url"),
+                ).firstOrNull { !isPlaceholderWeiboMediaUrl(it) }.orEmpty(),
                 verified = o.optBoolean("verified", false),
                 verifiedType = o.optInt("verified_type", -1),
                 following = o.optBoolean("following", false),
@@ -303,7 +307,7 @@ private fun picOf(p: JSONObject): Pic? {
     // 客户端通道的图片评论会在 `pics` 里塞一条占位项（`{"pid": null, "url": ".../orj360/&690"}`），
     // 真图在旁边的 `pic` 字段。占位地址没有真实文件名，当成配图只会渲染出一个空灰块。
     if (videoInfo == null && liveUrl.isBlank() &&
-        isPlaceholderWeiboPicUrl(thumbUrl) && isPlaceholderWeiboPicUrl(largeUrl)
+        isPlaceholderWeiboMediaUrl(thumbUrl) && isPlaceholderWeiboMediaUrl(largeUrl)
     ) {
         return null
     }
@@ -321,10 +325,11 @@ private fun picOf(p: JSONObject): Pic? {
 }
 
 /**
- * 微博图床的占位地址（如 `https://ss1.sinaimg.cn/orj360/&690`）没有真实文件名，
- * 是客户端通道给图片评论凑数的 `pics` 项；真图在同一个对象的 `pic` 字段里。
+ * 微博图床的占位地址（如 `https://ss1.sinaimg.cn/orj360/&690`、`.../default_avatar_male_180&690`）
+ * 没有真实文件名，请求一律 404：图片评论的 `pics` 用它凑数（真图在旁边的 `pic` 字段），
+ * 没换过头像的账号用它冒充 `avatar_hd`。这类地址不能当成可加载的媒体。
  */
-private fun isPlaceholderWeiboPicUrl(url: String): Boolean {
+private fun isPlaceholderWeiboMediaUrl(url: String): Boolean {
     if (url.isBlank()) return true
     val name = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
     return name.isBlank() || name.contains('&') || name.equals("null", ignoreCase = true)

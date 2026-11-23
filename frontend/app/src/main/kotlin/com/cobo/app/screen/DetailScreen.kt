@@ -92,6 +92,7 @@ import com.cobo.app.data.Membership
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
+import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.stripHtml
@@ -506,6 +507,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
                         onRepost = { repostComment = it },
                         onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
+                        onUser = { nav.push(Route.Profile(it.id)) },
                     ) {
                         val at = comments.indexOfFirst { it.id == comment.id }
                         if (at < 0) return@CommentCard
@@ -660,6 +662,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
             onRepost = { repostComment = it },
             onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
+            onUser = { nav.push(Route.Profile(it.id)) },
             onSyncComment = { updated ->
                 val idx = comments.indexOfFirst { it.id == updated.id }
                 if (idx >= 0) comments[idx] = updated
@@ -1030,6 +1033,7 @@ private fun CommentCard(    comment: Comment,
     onImage: (List<Pic>, Int) -> Unit,
     onRepost: (Comment) -> Unit,
     onReport: (Comment) -> Unit,
+    onUser: (User) -> Unit = {},
     onLike: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
@@ -1154,6 +1158,10 @@ private fun CommentCard(    comment: Comment,
                 url = comment.user?.avatar,
                 size = 34.dp,
                 verifiedKind = comment.user?.verifiedKind ?: VerifiedKind.None,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { comment.user?.let(onUser) },
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
@@ -1173,7 +1181,12 @@ private fun CommentCard(    comment: Comment,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { comment.user?.let(onUser) },
                         )
                         CommentHeaderBadges(comment, 14.dp)
                     }
@@ -1207,6 +1220,10 @@ private fun CommentCard(    comment: Comment,
                             "@${reply.user?.name.orEmpty()}：",
                             fontSize = 12.sp,
                             color = scheme.primary,
+                            modifier = Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { reply.user?.let(onUser) },
                         )
                         WeiboText(
                             html = reply.textHtml,
@@ -1242,6 +1259,7 @@ private fun CommentCard(    comment: Comment,
                                 onImage = onImage,
                                 onRepost = onRepost,
                                 onReport = onReport,
+                                onUser = onUser,
                             )
                         }
                         when {
@@ -1333,6 +1351,7 @@ internal fun ReplyRow(
     onImage: (List<Pic>, Int) -> Unit = { _, _ -> },
     onRepost: (Comment) -> Unit = {},
     onReport: (Comment) -> Unit = {},
+    onUser: (User) -> Unit = {},
 ) {
     val scheme = COUITheme.colorScheme
     val avatarSize = if (compact) 22.dp else 36.dp
@@ -1351,6 +1370,10 @@ internal fun ReplyRow(
             url = reply.user?.avatar,
             size = avatarSize,
             verifiedKind = reply.user?.verifiedKind ?: VerifiedKind.None,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { reply.user?.let(onUser) },
         )
         Spacer(Modifier.width(avatarGap))
         Column(Modifier.weight(1f)) {
@@ -1369,7 +1392,12 @@ internal fun ReplyRow(
                         fontWeight = nameWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { reply.user?.let(onUser) },
                     )
                     CommentHeaderBadges(reply, badgeSize)
                 }

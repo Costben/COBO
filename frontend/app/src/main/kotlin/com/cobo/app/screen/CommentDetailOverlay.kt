@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.Pic
+import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.parseWeiboTimeMillis
@@ -134,6 +135,7 @@ internal fun CommentDetailOverlay(
     onImage: (List<Pic>, Int) -> Unit,
     onRepost: (Comment) -> Unit,
     onReport: (Comment) -> Unit,
+    onUser: (User) -> Unit,
     onSyncComment: (Comment) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -166,6 +168,7 @@ internal fun CommentDetailOverlay(
             onImage = onImage,
             onRepost = onRepost,
             onReport = onReport,
+            onUser = onUser,
             onSyncComment = onSyncComment,
             onClose = onClose,
         )
@@ -183,6 +186,7 @@ private fun CommentDetailSheetContent(
     onImage: (List<Pic>, Int) -> Unit,
     onRepost: (Comment) -> Unit,
     onReport: (Comment) -> Unit,
+    onUser: (User) -> Unit,
     onSyncComment: (Comment) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -372,6 +376,10 @@ private fun CommentDetailSheetContent(
                                     url = rootComment.user?.avatar,
                                     size = 36.dp,
                                     verifiedKind = rootComment.user?.verifiedKind ?: VerifiedKind.None,
+                                    modifier = Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) { rootComment.user?.let(onUser) },
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
@@ -390,7 +398,12 @@ private fun CommentDetailSheetContent(
                                                 fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f, fill = false),
+                                                modifier = Modifier
+                                                    .weight(1f, fill = false)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null,
+                                                    ) { rootComment.user?.let(onUser) },
                                             )
                                             CommentHeaderBadges(rootComment, 14.dp)
                                         }
@@ -422,6 +435,10 @@ private fun CommentDetailSheetContent(
                                                 "@${quoted.user?.name.orEmpty()}：",
                                                 fontSize = 12.sp,
                                                 color = scheme.primary,
+                                                modifier = Modifier.clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                ) { quoted.user?.let(onUser) },
                                             )
                                             WeiboText(
                                                 html = quoted.textHtml,
@@ -545,6 +562,7 @@ private fun CommentDetailSheetContent(
                                             onImage = onImage,
                                             onRepost = onRepost,
                                             onReport = onReport,
+                                            onUser = onUser,
                                         )
                                     }
                                 }
