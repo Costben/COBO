@@ -460,6 +460,7 @@ private fun MediaMaterialPill(
         Box(
             modifier = modifier
                 .height(height)
+                .onSizeChanged { pillWidthPx = it.width }
                 .couiTouchMotion(
                     enabled = onClick != null,
                     motionState = touchMotion,
@@ -510,12 +511,11 @@ private fun MediaMaterialPill(
                 } else {
                     null
                 },
-                continuousCurve = true,
+                continuousCurve = squircleEnabled,
             )
             Box(
                 modifier = Modifier
                     .height(height)
-                    .onSizeChanged { pillWidthPx = it.width }
                     .padding(horizontal = horizontalPadding),
                 contentAlignment = Alignment.Center,
                 content = content,
@@ -3685,10 +3685,14 @@ private fun DirectVideoPlayer(
                     Icon(COUIIcons.Close, "关闭", Modifier.size(18.dp))
                 }
                 if (liveMode) {
+                    val liveSquircleEnabled = isSquircleEnabled()
+                    val liveShape = remember(liveSquircleEnabled) {
+                        CapsuleOutlineShape(squircleEnabled = liveSquircleEnabled)
+                    }
                     Spacer(Modifier.width(8.dp))
                     Row(
                         modifier = Modifier
-                            .clip(CircleShape)
+                            .clip(liveShape)
                             .background(Color.White.copy(alpha = 0.14f))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,

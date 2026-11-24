@@ -160,6 +160,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.icon.extended.Reply
 import io.github.suqi8.coui.kmp.icon.extended.Report
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
+import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import kotlinx.coroutines.CancellationException
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -962,12 +963,14 @@ internal fun CommentMoreButton(
     )
     val buttonSize = if (compact) 18.dp else 20.dp
     val iconSize = if (compact) 16.dp else 18.dp
+    val squircleEnabled = isSquircleEnabled()
+    val moreButtonShape = remember(squircleEnabled) { SquircleShape(6.dp, squircleEnabled = squircleEnabled) }
 
     Box {
         Box(
             modifier = Modifier
                 .size(buttonSize)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(moreButtonShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1759,7 +1762,7 @@ private fun DetailFloatingToolbar(
                 rimColor = Color.White.copy(alpha = HighlightedIconButtonDefaults.stroke(isDark).edgeAlpha),
                 rimBottomScale = 1f,
                 bottomGlowColor = if (isDark) HighlightedIconButtonDefaults.DarkHaloColor else null,
-                continuousCurve = true,
+                continuousCurve = squircleEnabled,
             )
             Row(
                 modifier = Modifier

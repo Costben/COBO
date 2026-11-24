@@ -184,7 +184,9 @@ import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.FullPageRefreshState
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import androidx.compose.ui.layout.onSizeChanged
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
+import io.github.suqi8.coui.kmp.basic.MaterialShadowEdgeDefaults
 import io.github.suqi8.coui.kmp.basic.materialShadowEdge
 import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
@@ -1260,9 +1262,16 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
     val capsuleShape = remember(squircleEnabled) {
         CapsuleOutlineShape(squircleEnabled = squircleEnabled)
     }
+    var isWideCapsule by remember { mutableStateOf(true) }
+    val capsuleCornerWeight = if (squircleEnabled && isWideCapsule) {
+        MaterialShadowEdgeDefaults.CornerWeight
+    } else {
+        MaterialShadowEdgeDefaults.CapsuleCornerWeight
+    }
     Box(
         modifier = modifier
             .height(36.dp)
+            .onSizeChanged { isWideCapsule = it.width > it.height }
             .graphicsLayer {
                 val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press
                 scaleX = scale
@@ -1286,7 +1295,10 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
                     ),
                 )
             }
-            .materialShadowEdge(stroke = HighlightedIconButtonDefaults.stroke(isDark))
+            .materialShadowEdge(
+                stroke = HighlightedIconButtonDefaults.stroke(isDark),
+                cornerWeight = capsuleCornerWeight,
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

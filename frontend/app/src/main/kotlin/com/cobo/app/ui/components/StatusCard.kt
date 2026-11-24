@@ -111,6 +111,7 @@ import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
+import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import kotlinx.coroutines.launch
@@ -452,12 +453,14 @@ private fun StatusMoreButton(
         (if (onToggleCloudFavorite != null) 1 else 0) +
             (if (onToggleFavorite != null) 1 else 0) +
             (if (onDelete != null) 1 else 0)
+    val squircleEnabled = isSquircleEnabled()
+    val moreButtonShape = remember(squircleEnabled) { SquircleShape(6.dp, squircleEnabled = squircleEnabled) }
     Box {
         Box(
             modifier = Modifier
                 .height(20.dp)
                 .widthIn(min = 32.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(moreButtonShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

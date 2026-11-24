@@ -342,9 +342,11 @@ fun ActionIcon(
     contentDescription: String? = null,
 ) {
     val color = if (enabled) tint else tint.copy(alpha = 0.38f)
+    val squircleEnabled = isSquircleEnabled()
+    val shape = remember(squircleEnabled) { SquircleShape(8.dp, squircleEnabled = squircleEnabled) }
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(shape)
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

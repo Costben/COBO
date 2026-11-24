@@ -47,7 +47,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -112,6 +111,8 @@ import io.github.suqi8.coui.kmp.basic.ChipTabGroup
 import io.github.suqi8.coui.kmp.basic.GradientStrokeStyle
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.InnerShadowStyle
+import androidx.compose.ui.layout.onSizeChanged
+import io.github.suqi8.coui.kmp.basic.MaterialShadowEdgeDefaults
 import io.github.suqi8.coui.kmp.basic.MaterialStrokeParams
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.materialShadowEdge
@@ -742,6 +743,9 @@ fun WeiboEmojiPanel(
     val hasImages = remember(items) { items.any { it.url.isNotBlank() } }
     val isPureUnicode = remember(items) { items.isNotEmpty() && !hasImages && !items.first().phrase.startsWith("[") }
     val columns = if (hasImages || isPureUnicode) 7 else 4
+    val squircleEnabled = isSquircleEnabled()
+    val mediaCellShape = remember(squircleEnabled) { SquircleShape(8.dp, squircleEnabled = squircleEnabled) }
+    val chipCellShape = remember(squircleEnabled) { SquircleShape(10.dp, squircleEnabled = squircleEnabled) }
 
     Column(modifier.fillMaxWidth()) {
         ChipTabGroup(
@@ -770,7 +774,7 @@ fun WeiboEmojiPanel(
                             Box(
                                 Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(mediaCellShape)
                                     .clickable { onPick(emoji) }
                                     .padding(vertical = 5.dp),
                                 contentAlignment = Alignment.Center,
@@ -785,7 +789,7 @@ fun WeiboEmojiPanel(
                             Box(
                                 Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(mediaCellShape)
                                     .clickable { onPick(emoji) }
                                     .padding(vertical = 5.dp),
                                 contentAlignment = Alignment.Center,
@@ -796,7 +800,7 @@ fun WeiboEmojiPanel(
                             Box(
                                 Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(chipCellShape)
                                     .background(ComposerPanel.surfaceColor())
                                     .clickable { onPick(emoji) }
                                     .padding(horizontal = 4.dp, vertical = 8.dp),
@@ -1068,7 +1072,14 @@ private fun PanelToolbarButton(
     val isDark = COUITheme.colorScheme.background.luminance() < 0.5f
     val fill = if (isDark) ComposerPanel.ToolbarFillDark else Color.Transparent
     val halo = if (isDark) ComposerPanel.ToolbarHaloDark else ComposerPanel.ToolbarHaloLight
-    val capsuleShape = rememberComposerCapsuleShape()
+    val squircleEnabled = isSquircleEnabled()
+    val capsuleShape = remember(squircleEnabled) { CapsuleOutlineShape(squircleEnabled = squircleEnabled) }
+    var isWideCapsule by remember { mutableStateOf(true) }
+    val capsuleCornerWeight = if (squircleEnabled && isWideCapsule) {
+        MaterialShadowEdgeDefaults.CornerWeight
+    } else {
+        MaterialShadowEdgeDefaults.CapsuleCornerWeight
+    }
     Box {
         Box(
             modifier = Modifier
@@ -1083,10 +1094,12 @@ private fun PanelToolbarButton(
         )
         Box(
             modifier = Modifier
+                .onSizeChanged { isWideCapsule = it.width > it.height }
                 .clip(capsuleShape)
                 .background(fill)
                 .materialShadowEdge(
                     stroke = ComposerPanel.ToolbarButtonStroke,
+                    cornerWeight = capsuleCornerWeight,
                     edgeStyle = GradientStrokeStyle.EDGE_STYLE_1,
                     shadowStyle = InnerShadowStyle.SHADOW_STYLE_1,
                 )

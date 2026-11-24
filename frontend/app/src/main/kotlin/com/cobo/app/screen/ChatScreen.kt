@@ -79,7 +79,6 @@ import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
-import com.cobo.app.ui.components.COUISmoothCapsuleShape
 import com.cobo.app.ui.components.CompactSendButton
 import com.cobo.app.ui.components.ComposerEmoteTextField
 import com.cobo.app.ui.components.ComposerToolButton
@@ -94,6 +93,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
+import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
@@ -107,6 +107,7 @@ import io.github.suqi8.coui.kmp.layout.SheetCloseCapsule
 import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Photos
+import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
@@ -129,9 +130,6 @@ private val ChatComposerHeight = 36.dp
 
 /** 输入框最多长到多高，再多就在框里自己滚。 */
 private val ChatComposerMaxHeight = 108.dp
-
-/** 底栏连续曲率胶囊，和 BiliCO 私信页同一套 18dp 圆角。 */
-private val ChatComposerShape = COUISmoothCapsuleShape(18.dp)
 
 private val WeiboTimeFormat = "EEE MMM dd HH:mm:ss Z yyyy"
 
@@ -595,6 +593,10 @@ private fun ChatBottomBar(
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
+        val squircleEnabled = isSquircleEnabled()
+        val composerShape = remember(squircleEnabled) {
+            CapsuleOutlineShape(cornerRadius = ChatComposerHeight / 2, squircleEnabled = squircleEnabled)
+        }
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -606,7 +608,7 @@ private fun ChatBottomBar(
                     isDark = isDark,
                     cornerRadius = ChatComposerHeight / 2,
                 )
-                .clip(ChatComposerShape),
+                .clip(composerShape),
         ) {
             ComposerEmoteTextField(
                 value = value,
