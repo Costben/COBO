@@ -502,6 +502,7 @@ fun MainShell(nav: NavState) {
     val collapsed = collapseShown.value
 
     val homeResultsState = rememberSearchResultsState(scope)
+    val searchListState = rememberLazyListState()
 
     // 搜索面板的两种中间态：关键词还没提交（「建议中」，底下仍是热搜/历史），以及已有结果在显示。
     // 顶栏的筛选行与列表区都读同一份判断，避免两处各写一份后漂移。
@@ -872,6 +873,7 @@ fun MainShell(nav: NavState) {
                 discoverState = discoverState,
                 resultsState = homeResultsState,
                 transitionState = searchTransition,
+                listState = searchListState,
                 nav = nav,
                 scope = scope,
                 onSelectKeyword = submitHomeSearch,
@@ -912,6 +914,7 @@ fun MainShell(nav: NavState) {
                     onSearchSubmit = submitHomeSearch,
                     filtersVisible = searchTransition.filtersVisible,
                     resultsState = homeResultsState,
+                    searchListState = searchListState,
                     panelAlpha = { panelAlpha.value },
                     onFilterMenuOpen = { searchFilterMenuOpen = true },
                     onEditProfile = { editProfileOpen = true },
@@ -1032,13 +1035,15 @@ private fun MainBarUnderlay(
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarMeWeight",
     )
-    val feedScrollAlpha = remember(feedPager, feedSlotKeys, timelineScrollHolder, density) {
+    val feedScrollAlpha = remember(feedPager, feedSlotKeys, timelineScrollHolder, density, feedHasTabs) {
         {
             val slotKey = feedSlotKeys.getOrElse(feedPager.currentPage) { feedPager.currentPage.toString() }
             val listState = timelineScrollHolder.listStateFor(slotKey)
-            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
-            else listState.firstVisibleItemScrollOffset.toFloat()
-            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+            if (feedHasTabs) {
+                twoRowListScrollAlpha(listState, density, contentGap = 16.dp)
+            } else {
+                listScrollAlpha(listState, density)
+            }
         }
     }
     val messagesScrollAlpha = remember(messagesState, guest, density) {
@@ -1178,6 +1183,7 @@ private fun HomeSearchOverlay(
     discoverState: SearchDiscoverState,
     resultsState: SearchResultsState,
     transitionState: SearchResultsTransitionState,
+    listState: LazyListState,
     nav: NavState,
     scope: CoroutineScope,
     onSelectKeyword: (String) -> Unit,
@@ -1185,7 +1191,6 @@ private fun HomeSearchOverlay(
     modifier: Modifier = Modifier,
 ) {
     val surfaceColor = pageContainerColor()
-    val listState = rememberLazyListState()
     BindScrollToTop(listState)
     val horizontalPadding = searchHorizontalPadding()
     val density = LocalDensity.current
@@ -1320,6 +1325,7 @@ private fun MainTitleRow(
     onSearchSubmit: (String) -> Unit,
     filtersVisible: Boolean,
     resultsState: SearchResultsState,
+    searchListState: LazyListState,
     panelAlpha: () -> Float,
     onFilterMenuOpen: () -> Unit,
     onEditProfile: () -> Unit = {},
@@ -1343,6 +1349,7 @@ private fun MainTitleRow(
                 onSearchSubmit = onSearchSubmit,
                 filtersVisible = filtersVisible,
                 resultsState = resultsState,
+                searchListState = searchListState,
                 panelAlpha = panelAlpha,
                 onFilterMenuOpen = onFilterMenuOpen,
             )
@@ -1510,11 +1517,13 @@ private fun FeedTitleRow(
     onSearchSubmit: (String) -> Unit,
     filtersVisible: Boolean,
     resultsState: SearchResultsState,
+    searchListState: LazyListState,
     panelAlpha: () -> Float,
     onFilterMenuOpen: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
     val blur = blurEffectsEnabled()
+    val barDensity = LocalDensity.current
 
     // 材质、两行布局与胶囊采样的顺序由 coui 的 SearchFilterTopAppBar 统一处理：材质先录进
     // 栏自己的层，两行画在录制之外，胶囊采的是「模糊提白之后」的画面。这里只负责搜索框本身
@@ -1532,7 +1541,19 @@ private fun FeedTitleRow(
         onLeadingIconClick = onFilterMenuOpen,
         filterContentPadding = PaddingValues(horizontal = searchHorizontalPadding()),
         containerColor = pageContainerColor(),
-        scrollFraction = panelAlpha,
+        scrollFraction = {
+            val base = panelAlpha()
+            if (base <= 0f) {
+                0f
+            } else {
+                val scroll = if (filtersVisible) {
+                    twoRowListScrollAlpha(searchListState, barDensity)
+                } else {
+                    listScrollAlpha(searchListState, barDensity)
+                }
+                base * scroll
+            }
+        },
     ) {
         Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
             Box(

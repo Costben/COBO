@@ -62,6 +62,7 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.twoRowListScrollAlpha
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.rememberExpandOrigin
@@ -238,6 +239,7 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
+                val barDensity = LocalDensity.current
                 val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 SearchFilterTopAppBar(
                     filters = channelTabs,
@@ -256,7 +258,10 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                     onLeadingIconClick = { filterMenuOpen = true },
                     filterContentPadding = PaddingValues(horizontal = horizontalPadding),
                     containerColor = pageContainerColor(),
-                    scrollFraction = { 1f },
+                    scrollFraction = {
+                        val activeIdx = pagerState.currentPage.coerceIn(0, listStates.lastIndex)
+                        twoRowListScrollAlpha(listStates[activeIdx], barDensity, contentGap = 8.dp)
+                    },
                 ) {
                     Row(
                         modifier = Modifier

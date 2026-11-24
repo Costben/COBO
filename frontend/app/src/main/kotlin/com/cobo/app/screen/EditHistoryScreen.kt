@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,11 +35,13 @@ import com.cobo.app.App
 import com.cobo.app.data.EditVersion
 import com.cobo.app.data.Pic
 import com.cobo.app.data.formatWeiboTime
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.rememberListScrollFraction
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.Route
@@ -84,6 +87,8 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
 
     val scheme = COUITheme.colorScheme
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         Box(
@@ -92,8 +97,6 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
-            val listState = rememberLazyListState()
-            BindScrollToTop(listState)
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("edit_history_list"),
@@ -143,14 +146,19 @@ fun EditHistoryScreen(nav: NavState, mid: String) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "编辑记录",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageContainerColor(),
-                    showDivider = false,
-                    gradientGlass = blurEffectsEnabled(),
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "编辑记录",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
     }

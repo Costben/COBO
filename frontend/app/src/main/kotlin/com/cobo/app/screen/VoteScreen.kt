@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -49,12 +50,14 @@ import com.cobo.app.App
 import com.cobo.app.data.Membership
 import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.VoteOption
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
+import com.cobo.app.ui.rememberListScrollFraction
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
@@ -100,6 +103,8 @@ fun VoteScreen(nav: NavState, voteId: String) {
     val backdrop = rememberLayerBackdrop()
     val scheme = COUITheme.colorScheme
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
 
     suspend fun load() {
         loading = true
@@ -139,8 +144,6 @@ fun VoteScreen(nav: NavState, voteId: String) {
 
                 vote != null -> {
                     val currentVote = vote!!
-                    val listState = rememberLazyListState()
-                    BindScrollToTop(listState)
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -502,14 +505,19 @@ fun VoteScreen(nav: NavState, voteId: String) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "微博投票",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageContainerColor(),
-                    showDivider = false,
-                    gradientGlass = blurEffectsEnabled(),
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "微博投票",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
 

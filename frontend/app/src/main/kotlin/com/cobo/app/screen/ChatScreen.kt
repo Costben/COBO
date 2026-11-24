@@ -92,6 +92,7 @@ import com.cobo.app.ui.components.navBottomPadding
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import com.cobo.app.ui.pageContainerColor
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
 import io.github.suqi8.coui.kmp.basic.Icon
@@ -510,10 +511,27 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
             // 关掉是整块实色。SmallTopAppBar 的均匀磨砂会在顶栏下缘留一条硬切线，
             // 这里把它的底色设成透明，只借它的标题 / 图标排版，材质由 AppBarSurface 画。
             PinnedBarDensity {
+                val barDensity = LocalDensity.current
                 AppBarSurface(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     containerColor = pageColor,
-                    scrollFraction = { 1f },
+                    scrollFraction = {
+                        if (messages.isEmpty()) {
+                            0f
+                        } else if (listState.canScrollForward) {
+                            1f
+                        } else {
+                            val info = listState.layoutInfo
+                            val topItem = info.visibleItemsInfo.lastOrNull()
+                            if (topItem == null) {
+                                0f
+                            } else {
+                                val contentTop = info.viewportEndOffset - info.afterContentPadding
+                                val overlap = (topItem.offset + topItem.size - contentTop).coerceAtLeast(0)
+                                AppBarBlurOverlayDefaults.scrollAlpha(overlap.toFloat(), barDensity)
+                            }
+                        }
+                    },
                 ) {
                     SmallTopAppBar(
                         title = peerName,

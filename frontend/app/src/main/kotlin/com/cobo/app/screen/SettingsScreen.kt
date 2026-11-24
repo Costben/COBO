@@ -69,6 +69,7 @@ import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
 import com.cobo.app.ui.AccentHueCycle
 import com.cobo.app.ui.AccentPresets
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.DefaultAccentSwatchColor
 import com.cobo.app.ui.NavState
@@ -88,6 +89,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.parseHexColor
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.rememberListScrollFraction
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
@@ -299,14 +301,19 @@ private fun SettingsScaffold(
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = title,
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageColor,
-                    showDivider = false,
-                    gradientGlass = state.blurEffects,
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = title,
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
     }
@@ -1762,14 +1769,19 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "预测性返回手势设置",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageColor,
-                    showDivider = false,
-                    gradientGlass = blurEffects,
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "预测性返回手势设置",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
     }

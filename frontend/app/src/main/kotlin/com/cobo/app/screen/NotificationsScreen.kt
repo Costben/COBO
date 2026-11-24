@@ -69,6 +69,7 @@ import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.twoRowListScrollAlpha
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.rememberExpandOrigin
@@ -346,6 +347,7 @@ fun NotificationsScreen(
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
+                val barDensity = LocalDensity.current
                 val selectedIdx = pagerState.currentPage.coerceIn(0, tabs.lastIndex)
                 val currentTab = tabs[selectedIdx]
                 TwoRowTopAppBar(
@@ -353,6 +355,10 @@ fun NotificationsScreen(
                     firstRowHeight = TwoRowTopAppBarDefaults.FirstRowHeight,
                     secondRowHeight = TwoRowTopAppBarDefaults.SecondRowHeight,
                     containerColor = pageContainerColor(),
+                    scrollFraction = {
+                        val activeTab = tabs[pagerState.currentPage.coerceIn(0, tabs.lastIndex)]
+                        twoRowListScrollAlpha(listStateFor(activeTab), barDensity)
+                    },
                     secondRow = {
                         ChipTabGroup(
                             tabs = chipTabs,

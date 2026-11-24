@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.Updater
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
@@ -44,6 +46,7 @@ import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.openExternalUrl
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.rememberListScrollFraction
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
@@ -265,14 +268,19 @@ fun AboutScreen(nav: NavState) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "关于",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageColor,
-                    showDivider = false,
-                    gradientGlass = blurEffects,
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "关于",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
     }

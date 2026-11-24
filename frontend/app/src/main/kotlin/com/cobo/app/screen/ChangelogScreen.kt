@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -33,11 +34,13 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.rememberListScrollFraction
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.LoadingState
@@ -146,22 +149,27 @@ fun ChangelogScreen(nav: NavState) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "更新日志",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageContainerColor(),
-                    showDivider = false,
-                    gradientGlass = blurEffectsEnabled(),
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                    actions = {
-                        HighlightedIconButton(
-                            onClick = { reload++ },
-                            modifier = Modifier.couiTopAppBarActionItem().testTag("changelog_reload"),
-                        ) {
-                            Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
-                        }
-                    },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "更新日志",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            HighlightedIconButton(
+                                onClick = { reload++ },
+                                modifier = Modifier.couiTopAppBarActionItem().testTag("changelog_reload"),
+                            ) {
+                                Icon(COUIIcons.Refresh, "刷新", Modifier.size(24.dp))
+                            }
+                        },
+                    )
+                }
             }
         }
     }

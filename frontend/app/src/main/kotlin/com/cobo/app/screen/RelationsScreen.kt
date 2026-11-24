@@ -23,17 +23,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.User
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
+import com.cobo.app.ui.rememberListScrollFraction
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
@@ -185,14 +188,19 @@ fun RelationsScreen(nav: NavState, uid: String, kind: RelationKind) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = if (kind == RelationKind.Following) "关注" else "粉丝",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageContainerColor(),
-                    showDivider = false,
-                    gradientGlass = blurEffectsEnabled(),
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                )
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = if (kind == RelationKind.Following) "关注" else "粉丝",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                    )
+                }
             }
         }
     }

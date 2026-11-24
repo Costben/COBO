@@ -36,6 +36,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,11 +46,13 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.NearbyPlace
 import com.cobo.app.data.deviceCoords
+import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
+import com.cobo.app.ui.rememberListScrollFraction
 import com.cobo.app.ui.glassBarContentTop
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.rememberExpandOrigin
@@ -243,14 +246,18 @@ fun NearbyScreen(nav: NavState) {
             LocalEdgeToEdge provides true,
         ) {
             PinnedBarDensity {
-                SmallTopAppBar(
-                    title = "附近",
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    color = pageContainerColor(),
-                    showDivider = false,
-                    gradientGlass = blurEffectsEnabled(),
-                    navigationIcon = { BackIconButton { nav.pop() } },
-                    actions = {
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageContainerColor(),
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "附近",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
                         HighlightedIconButton(
                             onClick = { locate() },
                             modifier = Modifier.couiTopAppBarActionItem().testTag("nearby_relocate"),
@@ -293,7 +300,8 @@ fun NearbyScreen(nav: NavState) {
                             }
                         }
                     },
-                )
+                    )
+                }
             }
         }
     }
