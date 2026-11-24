@@ -84,6 +84,7 @@ import com.cobo.app.ui.isImageLink
 import com.cobo.app.ui.isWeiboPhotoPageLink
 import com.cobo.app.ui.isWeiboWboxLink
 import com.cobo.app.ui.components.LocalImageSaver
+import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.rememberExpandOrigin
 import com.cobo.app.ui.resolveWeiboLink
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
@@ -760,8 +761,12 @@ fun ImageGrid(
     onVideo: (VideoInfo) -> Unit = {},
 ) {
     val urls = pics.map { it.large }
-    val imageUrls = remember(pics) { pics.filterNot { it.isVideo }.map { it.large } }
-    // 长按任意一张图片缩略图就能弹出「保存原图 / 一键保存原图」，视频条目不走图片保存。
+    val imageItems = remember(pics) {
+        pics.filterNot { it.isVideo }.map {
+            SaveImageItem(url = it.large, liveUrl = it.live, preserveUrl = it.preserveUrl)
+        }
+    }
+    // 长按任意一张图片缩略图就能弹出保存菜单（实况图按实况保存），视频条目不走图片保存。
     val saver = LocalImageSaver.current
     val origins = LocalImageOrigins.current
     if (pics.size == 1) {
@@ -793,8 +798,8 @@ fun ImageGrid(
                             onImage(pics, 0)
                         }
                     },
-                    onLongClick = if (!pic.isVideo && imageUrls.isNotEmpty()) {
-                        { saver?.show(imageUrls, 0, precise) }
+                    onLongClick = if (!pic.isVideo && imageItems.isNotEmpty()) {
+                        { saver?.showItems(imageItems, 0, precise) }
                     } else {
                         null
                     },
@@ -872,10 +877,10 @@ fun ImageGrid(
                                             onImage(pics, index)
                                         }
                                     },
-                                    onLongClick = if (!pic.isVideo && imageUrls.isNotEmpty()) {
+                                    onLongClick = if (!pic.isVideo && imageItems.isNotEmpty()) {
                                         {
                                             val saveIdx = pics.take(index).count { !it.isVideo }
-                                            saver?.show(imageUrls, saveIdx, precise)
+                                            saver?.showItems(imageItems, saveIdx, precise)
                                         }
                                     } else {
                                         null

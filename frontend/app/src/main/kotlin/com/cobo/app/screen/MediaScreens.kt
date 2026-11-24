@@ -214,8 +214,12 @@ import com.cobo.app.ui.unwrapSinaUrl
 import com.cobo.app.ui.components.AvatarCropDialog
 import com.cobo.app.ui.components.CoboRefreshSpinner
 import com.cobo.app.ui.components.ConfirmDialog
+import com.cobo.app.ui.components.SaveHud
+import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
+import com.cobo.app.ui.components.downloadMediaToFile
 import com.cobo.app.ui.components.extractIntentFallbackUrl
+import com.cobo.app.ui.components.liveMediaCacheFile
 import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.BottomFloatingToolbarDefaults
@@ -871,8 +875,11 @@ fun ImageViewerScreen(
                                                         onClick = {
                                                             avatarMoreOpen = false
                                                             saver.saveOne(
-                                                                current,
-                                                                preserveUrl = currentPic?.preserveUrl == true,
+                                                                SaveImageItem(
+                                                                    url = current,
+                                                                    liveUrl = currentPic?.live.orEmpty(),
+                                                                    preserveUrl = currentPic?.preserveUrl == true,
+                                                                ),
                                                             )
                                                         },
                                                     ),
@@ -889,13 +896,20 @@ fun ImageViewerScreen(
                                     onClick = {
                                         if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
                                             saver.saveOne(
-                                                current,
-                                                preserveUrl = currentPic?.preserveUrl == true,
+                                                SaveImageItem(
+                                                    url = current,
+                                                    liveUrl = currentPic?.live.orEmpty(),
+                                                    preserveUrl = currentPic?.preserveUrl == true,
+                                                ),
                                             )
                                         }
                                     },
                                 ) {
-                                    Icon(COUIIcons.Download, "保存原图", Modifier.size(18.dp))
+                                    Icon(
+                                        COUIIcons.Download,
+                                        if (currentPic?.isLive == true) "保存实况图" else "保存原图",
+                                        Modifier.size(18.dp),
+                                    )
                                 }
                             }
                         }
@@ -943,15 +957,24 @@ fun ImageViewerScreen(
             }
         }
 
+        val saveItems = remember(effectivePics) {
+            effectivePics.filterNot { it.isVideo }.map {
+                SaveImageItem(url = it.large, liveUrl = it.live, preserveUrl = it.preserveUrl)
+            }
+        }
+        val saveIndex = effectivePics.take(pagerState.currentPage).count { !it.isVideo }
+
         // 长按呼出的就是 COUI 那个窗口下拉菜单，按手指位置弹在看图页之上。
         SaveImagesMenu(
-            urls = if (menu) urls else null,
-            index = pagerState.currentPage,
+            items = if (menu) saveItems else null,
+            index = saveIndex,
             precise = precise,
             onDismiss = { menu = false },
             state = saver,
-            preserveUrls = currentPic?.preserveUrl == true,
         )
+
+        // 看图页自身的保存 / 切原图 / 静音提示浮字。
+        SaveHud(saver)
 
         pendingCropUri?.let { cropUri ->
             AvatarCropDialog(
@@ -1021,45 +1044,12 @@ private fun LivePill() {
     }
 }
 
-private val MediaCacheClient by lazy { OkHttpClient.Builder().followRedirects(true).build() }
+/** 看图页打开时顺手下的静图和实况视频，与保存链路共用同一缓存路径，清缓存时一起删。 */
+private fun mediaCacheFile(context: Context, url: String, ext: String): File =
+    liveMediaCacheFile(context, url, ext)
 
-/** 看图页打开时顺手下的静图和实况视频，按地址哈希落在应用缓存里，清缓存时一起删。 */
-private fun mediaCacheDir(context: Context): File =
-    File(context.cacheDir, "live").apply { mkdirs() }
-
-private fun mediaCacheFile(context: Context, url: String, ext: String): File {
-    val digest = MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
-    val name = digest.joinToString("") { "%02x".format(it) }
-    return File(mediaCacheDir(context), "$name.$ext")
-}
-
-/**
- * 把 [url] 下到 [dest]。已有且不是空文件就直接用；下载写到临时文件，完整了再换名，
- * 避免按住时读到写了一半的视频。
- */
 private suspend fun cacheMedia(context: Context, url: String, dest: File): File? =
-    withContext(Dispatchers.IO) {
-        if (dest.length() > 0L) return@withContext dest
-        runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-                .header("Referer", "https://m.weibo.cn/")
-                .build()
-            MediaCacheClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val body = response.body ?: return@use null
-                val tmp = File(dest.parentFile, dest.name + ".part")
-                tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
-                if (tmp.length() <= 0L) {
-                    tmp.delete()
-                    return@use null
-                }
-                if (!tmp.renameTo(dest)) tmp.copyTo(dest, overwrite = true).also { tmp.delete() }
-                dest
-            }
-        }.getOrNull()
-    }
+    downloadMediaToFile(url, dest)
 
 private suspend fun cacheImageFile(context: Context, url: String): File? = withContext(Dispatchers.IO) {
     if (!url.startsWith("http://") && !url.startsWith("https://")) {

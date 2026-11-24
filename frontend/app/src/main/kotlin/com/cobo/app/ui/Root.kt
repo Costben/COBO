@@ -99,6 +99,7 @@ import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.ImageSaver
 import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.components.SaveHud
+import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
@@ -267,18 +268,16 @@ fun CoboRoot() {
         }
     }
 
-    // 长按缩略图弹「保存原图」的菜单挂在根节点，任何页面都不用自己搭浮层。
-    var saveTargets by remember { mutableStateOf<List<String>?>(null) }
+    // 长按缩略图弹「保存原图 / 保存实况图」的菜单挂在根节点，任何页面都不用自己搭浮层。
+    var saveTargets by remember { mutableStateOf<List<SaveImageItem>?>(null) }
     var saveIndex by remember { mutableIntStateOf(0) }
     var savePrecise by remember { mutableStateOf<PreciseClickState?>(null) }
-    var savePreserveUrls by remember { mutableStateOf(false) }
     val saveState = rememberImageSaveState()
     val imageSaver = remember {
-        ImageSaver { urls, index, precise, preserveUrls ->
-            saveTargets = urls
+        ImageSaver { items, index, precise ->
+            saveTargets = items
             saveIndex = index
             savePrecise = precise
-            savePreserveUrls = preserveUrls
         }
     }
     // 玻璃菜单要有一层能采样的底：把整摞路由录进 backdrop，菜单浮在上面做模糊和外发光。
@@ -404,12 +403,11 @@ fun CoboRoot() {
             ) {
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     SaveImagesMenu(
-                        urls = saveTargets,
+                        items = saveTargets,
                         index = saveIndex,
                         precise = savePrecise,
                         onDismiss = { saveTargets = null },
                         state = saveState,
-                        preserveUrls = savePreserveUrls,
                     )
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
