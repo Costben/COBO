@@ -724,11 +724,14 @@ fun MainShell(nav: NavState) {
                     tab = tab,
                     feedPager = feedPager,
                     feedTabs = feedTabs,
+                    feedSlotKeys = feedSlotKeys,
                     guest = guest,
                     centerTab = centerTab,
                     centerOptions = centerOptions,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
+                    timelineScrollHolder = timelineScrollHolder,
+                    messagesState = messagesState,
                     profileListState = profileListState,
                     searchExpanded = feedSearchExpanded,
                     panelCovering = feedPanelCovering,
@@ -988,11 +991,14 @@ private fun MainBarUnderlay(
     tab: Int,
     feedPager: PagerState,
     feedTabs: List<FeedTabSpec>,
+    feedSlotKeys: List<String>,
     guest: Boolean,
     centerTab: FeedTabSelection,
     centerOptions: List<FeedTabSelection>,
     collapsed: Float,
     titleHeightPx: Float,
+    timelineScrollHolder: TimelineScrollHolder,
+    messagesState: MessagesTabState,
     profileListState: LazyListState,
     searchExpanded: Boolean,
     panelCovering: Boolean,
@@ -1016,11 +1022,35 @@ private fun MainBarUnderlay(
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarFeedWeight",
     )
-    val meProfileWeight = animateFloatAsState(
-        targetValue = if (tab == 2 && !guest) 1f else 0f,
+    val messagesWeight = animateFloatAsState(
+        targetValue = if (tab == 1) 1f else 0f,
+        animationSpec = tween(MainTabFadeMillis),
+        label = "mainBarMessagesWeight",
+    )
+    val meWeight = animateFloatAsState(
+        targetValue = if (tab == 2) 1f else 0f,
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarMeWeight",
     )
+    val feedScrollAlpha = remember(feedPager, feedSlotKeys, timelineScrollHolder, density) {
+        {
+            val slotKey = feedSlotKeys.getOrElse(feedPager.currentPage) { feedPager.currentPage.toString() }
+            val listState = timelineScrollHolder.listStateFor(slotKey)
+            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+            else listState.firstVisibleItemScrollOffset.toFloat()
+            AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+        }
+    }
+    val messagesScrollAlpha = remember(messagesState, guest, density) {
+        {
+            if (guest) 0f else {
+                val listState = messagesState.listState
+                val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+                else listState.firstVisibleItemScrollOffset.toFloat()
+                AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
+            }
+        }
+    }
     val profileScrollAlpha = remember(profileListState, density) {
         {
             val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
@@ -1050,7 +1080,11 @@ private fun MainBarUnderlay(
                 .offset { IntOffset(0, -materialShift()) }
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
-            scrollFraction = { 1f - meProfileWeight.value * (1f - profileScrollAlpha()) },
+            scrollFraction = {
+                (feedWeight.value * feedScrollAlpha() +
+                    messagesWeight.value * messagesScrollAlpha() +
+                    meWeight.value * profileScrollAlpha()).coerceIn(0f, 1f)
+            },
         ) {
             Box(
                 Modifier
