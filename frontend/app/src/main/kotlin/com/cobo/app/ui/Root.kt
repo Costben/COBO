@@ -104,6 +104,7 @@ import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
+import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -298,11 +299,23 @@ fun CoboRoot() {
         LocalImageOrigins provides imageOrigins,
         LocalExpandOriginVisibility provides expandOriginVisibility,
     ) {
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .semantics { testTagsAsResourceId = true }
+        // 根 Scaffold 提供全局 LocalRootDialogStates / LocalRootPopupStates，
+        // 让全应用所有对话框（OverlayDialog）、底部面板（OverlayBottomSheet）和菜单（含嵌套 Scaffold 页面）
+        // 都落在根节点统一渲染，并读取 rootBackdrop 呈现 ColorOS 17 磨砂玻璃与边缘光。
+        Scaffold(
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets(0),
+            popupHost = {
+                CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
+                    COUIPopupHost()
+                }
+            },
         ) {
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .semantics { testTagsAsResourceId = true }
+            ) {
             val widthPx = constraints.maxWidth.toFloat()
             val windowWidth = maxWidth
             val screenCorner = rememberScreenCornerRadius()
@@ -395,7 +408,7 @@ fun CoboRoot() {
             // HUD 独立于菜单，菜单收起之后它还要自己活 1.6 秒。
             Box(Modifier.fillMaxSize().zIndex(10f)) { SaveHud(saveState) }
 
-            // 保存图片菜单与弹窗宿主均挂在根节点：遵循系统连续曲率超椭圆圆角与边缘光。
+            // 保存图片菜单与点赞确认挂在根节点，弹层内容由外层根 Scaffold 的 popupHost 统一承载并采样 rootBackdrop。
             Box(
                 Modifier
                     .fillMaxSize()
@@ -412,15 +425,11 @@ fun CoboRoot() {
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
                 }
-                // 弹层宿主不提供 rootBackdrop：rootBackdrop 平时没有消费者、处于停止录制状态，
-                // 弹层第一个读到它就会让它开始录制，整棵树重录一帧，压在下面的底栏玻璃会闪一下。
-                // 让它自己回落到打开处的 backdrop（也就是用户正在看的那一页），既不再触发重录，
-                // 弹层模糊的也还是它背后真实的内容。
-                COUIPopupHost()
             }
 
             // 更新提示挂在根节点：自动检查与设置页的手动检查都往 App.pendingUpdate 里写。
             UpdatePrompt()
+            }
         }
     }
 }
