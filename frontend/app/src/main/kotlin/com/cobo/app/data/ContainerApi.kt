@@ -329,6 +329,22 @@ object ContainerApi {
         return parts
     }
 
+    internal fun buildRepostParts(
+        id: String,
+        text: String,
+        visible: Int = 0,
+        media: List<UploadedMedia> = emptyList(),
+    ): LinkedHashMap<String, String> {
+        val parts = linkedMapOf<String, String>()
+        parts["id"] = id
+        parts["status"] = text
+        parts["visible"] = visible.toString()
+        if (media.isNotEmpty()) {
+            parts["media"] = buildPublishMediaJson(media)
+        }
+        return parts
+    }
+
     internal fun parsePicDiscovery(root: JSONObject): PicDiscovery {
         val pic = root.optJSONObject("pic") ?: root.optJSONObject("image")
         val initUrl = pic?.str("init_url").orEmpty()

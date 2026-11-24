@@ -2800,23 +2800,46 @@ class Repo(private val context: Context, private val store: Store) {
             ?: throw ApiException("回复失败")
     }
 
-    suspend fun repost(id: String, mid: String, text: String, visible: Int = 0): Boolean {
+    suspend fun repost(
+        id: String,
+        mid: String,
+        text: String,
+        visible: Int = 0,
+        picIds: List<String> = emptyList(),
+    ): Boolean {
         val ok = if (isClientChannel()) {
-            containerPost(
-                "statuses/repost",
-                form = mapOf(
-                    "id" to id,
-                    "status" to text,
-                    "visible" to visible.toString(),
-                ),
-            )
+            if (picIds.isNotEmpty()) {
+                val mediaList = picIds.map { fid ->
+                    uploadedContainerMedia.remove(fid) ?: ContainerApi.UploadedMedia(fid = fid)
+                }
+                val parts = ContainerApi.buildRepostParts(id, text, visible, mediaList)
+                containerPostMultipart(
+                    "statuses/repost",
+                    parts = parts,
+                    queryExtra = mapOf(
+                        "luicode" to "10000001",
+                        "uicode" to "10000713",
+                        "moduleID" to "704",
+                    ),
+                )
+            } else {
+                containerPost(
+                    "statuses/repost",
+                    form = mapOf(
+                        "id" to id,
+                        "status" to text,
+                        "visible" to visible.toString(),
+                    ),
+                )
+            }
             true
         } else {
             val form = LinkedHashMap<String, String>()
             form["id"] = id
             form["mid"] = mid.ifBlank { id }
-            form["content"] = text
+            form["content"] = if (picIds.isNotEmpty() && text.isBlank()) "转发微博" else text
             if (visible != 0) form["visible"] = visible.toString()
+            if (picIds.isNotEmpty()) form["picId"] = picIds.joinToString(",")
             postOk("https://m.weibo.cn/api/statuses/repost", form)
         }
         App.cache.clear()

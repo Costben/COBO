@@ -3,6 +3,7 @@ package com.cobo.app.ui.components
 import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.graphics.drawable.BitmapDrawable
+import android.net.Uri
 import android.text.Editable
 import android.text.InputFilter
 import android.text.Spanned
@@ -18,6 +19,9 @@ import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -74,8 +78,10 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -110,8 +116,10 @@ import io.github.suqi8.coui.kmp.basic.MaterialStrokeParams
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.materialShadowEdge
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Community
 import io.github.suqi8.coui.kmp.icon.extended.Contacts
+import io.github.suqi8.coui.kmp.icon.extended.Image
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.Ok
 import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
@@ -205,16 +213,44 @@ fun ComposerBottomSheet(
     allowEmpty: Boolean = false,
     showVisibility: Boolean = false,
     maxLength: Int = 500,
+    maxImages: Int = 0,
     onDismiss: () -> Unit,
-    onSubmit: suspend (String, WeiboVisibility) -> Boolean,
+    onSubmit: suspend (String, List<Uri>, WeiboVisibility) -> Boolean,
 ) {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val input = rememberComposerInputState(initialText)
+    var images by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var emojiPanel by remember { mutableStateOf(false) }
     var visibility by remember { mutableStateOf(WeiboVisibility.Public) }
     var visibilityDialog by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
+
+    val singleImagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null && maxImages > 0) {
+            images = listOf(uri)
+        }
+    }
+    val multiImagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxImages.coerceAtLeast(2)),
+    ) { uris ->
+        if (uris.isNotEmpty() && maxImages > 0) {
+            images = (images + uris).distinct().take(maxImages)
+        }
+    }
+
+    fun pickImages() {
+        if (maxImages <= 0 || submitting) return
+        emojiPanel = false
+        val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        if (maxImages == 1) {
+            singleImagePicker.launch(request)
+        } else {
+            multiImagePicker.launch(request)
+        }
+    }
 
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
@@ -245,7 +281,7 @@ fun ComposerBottomSheet(
     val bottomGap = ComposerPanel.BottomInset +
         (ComposerPanel.KeyboardBottomInset - ComposerPanel.BottomInset) * keyboardGapProgress
 
-    val canSubmit = !submitting && (allowEmpty || input.text.isNotBlank())
+    val canSubmit = !submitting && (allowEmpty || input.text.isNotBlank() || images.isNotEmpty())
 
     OverlayBottomSheet(
         show = shown,
@@ -289,7 +325,8 @@ fun ComposerBottomSheet(
         Spacer(Modifier.height(ComposerPanel.ToolbarToBodyGap))
 
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val belowField = (if (activeTrigger != null) ComposerPanel.SuggestHeight else 0.dp) +
+            val belowField = (if (images.isNotEmpty()) ComposerPanel.MediaPreviewHeight else 0.dp) +
+                (if (activeTrigger != null) ComposerPanel.SuggestHeight else 0.dp) +
                 (if (emojiPanel) ComposerPanel.EmojiHeight else 0.dp) +
                 ComposerPanel.ToolsGap + ComposerPanel.ToolsHeight +
                 ComposerPanel.ActionGap + ComposerPanel.ActionHeight
@@ -329,6 +366,15 @@ fun ComposerBottomSheet(
             }
         }
 
+        if (images.isNotEmpty()) {
+            ComposerImageStrip(
+                images = images,
+                enabled = !submitting,
+                onRemove = { uri -> images = images - uri },
+                onPreviewClick = ::pickImages,
+            )
+        }
+
         if (activeTrigger != null) {
             ComposerSuggestPanel(
                 trigger = activeTrigger,
@@ -354,7 +400,17 @@ fun ComposerBottomSheet(
                 .height(ComposerPanel.ToolsHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ToolbarIcon(CoboIcons.Emoji, selected = emojiPanel) {
+            if (maxImages > 0) {
+                ToolbarIcon(
+                    icon = COUIIcons.Image,
+                    selected = images.isNotEmpty(),
+                    enabled = !submitting,
+                    modifier = Modifier.testTag("composer_image"),
+                    onClick = ::pickImages,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            ToolbarIcon(CoboIcons.Emoji, selected = emojiPanel, enabled = !submitting) {
                 emojiPanel = !emojiPanel
                 if (emojiPanel) {
                     input.clearFocus()
@@ -364,13 +420,13 @@ fun ComposerBottomSheet(
                 }
             }
             Spacer(Modifier.width(8.dp))
-            ToolbarIcon(CoboIcons.At, selected = activeTrigger is ComposerTrigger.Mention) {
+            ToolbarIcon(CoboIcons.At, selected = activeTrigger is ComposerTrigger.Mention, enabled = !submitting) {
                 emojiPanel = false
                 input.insert("@")
                 input.focus()
             }
             Spacer(Modifier.width(8.dp))
-            ToolbarIcon(CoboIcons.Topic, selected = activeTrigger is ComposerTrigger.Topic) {
+            ToolbarIcon(CoboIcons.Topic, selected = activeTrigger is ComposerTrigger.Topic, enabled = !submitting) {
                 emojiPanel = false
                 input.insert("##", cursorBack = 1)
                 input.focus()
@@ -378,9 +434,11 @@ fun ComposerBottomSheet(
             Spacer(Modifier.weight(1f))
             if (showVisibility) {
                 VisibilityPill(visibility = visibility) {
-                    input.clearFocus()
-                    focusManager.clearFocus()
-                    visibilityDialog = true
+                    if (!submitting) {
+                        input.clearFocus()
+                        focusManager.clearFocus()
+                        visibilityDialog = true
+                    }
                 }
             }
         }
@@ -393,7 +451,7 @@ fun ComposerBottomSheet(
                 if (submitting) return@ActionCapsule
                 submitting = true
                 scope.launch {
-                    val ok = onSubmit(input.text.trim(), visibility)
+                    val ok = onSubmit(input.text.trim(), images, visibility)
                     submitting = false
                     if (ok) leave(onDismiss)
                 }
@@ -947,6 +1005,7 @@ private object ComposerPanel {
     val ToolbarToBodyGap = 8.dp
     val EditorRadius = 20.dp
     val MinEditorHeight = 76.dp
+    val MediaPreviewHeight = 84.dp
     val SuggestHeight = 168.dp
     val EmojiHeight = 220.dp
     val ToolsHeight = 36.dp
@@ -1095,16 +1154,72 @@ private fun ActionCapsule(
 }
 
 @Composable
+private fun ComposerImageStrip(
+    images: List<Uri>,
+    enabled: Boolean,
+    onRemove: (Uri) -> Unit,
+    onPreviewClick: () -> Unit,
+) {
+    val squircleEnabled = isSquircleEnabled()
+    val thumbShape = remember(squircleEnabled) { SquircleShape(12.dp, squircleEnabled = squircleEnabled) }
+    val closeShape = remember(squircleEnabled) { SquircleShape(10.dp, squircleEnabled = squircleEnabled) }
+    val scheme = COUITheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        images.forEach { uri ->
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(thumbShape)
+                    .background(ComposerPanel.surfaceColor())
+                    .clickable(enabled = enabled, onClick = onPreviewClick),
+            ) {
+                AsyncImage(
+                    model = uri,
+                    contentDescription = "已选配图",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(20.dp)
+                        .clip(closeShape)
+                        .background(scheme.background.copy(alpha = 0.85f))
+                        .clickable(enabled = enabled) { onRemove(uri) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = COUIIcons.Close,
+                        contentDescription = "移除配图",
+                        modifier = Modifier.size(13.dp),
+                        tint = scheme.onSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ToolbarIcon(
     icon: ImageVector,
     selected: Boolean,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.92f else 1f,
-        animationSpec = if (pressed) {
+        targetValue = if (pressed && enabled) 0.92f else 1f,
+        animationSpec = if (pressed && enabled) {
             tween(durationMillis = 70)
         } else {
             spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMedium)
@@ -1114,15 +1229,17 @@ private fun ToolbarIcon(
     val squircleEnabled = isSquircleEnabled()
     val shape = remember(squircleEnabled) { SquircleShape(8.dp, squircleEnabled = squircleEnabled) }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(36.dp)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
+                alpha = if (enabled) 1f else 0.45f
             }
             .clip(shape)
             .background(if (selected) COUITheme.colorScheme.secondaryContainer else Color.Transparent)
             .clickable(
+                enabled = enabled,
                 role = Role.Button,
                 interactionSource = interactionSource,
                 onClick = onClick,

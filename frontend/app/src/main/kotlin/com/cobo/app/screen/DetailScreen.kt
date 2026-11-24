@@ -687,13 +687,15 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         "//@${it.user?.name.orEmpty()}：${stripHtml(it.textHtml)}"
                     }.orEmpty(),
                     showVisibility = true,
+                    maxImages = 1,
                     onDismiss = {
                         repostDialog = false
                         repostComment = null
                     },
-                    onSubmit = { text, visibility ->
+                    onSubmit = { text, images, visibility ->
                         try {
-                            App.repo.repost(id, effectiveMid(), text, visibility.code)
+                            val picIds = images.map { App.repo.uploadImage(it) }
+                            App.repo.repost(id, effectiveMid(), text, visibility.code, picIds)
                             App.toast("已转发")
                             true
                         } catch (e: CancellationException) {
@@ -711,7 +713,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     hint = "写评论",
                     submitText = "发布",
                     onDismiss = { commentDialog = false },
-                    onSubmit = { text, _ ->
+                    onSubmit = { text, _, _ ->
                         try {
                             App.repo.comment(id, effectiveMid(), text)
                             App.toast("评论成功")
@@ -1321,7 +1323,7 @@ private fun CommentCard(    comment: Comment,
             hint = "写回复",
             submitText = "回复",
             onDismiss = { replyTarget = null },
-            onSubmit = { text, _ ->
+            onSubmit = { text, _, _ ->
                 try {
                     val created = App.repo.replyComment(statusId, mid, target.id, text)
                     App.toast("回复成功")

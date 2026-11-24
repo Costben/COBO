@@ -93,6 +93,7 @@ import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
@@ -137,6 +138,8 @@ fun StatusCard(
     onDeleted: (() -> Unit)? = null,
     /** 是否保留最外层卡片外框。关掉后只去掉卡片底色与圆角，内容横向与顶栏按钮对齐。 */
     keepFrame: Boolean = true,
+    /** 去掉卡片外框时，是否在两条微博之间画一条与正文同缩进的底部分割线。 */
+    showBottomDivider: Boolean = false,
     /** 信息流按官方 140 字规则折叠长文；详情页传 false，始终显示全文。 */
     foldLongText: Boolean = App.settings.foldLongText,
 ) {
@@ -267,15 +270,24 @@ fun StatusCard(
             content = content,
         )
     } else {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpen)
-                // 列表左右各留 12dp，这里再补 4dp，内容左缘正好落在 16dp 的顶栏按钮外框上，
-                // 不再比返回/搜索按钮更靠外。
-                .padding(horizontal = FlatFrameInset, vertical = 12.dp),
-            content = content,
-        )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpen)
+                    // 列表左右各留 12dp，这里再补 4dp，内容左缘正好落在 16dp 的顶栏按钮外框上，
+                    // 不再比返回/搜索按钮更靠外。
+                    .padding(horizontal = FlatFrameInset, vertical = 12.dp),
+                content = content,
+            )
+            if (showBottomDivider) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = FlatFrameInset),
+                    thickness = 0.5.dp,
+                    color = scheme.dividerLine,
+                )
+            }
+        }
     }
     if (confirmDelete) {
         ConfirmDialog(

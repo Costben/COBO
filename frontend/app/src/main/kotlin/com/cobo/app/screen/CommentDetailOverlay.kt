@@ -641,7 +641,7 @@ private fun CommentDetailSheetContent(
                 hint = "写回复",
                 submitText = "回复",
                 onDismiss = { replyTarget = null },
-                onSubmit = { text, _ ->
+                onSubmit = { text, _, _ ->
                     try {
                         val created = App.repo.replyComment(statusId, mid, target.id, text)
                         App.toast("回复成功")

@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
@@ -991,6 +991,7 @@ private fun TimelinePage(
         refreshTexts = FullPageRefreshTexts,
         completeHoldDurationMillis = FullPageRefreshHoldMillis,
     ) {
+        val feedCardFrame = App.settings.feedCardFrame
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
@@ -1000,7 +1001,7 @@ private fun TimelinePage(
                 end = 12.dp,
                 bottom = 96.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(if (feedCardFrame) 8.dp else 0.dp),
         ) {
             if (store.items.isEmpty()) {
                 item {
@@ -1015,27 +1016,28 @@ private fun TimelinePage(
                 }
             }
             val entries = store.entries()
-            items(
+            itemsIndexed(
                 items = entries,
-                key = { it.key },
-                contentType = { entry ->
+                key = { _, entry -> entry.key },
+                contentType = { _, entry ->
                     when (entry) {
                         is FeedEntry.Gap -> "gap"
                         is FeedEntry.ReadMarker -> "read_marker"
                         is FeedEntry.Post -> "post"
                     }
                 },
-            ) { entry ->
+            ) { entryIndex, entry ->
                 when (entry) {
                     is FeedEntry.Gap -> {
                         FeedGapCard(
                             gap = entry.gap,
+                            modifier = if (feedCardFrame) Modifier else Modifier.padding(vertical = 6.dp),
                             onClick = { scope.launch { store.loadGap(entry.gap.id) } },
                         )
                     }
                     is FeedEntry.ReadMarker -> {
                         FeedReadMarker(
-                            keepFrame = App.settings.feedCardFrame,
+                            keepFrame = feedCardFrame,
                             refreshing = store.refreshing,
                             onClick = { scope.launch { store.refresh() } },
                         )
@@ -1045,6 +1047,9 @@ private fun TimelinePage(
                         val index = entry.statusIndex
                         val origin = rememberExpandOrigin()
                         val topBar = LocalTopBarBounds.current
+                        val showDivider = !feedCardFrame && entries.drop(entryIndex + 1).firstOrNull {
+                            it !is FeedEntry.Post || !App.repo.isDeleted(it.status.id)
+                        } is FeedEntry.Post
                         // Hand the card's list and bar to the origin so a return can lift the row out from
                         // under the bar instead of drawing the card over it.
                         SideEffect {
@@ -1067,7 +1072,8 @@ private fun TimelinePage(
                                 quotedOrigin.attachToRow(listState, status.id, topBar)
                                 nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
                             },
-                            keepFrame = App.settings.feedCardFrame,
+                            keepFrame = feedCardFrame,
+                            showBottomDivider = showDivider,
                         )
                     }
                 }
@@ -1133,11 +1139,12 @@ private suspend fun LazyListState.glideToTop() {
 @Composable
 private fun FeedGapCard(
     gap: FeedGap,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val scheme = COUITheme.colorScheme
     Card(
-        modifier = Modifier.fillMaxWidth().testTag("feed_gap_${gap.id}"),
+        modifier = modifier.fillMaxWidth().testTag("feed_gap_${gap.id}"),
         cornerRadius = CardDefaults.GroupCornerRadius,
         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         weight = CardDefaults.GroupWeight,

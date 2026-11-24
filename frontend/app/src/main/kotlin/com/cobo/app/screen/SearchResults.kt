@@ -887,13 +887,16 @@ private fun LazyListScope.searchStatusTabItems(
     }
     itemsIndexed(items, key = { _, s -> "${tabKey}_${s.id}" }) { idx, status ->
         val origin = rememberExpandOrigin()
+        val feedCardFrame = App.settings.feedCardFrame
+        val showDivider = !feedCardFrame && items.drop(idx + 1).any { !App.repo.isDeleted(it.id) }
         Box(Modifier.padding(horizontal = 12.dp)) {
             StatusCard(
                 status = status,
                 modifier = Modifier
                     .expandOrigin(origin)
                     .then(if (tabKey == "weibo") Modifier.testTag("search_card_$idx") else Modifier.testTag("search_${tabKey}_$idx")),
-                keepFrame = App.settings.feedCardFrame,
+                keepFrame = feedCardFrame,
+                showBottomDivider = showDivider,
                 onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
                 onDeleted = { items.removeAll { it.id == status.id } },
                 onOpenQuoted = { quoted, quotedOrigin ->

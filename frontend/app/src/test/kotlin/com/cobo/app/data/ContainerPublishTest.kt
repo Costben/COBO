@@ -45,6 +45,37 @@ class ContainerPublishTest {
     }
 
     @Test
+    fun buildRepostPartsUsesIdStatusVisibleAndOptionalMedia() {
+        val textOnly = ContainerApi.buildRepostParts(id = "500123", text = "转发看看", visible = 0)
+        assertEquals("500123", textOnly["id"])
+        assertEquals("转发看看", textOnly["status"])
+        assertEquals("0", textOnly["visible"])
+        assertFalse(textOnly.containsKey("media"))
+
+        val withMedia = ContainerApi.buildRepostParts(
+            id = "500123",
+            text = "带图转发",
+            visible = 1,
+            media = listOf(
+                ContainerApi.UploadedMedia(
+                    fid = "1042018:repost999",
+                    md5 = "0123456789abcdef0123456789abcdef",
+                    bypass = "unistore.image",
+                ),
+            ),
+        )
+        assertEquals("500123", withMedia["id"])
+        assertEquals("带图转发", withMedia["status"])
+        assertEquals("1", withMedia["visible"])
+        val mediaArr = JSONArray(withMedia.getValue("media"))
+        assertEquals(1, mediaArr.length())
+        val first = mediaArr.getJSONObject(0)
+        assertEquals("1042018:repost999", first.getString("fid"))
+        assertEquals("pic", first.getString("type"))
+        assertEquals("0123456789abcdef0123456789abcdef", first.getString("pic_raw_md5"))
+    }
+
+    @Test
     fun parsePicDiscoveryAndUploadInitSupportMssAndLegacyPlans() {
         val discovery = ContainerApi.parsePicDiscovery(
             JSONObject(

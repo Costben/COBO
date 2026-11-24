@@ -404,7 +404,7 @@ fun NotificationsScreen(
                 hint = "写回复",
                 submitText = "回复",
                 onDismiss = { replyTarget = null },
-                onSubmit = { text, _ ->
+                onSubmit = { text, _, _ ->
                     try {
                         App.repo.replyComment(
                             id = status.id,
