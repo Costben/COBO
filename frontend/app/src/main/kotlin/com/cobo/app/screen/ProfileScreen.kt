@@ -979,7 +979,7 @@ fun ProfileHubContent(
                         )
                         Spacer(Modifier.height(12.dp))
                         Button(
-                            onClick = { nav.push(Route.Login()) },
+                            onClick = { nav.push(Route.SmsLogin()) },
                             colors = ButtonDefaults.buttonColorsPrimary(),
                             modifier = Modifier.fillMaxWidth().testTag("local_login"),
                         ) {

@@ -840,7 +840,7 @@ fun MainShell(nav: NavState) {
                                     App.repo.switchAccount(account)
                                     nav.reset(Route.Main)
                                 },
-                                onAddAccount = { nav.push(Route.Login(addAccount = true, fresh = true)) },
+                                onAddAccount = { nav.push(Route.SmsLogin(addAccount = true)) },
                                 onManageAccounts = { nav.push(Route.Accounts) },
                             )
                         }

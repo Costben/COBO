@@ -72,7 +72,7 @@ private sealed interface ClientAuthStage {
 @Composable
 fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) {
     val scope = rememberCoroutineScope()
-    var useDirectSms by remember { mutableStateOf(false) }
+    var useDirectSms by remember { mutableStateOf(true) }
     var stage by remember { mutableStateOf<ClientAuthStage>(ClientAuthStage.Credentials) }
 
     // 账号密码表单态
@@ -96,8 +96,7 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
     var cooldown by remember { mutableIntStateOf(0) }
     var hint by remember {
         mutableStateOf(
-            if (relogin != null) "登录「$relogin」，完成后会升级为可自动续签的长期会话"
-            else "输入账号与密码登录；如触发登录保护，只需收一次短信验证码即可长期保活",
+            if (relogin != null) "请重新登录「$relogin」" else "",
         )
     }
 
@@ -253,12 +252,14 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                         stage is ClientAuthStage.WebVerify -> "安全验证"
                         relogin != null -> "重新登录"
                         addAccount -> "添加账号"
-                        else -> "客户端登录"
+                        else -> "登录"
                     },
                     navigationIcon = {
-                        BackIconButton {
-                            if (stage != ClientAuthStage.Credentials) stage = ClientAuthStage.Credentials
-                            else nav.pop()
+                        if (stage != ClientAuthStage.Credentials || nav.stack.size > 1) {
+                            BackIconButton {
+                                if (stage != ClientAuthStage.Credentials) stage = ClientAuthStage.Credentials
+                                else nav.pop()
+                            }
                         }
                     },
                 )
@@ -327,12 +328,6 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                         .padding(padding)
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
-                    Text(
-                        "登录后只保存长期凭证 gsid 与四域 Cookie，到期自动无感续签，不保存登录密码。",
-                        fontSize = 13.sp,
-                        color = COUITheme.colorScheme.onSurfaceSecondary,
-                    )
-                    Spacer(Modifier.height(14.dp))
                     if (!useDirectSms) {
                         PasswordCredentialsSection(
                             account = accountInput,
@@ -355,13 +350,15 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                             onSubmit = { submitDirectSms() },
                         )
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = hint,
-                        fontSize = 12.sp,
-                        color = COUITheme.colorScheme.onSurfaceSecondary,
-                    )
-                    Spacer(Modifier.height(6.dp))
+                    if (hint.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = hint,
+                            fontSize = 12.sp,
+                            color = COUITheme.colorScheme.onSurfaceSecondary,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -370,11 +367,7 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                             text = if (useDirectSms) "账号密码登录" else "验证码登录",
                             onClick = {
                                 useDirectSms = !useDirectSms
-                                hint = if (useDirectSms) {
-                                    "输入手机号，收到短信验证码后登录（如已开启登录保护建议用账号密码）"
-                                } else {
-                                    "输入账号与密码登录；如触发登录保护，只需收一次短信验证码即可长期保活"
-                                }
+                                hint = if (relogin != null) "请重新登录「$relogin」" else ""
                             },
                             modifier = Modifier.weight(1f).testTag("sms_toggle_mode"),
                         )
@@ -383,9 +376,20 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                             onClick = {
                                 val prev = nav.stack.dropLast(1).lastOrNull()?.route
                                 if (prev is Route.Login) nav.pop()
-                                else nav.push(Route.Login(addAccount = addAccount, fresh = addAccount, relogin = relogin))
+                                else nav.push(Route.Login(addAccount = addAccount, fresh = true, relogin = relogin))
                             },
                             modifier = Modifier.weight(1f).testTag("sms_to_web"),
+                        )
+                    }
+                    if (!addAccount && nav.stack.size == 1) {
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            text = "不登录，纯本地浏览",
+                            onClick = {
+                                App.repo.enterLocalMode()
+                                nav.reset(Route.Main)
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally).testTag("login_local_mode"),
                         )
                     }
                 }

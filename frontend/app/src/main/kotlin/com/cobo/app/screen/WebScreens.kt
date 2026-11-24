@@ -121,8 +121,8 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
     var saving by remember { mutableStateOf(false) }
     var hint by remember {
         mutableStateOf(
-            if (relogin != null) "请登录「$relogin」，完成后会更新这个账号的登录信息"
-            else "登录完成后会自动保存会话",
+            if (relogin != null) "请重新登录「$relogin」"
+            else "",
         )
     }
 
@@ -188,14 +188,20 @@ fun LoginScreen(nav: NavState, addAccount: Boolean, fresh: Boolean = false, relo
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    text = hint,
-                    fontSize = 12.sp,
-                    color = COUITheme.colorScheme.onSurfaceSecondary,
-                )
+                if (hint.isNotBlank()) {
+                    Text(
+                        text = hint,
+                        fontSize = 12.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                    )
+                }
                 TextButton(
-                    text = "用账号密码登录（长期续签）",
-                    onClick = { nav.push(Route.SmsLogin(addAccount, relogin)) },
+                    text = "验证码 / 密码登录",
+                    onClick = {
+                        val prev = nav.stack.dropLast(1).lastOrNull()?.route
+                        if (prev is Route.SmsLogin) nav.pop()
+                        else nav.push(Route.SmsLogin(addAccount, relogin))
+                    },
                     modifier = Modifier.testTag("login_sms"),
                 )
                 // 只在启动就落到登录页时给：从纯本地模式点进来登录的，返回键就能回去。

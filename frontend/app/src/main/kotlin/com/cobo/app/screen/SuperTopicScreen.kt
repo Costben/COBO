@@ -272,7 +272,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                             Spacer(Modifier.height(8.dp))
                                         }
                                         if (feed.error?.contains("登录") == true) {
-                                            TextButton(text = "前往登录", onClick = { nav.push(Route.Login()) })
+                                            TextButton(text = "前往登录", onClick = { nav.push(Route.SmsLogin()) })
                                         }
                                     }
                                 }
@@ -286,7 +286,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                                 scope.launch { feed.refresh() }
                                             }
                                             if (pageIndex != 0 && feed.error?.contains("登录") == true) {
-                                                TextButton(text = "前往登录", onClick = { nav.push(Route.Login()) })
+                                                TextButton(text = "前往登录", onClick = { nav.push(Route.SmsLogin()) })
                                             }
                                         }
                                         else -> EmptyState("这个分类暂时没有内容")

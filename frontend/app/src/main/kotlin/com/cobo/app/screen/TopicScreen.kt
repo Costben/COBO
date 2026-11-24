@@ -208,7 +208,7 @@ fun TopicScreen(nav: NavState, initial: String = "") {
                     Column {
                         ErrorState(store.error!!, onRetry = ::submit)
                         if (store.loginRequired) {
-                            TextButton(text = "前往登录", onClick = { nav.push(Route.Login()) })
+                            TextButton(text = "前往登录", onClick = { nav.push(Route.SmsLogin()) })
                         }
                     }
                 }

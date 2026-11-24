@@ -267,7 +267,7 @@ class NavState {
                 App.startRoute == "tablab" -> Route.TabLab
                 App.startRoute == "main" -> Route.Main
                 App.repo.hasSession() || App.settings.localMode -> Route.Main
-                else -> Route.Login()
+                else -> Route.SmsLogin()
             }
         )
     )

@@ -858,7 +858,7 @@ private fun LazyListScope.otherSettingsItems(
                     cardListPosition = CardListPosition.Full,
                     onClick = {
                         App.settings.applyLocalMode(false)
-                        nav.reset(Route.Login())
+                        nav.reset(Route.SmsLogin())
                     },
                 )
             } else {
@@ -906,7 +906,7 @@ private fun SettingsDialogs(
                 CookieManager.getInstance().removeAllCookies(null)
                 CookieManager.getInstance().flush()
                 App.repo.logout()
-                nav.reset(Route.Login())
+                nav.reset(Route.SmsLogin())
             },
         )
     }

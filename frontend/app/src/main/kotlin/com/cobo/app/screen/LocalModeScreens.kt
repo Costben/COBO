@@ -57,7 +57,7 @@ fun LocalMessagesPlaceholder(nav: NavState, topInset: Dp) {
         EmptyState("纯本地模式没有私信和通知\n登录微博账号后可用")
         TextButton(
             text = "登录微博账号",
-            onClick = { nav.push(Route.Login()) },
+            onClick = { nav.push(Route.SmsLogin()) },
             modifier = Modifier.testTag("local_login"),
         )
     }
@@ -115,7 +115,7 @@ fun LocalHome(
                 Spacer(Modifier.height(4.dp))
                 TextButton(
                     text = "登录微博账号",
-                    onClick = { nav.push(Route.Login()) },
+                    onClick = { nav.push(Route.SmsLogin()) },
                     modifier = Modifier.testTag("local_login"),
                 )
             }

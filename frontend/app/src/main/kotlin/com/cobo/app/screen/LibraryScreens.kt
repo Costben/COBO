@@ -464,7 +464,7 @@ fun AccountsScreen(nav: NavState) {
                             Icon(COUIIcons.Refresh, "刷新账号状态", Modifier.size(24.dp))
                         }
                         HighlightedIconButton(
-                            onClick = { nav.push(Route.Login(addAccount = true, fresh = true)) },
+                            onClick = { nav.push(Route.SmsLogin(addAccount = true)) },
                             modifier = Modifier.couiTopAppBarActionItem(),
                         ) {
                             Icon(COUIIcons.Add, "添加账号", Modifier.size(24.dp))
@@ -508,7 +508,7 @@ fun AccountsScreen(nav: NavState) {
                 NotificationSwipeBox(
                     onSettings = {
                         openUid = null
-                        nav.push(Route.Login(addAccount = true, fresh = true, relogin = name))
+                        nav.push(Route.SmsLogin(addAccount = true, relogin = name))
                     },
                     onDismiss = { pendingDelete = account },
                     settingsIcon = COUIIcons.Refresh,
