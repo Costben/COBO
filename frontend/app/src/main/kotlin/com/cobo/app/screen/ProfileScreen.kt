@@ -85,6 +85,7 @@ import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
+import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.Membership
 import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
@@ -97,10 +98,12 @@ import com.cobo.app.data.Updater
 import com.cobo.app.data.User
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.computeProfileRenameStatus
+import com.cobo.app.ui.MeIconTint
 import com.cobo.app.ui.MeIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.blurEffectsEnabled
+import com.cobo.app.ui.isDarkTheme
 import com.cobo.app.ui.layerBackdropIf
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
@@ -1056,7 +1059,7 @@ fun ProfileHubContent(
                     ) {
                         ArrowPreference(
                             title = "我的微博",
-                            startAction = { HubRowIcon(MeIcons.Statuses) },
+                            startAction = { HubRowIcon(MeIcons.Statuses, MeIconTint.Blue) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Head,
                             modifier = Modifier.testTag("hub_my_statuses"),
@@ -1066,7 +1069,7 @@ fun ProfileHubContent(
                         )
                         ArrowPreference(
                             title = "我的收藏",
-                            startAction = { HubRowIcon(MeIcons.Favorites) },
+                            startAction = { HubRowIcon(MeIcons.Favorites, MeIconTint.Yellow) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_favorites"),
@@ -1074,7 +1077,7 @@ fun ProfileHubContent(
                         )
                         ArrowPreference(
                             title = "我赞过的",
-                            startAction = { HubRowIcon(MeIcons.MyLikes) },
+                            startAction = { HubRowIcon(MeIcons.MyLikes, MeIconTint.Red) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_my_likes"),
@@ -1082,7 +1085,7 @@ fun ProfileHubContent(
                         )
                         ArrowPreference(
                             title = "收到的赞",
-                            startAction = { HubRowIcon(MeIcons.ReceivedLikes) },
+                            startAction = { HubRowIcon(MeIcons.ReceivedLikes, MeIconTint.Orange) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_received_likes"),
@@ -1090,7 +1093,7 @@ fun ProfileHubContent(
                         )
                         ArrowPreference(
                             title = "收到的评论",
-                            startAction = { HubRowIcon(MeIcons.ReceivedComments) },
+                            startAction = { HubRowIcon(MeIcons.ReceivedComments, MeIconTint.Green) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Middle,
                             modifier = Modifier.testTag("hub_received_comments"),
@@ -1098,7 +1101,7 @@ fun ProfileHubContent(
                         )
                         ArrowPreference(
                             title = "发出的评论",
-                            startAction = { HubRowIcon(MeIcons.SentComments) },
+                            startAction = { HubRowIcon(MeIcons.SentComments, MeIconTint.Blue) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Tail,
                             modifier = Modifier.testTag("hub_sent_comments"),
@@ -1120,7 +1123,7 @@ fun ProfileHubContent(
                     if (guest) {
                         ArrowPreference(
                             title = "本地收藏",
-                            startAction = { HubRowIcon(MeIcons.Favorites) },
+                            startAction = { HubRowIcon(MeIcons.Favorites, MeIconTint.Yellow) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Head,
                             modifier = Modifier.testTag("local_favorites"),
@@ -1129,7 +1132,7 @@ fun ProfileHubContent(
                     }
                     ArrowPreference(
                         title = "草稿箱",
-                        startAction = { HubRowIcon(MeIcons.Drafts) },
+                        startAction = { HubRowIcon(MeIcons.Drafts, MeIconTint.Orange) },
                         centerStartAction = true,
                         cardListPosition = if (guest) CardListPosition.Middle else CardListPosition.Head,
                         modifier = Modifier.testTag("hub_drafts"),
@@ -1137,7 +1140,7 @@ fun ProfileHubContent(
                     )
                     ArrowPreference(
                         title = "浏览历史",
-                        startAction = { HubRowIcon(MeIcons.History) },
+                        startAction = { HubRowIcon(MeIcons.History, MeIconTint.Blue) },
                         centerStartAction = true,
                         cardListPosition = CardListPosition.Middle,
                         modifier = Modifier.testTag("hub_history"),
@@ -1145,7 +1148,7 @@ fun ProfileHubContent(
                     )
                     ArrowPreference(
                         title = "话题 / 超话",
-                        startAction = { HubRowIcon(MeIcons.Topic) },
+                        startAction = { HubRowIcon(MeIcons.Topic, MeIconTint.Yellow) },
                         centerStartAction = true,
                         cardListPosition = if (guest) CardListPosition.Tail else CardListPosition.Middle,
                         modifier = Modifier.testTag("hub_topic"),
@@ -1154,7 +1157,7 @@ fun ProfileHubContent(
                     if (!guest) {
                         ArrowPreference(
                             title = "附近",
-                            startAction = { HubRowIcon(MeIcons.Nearby) },
+                            startAction = { HubRowIcon(MeIcons.Nearby, MeIconTint.Green) },
                             centerStartAction = true,
                             cardListPosition = CardListPosition.Tail,
                             modifier = Modifier.testTag("hub_nearby"),
@@ -1182,7 +1185,7 @@ fun ProfileHubContent(
                         }
                         ArrowPreference(
                             title = group.title,
-                            startAction = { HubRowIcon(group.hubIcon()) },
+                            startAction = { HubRowIcon(group.hubIcon(), group.hubTint()) },
                             centerStartAction = true,
                             cardListPosition = pos,
                             modifier = Modifier.testTag("hub_settings_${group.name.lowercase()}"),
@@ -1231,12 +1234,18 @@ fun ProfileHubContent(
 }
 
 @Composable
-private fun HubRowIcon(imageVector: ImageVector) {
+private fun HubRowIcon(imageVector: ImageVector, colorfulTint: MeIconTint) {
+    val scheme = COUITheme.colorScheme
+    val tint = when (App.settings.meIconStyle) {
+        MeIconStyle.Monochrome -> scheme.onBackground
+        MeIconStyle.Colorful -> colorfulTint.resolve(isDarkTheme())
+        MeIconStyle.Accent -> scheme.primary
+    }
     Icon(
         imageVector = imageVector,
         contentDescription = null,
         modifier = Modifier.size(24.dp),
-        tint = COUITheme.colorScheme.onBackground,
+        tint = tint,
     )
 }
 
@@ -1246,6 +1255,14 @@ private fun SettingsGroup.hubIcon(): ImageVector = when (this) {
     SettingsGroup.AccountAndContent -> MeIcons.AccountSettings
     SettingsGroup.Update -> MeIcons.UpdateSettings
     SettingsGroup.Other -> MeIcons.OtherSettings
+}
+
+private fun SettingsGroup.hubTint(): MeIconTint = when (this) {
+    SettingsGroup.Display -> MeIconTint.Orange
+    SettingsGroup.Feed -> MeIconTint.Green
+    SettingsGroup.AccountAndContent -> MeIconTint.Blue
+    SettingsGroup.Update -> MeIconTint.Neutral
+    SettingsGroup.Other -> MeIconTint.Neutral
 }
 
 private val ProfileAvatarRing = 68.dp

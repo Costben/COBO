@@ -122,6 +122,20 @@ enum class BottomLeftAction(val key: String, val label: String) {
     }
 }
 
+/** 「我」页入口与一级设置选项左侧图标的配色样式，默认使用 ColorOS 17 语义彩色。 */
+enum class MeIconStyle(val key: String, val label: String) {
+    Colorful("colorful", "默认"),
+    Monochrome("monochrome", "黑白"),
+    Accent("accent", "强调色"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): MeIconStyle {
+            return entries.firstOrNull { it.key == key } ?: Colorful
+        }
+    }
+}
+
 class Settings(context: Context) {
     private val sp = context.getSharedPreferences("app", Context.MODE_PRIVATE)
 
@@ -155,6 +169,10 @@ class Settings(context: Context) {
 
     /** 自定义强调色（ARGB 整型）；`0` 表示使用 COUI 默认蓝。 */
     var accentColor by mutableIntStateOf(sp.getInt("accent_color", 0))
+        private set
+
+    /** 「我」页入口及一级设置选项图标配色样式。 */
+    var meIconStyle by mutableStateOf(MeIconStyle.fromKey(sp.getString("me_icon_style", null)))
         private set
 
     var mainTab by mutableIntStateOf(sp.getInt("main_tab", 0))
@@ -684,6 +702,11 @@ class Settings(context: Context) {
         }
         accentColor = normalized
         sp.edit().putInt("accent_color", normalized).apply()
+    }
+
+    fun applyMeIconStyle(value: MeIconStyle) {
+        meIconStyle = value
+        sp.edit().putString("me_icon_style", value.key).apply()
     }
 
     fun cycleFontScale(): Float {

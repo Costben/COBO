@@ -40,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,6 +49,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -60,6 +63,7 @@ import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
+import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
@@ -91,6 +95,7 @@ import io.github.suqi8.coui.kmp.basic.CardListPosition
 import io.github.suqi8.coui.kmp.basic.Checkbox
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
@@ -98,17 +103,21 @@ import io.github.suqi8.coui.kmp.basic.Slider
 import io.github.suqi8.coui.kmp.basic.SliderDefaults
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TextField
+import io.github.suqi8.coui.kmp.basic.TextFieldDefaults
 import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Undo
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.layout.DialogDefaults
 import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
+import io.github.suqi8.coui.kmp.preference.OverlayDropdownPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
@@ -120,7 +129,7 @@ import kotlinx.coroutines.launch
  */
 enum class SettingsGroup(val title: String, val summary: String) {
     Display("显示与交互", "深色模式、强调色、字号、手势与「我」页布局"),
-    Feed("微博", "主页分栏、卡片外框、倒序浏览与热搜榜"),
+    Feed("微博浏览", "主页分栏、卡片外框、倒序浏览与热搜榜"),
     AccountAndContent("账号与内容", "账号管理、快捷切号、底栏头像与本地关注"),
     Update("更新", "检查更新、更新日志与自动更新"),
     Other("其他", "清理缓存、关于与账号退出"),
@@ -133,6 +142,7 @@ private class SettingsUiState(context: Context) {
 
     var darkMode by mutableIntStateOf(App.settings.darkMode)
     var accentColor by mutableIntStateOf(App.settings.accentColor)
+    var meIconStyle by mutableStateOf(App.settings.meIconStyle)
     var fontScale by mutableStateOf(App.settings.fontScale)
     var autoCheckUpdate by mutableStateOf(App.settings.autoCheckUpdate)
     var acceptPrerelease by mutableStateOf(App.settings.acceptPrerelease)
@@ -347,6 +357,18 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickAccentColor = true },
             )
+            OverlayDropdownPreference(
+                items = MeIconStyle.entries.map { it.label },
+                selectedIndex = state.meIconStyle.ordinal,
+                title = "「我」页图标样式",
+                modifier = Modifier.testTag("settings_me_icon_style"),
+                cardListPosition = CardListPosition.Middle,
+                onSelectedIndexChange = { index ->
+                    val picked = MeIconStyle.entries.getOrElse(index) { MeIconStyle.Colorful }
+                    state.meIconStyle = picked
+                    App.settings.applyMeIconStyle(picked)
+                },
+            )
             ArrowPreference(
                 title = "字号",
                 modifier = Modifier.testTag("settings_font"),
@@ -465,7 +487,7 @@ private fun LazyListScope.feedSettingsItems(
     showHeader: Boolean,
 ) {
     if (showHeader) {
-        item { SectionTitle("微博") }
+        item { SectionTitle("微博浏览") }
     }
     item {
         val hotBoardsSummary = App.settings.hotBoards.let { picked ->
@@ -1125,7 +1147,7 @@ private fun AccentColorPickerDialog(
 
     OverlayDialog(
         show = show,
-        title = "强调色",
+        title = null,
         outsideMargin = DpSize(16.dp, 8.dp),
         onDismissRequest = { show = false },
         onDismissFinished = {
@@ -1136,9 +1158,39 @@ private fun AccentColorPickerDialog(
         },
     ) {
         Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 6.dp),
+            ) {
+                Text(
+                    text = "强调色",
+                    fontSize = COUITheme.textStyles.title4.fontSize,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DialogDefaults.titleColor(),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                val canReset = pickedArgb != 0
+                HighlightedIconButton(
+                    onClick = { selectArgb(0) },
+                    size = 36.dp,
+                    enabled = canReset,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .alpha(if (canReset) 1f else 0.36f)
+                        .testTag("accent_reset_default"),
+                ) {
+                    Icon(
+                        imageVector = COUIIcons.Undo,
+                        contentDescription = "恢复默认",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
             Column(
                 modifier = Modifier
-                    .heightIn(max = 380.dp)
+                    .heightIn(max = 460.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1182,12 +1234,6 @@ private fun AccentColorPickerDialog(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                    }
-                    if (pickedArgb != 0) {
-                        TextButton(
-                            text = "恢复默认",
-                            onClick = { selectArgb(0) },
-                        )
                     }
                 }
 
@@ -1270,6 +1316,34 @@ private fun AccentColorPickerDialog(
                     }
                 }
 
+                TextField(
+                    value = hexInput,
+                    onValueChange = { raw ->
+                        val cleaned = raw.uppercase().take(7)
+                        hexInput = cleaned
+                        parseHexColor(cleaned)?.let { parsed ->
+                            pickedArgb = parsed
+                            val hsv = FloatArray(3)
+                            AndroidColor.colorToHSV(parsed, hsv)
+                            hue = hsv[0]
+                            saturation = hsv[1]
+                            brightness = hsv[2]
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("accent_hex_input"),
+                    label = "十六进制色号 (#RRGGBB)",
+                    backgroundMode = TextFieldMode.Line,
+                    insideMargin = DpSize(0.dp, 8.dp),
+                    colors = TextFieldDefaults.textFieldColors(
+                        borderColor = previewColor,
+                        unfocusedBorderColor = COUITheme.colorScheme.onSurfaceSecondary.copy(alpha = 0.45f),
+                    ),
+                    singleLine = true,
+                )
+
                 AccentSliderRow(
                     label = "色相",
                     valueText = "${hue.toInt()}°",
@@ -1302,28 +1376,6 @@ private fun AccentColorPickerDialog(
                         brightness = it
                         updateFromHsv()
                     },
-                )
-
-                TextField(
-                    value = hexInput,
-                    onValueChange = { raw ->
-                        val cleaned = raw.uppercase().take(7)
-                        hexInput = cleaned
-                        parseHexColor(cleaned)?.let { parsed ->
-                            pickedArgb = parsed
-                            val hsv = FloatArray(3)
-                            AndroidColor.colorToHSV(parsed, hsv)
-                            hue = hsv[0]
-                            saturation = hsv[1]
-                            brightness = hsv[2]
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("accent_hex_input"),
-                    label = "十六进制色号 (#RRGGBB)",
-                    backgroundMode = TextFieldMode.Rectangle,
-                    singleLine = true,
                 )
             }
             Spacer(Modifier.height(6.dp))
