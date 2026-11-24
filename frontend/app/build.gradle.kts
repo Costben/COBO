@@ -44,7 +44,7 @@ android {
 
 dependencies {
     val coui = "io.github.suqi8.coui.kmp"
-    // 本地 ../coui 与本仓库 third-party 孤儿分支均以 1.2.0-SNAPSHOT 发布，远端由 settings.gradle.kts 按 commit SHA 钉死。
+    // 本地 ../coui 与 Costben/coui17 的 maven-repo 孤儿分支均以 1.2.0-SNAPSHOT 发布。
     val couiVersion = "1.2.0-SNAPSHOT"
 
     implementation("$coui:coui-ui:$couiVersion")

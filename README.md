@@ -84,7 +84,7 @@ cd frontend
 ./gradlew :app:assembleDebug       # 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-需要 JDK 17 和安装了 API 37、Build Tools 37.0.0 的 Android SDK。在 `frontend/local.properties` 设置 `sdk.dir`。COUI 使用精确版本 `1.2.0-d756fe5c-SNAPSHOT`，Maven 仓库固定到 ArtPlus 提交 `63bcad6dc055680e2cbc58640abcbf0329b9250d`。常规构建无需本地发布步骤。
+需要 JDK 17 和安装了 API 37、Build Tools 37.0.0 的 Android SDK。在 `frontend/local.properties` 设置 `sdk.dir`。COUI 依赖 `io.github.suqi8.coui.kmp:*:1.2.0-SNAPSHOT`，默认在本地存在 `../coui/build/repository/local` 时优先读取本地产物，外部环境自动回退到 [Costben/coui17 `maven-repo`](https://github.com/Costben/coui17/tree/maven-repo) 分支，常规构建无需额外配置。
 
 ## 安装
 
