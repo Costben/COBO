@@ -22,6 +22,12 @@ object CookieVault {
     /** 单点登录页，`passport` 下发的 cookie 只在它自己的域上有效。 */
     const val PASSPORT_CN = "passport.weibo.cn"
 
+    /** 新版网页登录重定向后的单点登录域。 */
+    const val PASSPORT_COM = "passport.weibo.com"
+
+    /** 新浪跨域 SSO 域。 */
+    const val SINA_COM_CN = ".sina.com.cn"
+
     fun isWeibo(host: String): Boolean =
         host == "weibo.cn" || host.endsWith(".weibo.cn") ||
             host == "weibo.com" || host.endsWith(".weibo.com") ||
@@ -246,11 +252,14 @@ object CookieVault {
      */
     fun readDomains(): Map<String, String> {
         val manager = CookieManager.getInstance()
+        manager.flush()
         val out = LinkedHashMap<String, String>()
         for ((url, domain) in listOf(
             "https://m.weibo.cn" to WEIBO_CN,
             "https://weibo.com" to WEIBO_COM,
             "https://passport.weibo.cn" to PASSPORT_CN,
+            "https://passport.weibo.com" to PASSPORT_COM,
+            "https://sina.com.cn" to SINA_COM_CN,
         )) {
             val lines = parseHeader(manager.getCookie(url).orEmpty())
             if (lines.isNotEmpty()) out[domain] = lines.joinToString("\n")

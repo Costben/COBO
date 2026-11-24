@@ -1,11 +1,14 @@
 package com.cobo.app.screen
 
-import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,11 +16,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,14 +39,18 @@ import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.Api
 import com.cobo.app.data.ClientLogin
+import com.cobo.app.data.CookieVault
 import com.cobo.app.data.Repo
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.WeiboWebView
+import com.cobo.app.ui.components.extractWebViewFallbackUrl
 import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.RadioButton
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
@@ -49,11 +58,18 @@ import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TextField
 import io.github.suqi8.coui.kmp.basic.TextFieldMode
+import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
+import java.net.URLDecoder
+import java.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
 
 private sealed interface ClientAuthStage {
     data object Credentials : ClientAuthStage
@@ -237,6 +253,35 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
         }
     }
 
+    var webVerifyReload by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    fun finishFromWebVerifyCookie(header: String, cookies: Map<String, String>) {
+        if (logging) return
+        logging = true
+        hint = "验证完成，正在登录…"
+        scope.launch {
+            val clientResult = if (accountInput.isNotBlank() && password.isNotBlank()) {
+                runCatching { App.repo.loginWithPassword(accountInput.trim(), password) }.getOrNull()
+            } else {
+                null
+            }
+            if (clientResult is Repo.ClientLoginStep.Success) {
+                logging = false
+                onSignedIn(clientResult.account)
+                return@launch
+            }
+            val cookieAccount = runCatching { App.repo.loginWithCookie(header, cookies) }.getOrNull()
+            logging = false
+            if (cookieAccount != null) {
+                onSignedIn(cookieAccount)
+            } else if (clientResult != null) {
+                handleStep(clientResult)
+            } else {
+                hint = "读取登录信息失败，请重试"
+            }
+        }
+    }
+
     BackHandler(enabled = stage != ClientAuthStage.Credentials) {
         stage = ClientAuthStage.Credentials
     }
@@ -262,24 +307,41 @@ fun SmsLoginScreen(nav: NavState, addAccount: Boolean, relogin: String? = null) 
                             }
                         }
                     },
+                    actions = {
+                        if (stage is ClientAuthStage.WebVerify) {
+                            HighlightedIconButton(
+                                onClick = { webVerifyReload?.invoke() },
+                                modifier = Modifier.couiTopAppBarActionItem().testTag("web_verify_reload"),
+                            ) {
+                                Icon(COUIIcons.Refresh, "刷新验证页", Modifier.size(22.dp))
+                            }
+                        }
+                    },
                 )
             }
         },
     ) { padding ->
         when (val current = stage) {
             is ClientAuthStage.WebVerify -> {
-                WebAltVerifyView(
-                    url = current.url,
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    onAlt = { alt ->
-                        stage = ClientAuthStage.Credentials
-                        submitPassword(alt = alt)
-                    },
-                    onBrowserClose = {
-                        stage = ClientAuthStage.Credentials
-                        submitPassword()
-                    },
-                )
+                key(current.url) {
+                    WebAltVerifyView(
+                        url = current.url,
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        onBindReload = { webVerifyReload = it },
+                        onAlt = { alt ->
+                            stage = ClientAuthStage.Credentials
+                            submitPassword(alt = alt)
+                        },
+                        onBrowserClose = {
+                            stage = ClientAuthStage.Credentials
+                            submitPassword()
+                        },
+                        onWebCookie = { header, cookies ->
+                            stage = ClientAuthStage.Credentials
+                            finishFromWebVerifyCookie(header, cookies)
+                        },
+                    )
+                }
             }
 
             is ClientAuthStage.SafetyVerify -> {
@@ -649,13 +711,18 @@ private fun CaptchaVerifyContent(
 private fun WebAltVerifyView(
     url: String,
     modifier: Modifier,
+    onBindReload: ((() -> Unit)?) -> Unit,
     onAlt: (String) -> Unit,
     onBrowserClose: () -> Unit,
+    onWebCookie: (String, Map<String, String>) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    var handled by remember { mutableStateOf(false) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val handled = remember(url) { AtomicBoolean(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var progress by remember { mutableIntStateOf(0) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     val shareWebUa = remember(context) {
         val base = runCatching { android.webkit.WebSettings.getDefaultUserAgent(context) }
             .getOrDefault(Api.WEB_UA)
@@ -678,15 +745,18 @@ private fun WebAltVerifyView(
     }
 
     fun submitAltOnce(alt: String) {
-        if (alt.isBlank() || handled) return
-        handled = true
+        if (alt.isBlank() || !handled.compareAndSet(false, true)) return
         scope.launch { onAlt(alt) }
     }
 
     fun closeAndRetryOnce() {
-        if (handled) return
-        handled = true
+        if (!handled.compareAndSet(false, true)) return
         scope.launch { onBrowserClose() }
+    }
+
+    fun submitWebCookieOnce(header: String, cookies: Map<String, String>) {
+        if (header.isBlank() || !handled.compareAndSet(false, true)) return
+        scope.launch { onWebCookie(header, cookies) }
     }
 
     fun replyBridge(
@@ -695,17 +765,58 @@ private fun WebAltVerifyView(
         eventName: String = "",
         params: JSONObject = JSONObject(),
         ok: Boolean = true,
+        status: Int = if (ok) 200 else 500,
     ) {
         if (cbId.isBlank()) return
         val msg = JSONObject()
             .put("__msg_type", "callback")
             .put("__callback_id", cbId)
             .put("__event_name", eventName)
-            .put("status", if (ok) 200 else 500)
+            .put("status", status)
             .put("failed", !ok)
             .put("params", params)
         val script = "window.__WeiboJSBridge && window.__WeiboJSBridge._handleMessage($msg);"
-        wv.post { wv.evaluateJavascript(script, null) }
+        mainHandler.post { wv.evaluateJavascript(script, null) }
+    }
+
+    lateinit var dispatchBridgeTransfer: (WebView, String) -> Unit
+
+    fun handleVerifyRedirect(wv: WebView?, target: String): Boolean {
+        return when (val action = parseVerifyRedirectAction(target)) {
+            is VerifyRedirectAction.SubmitAlt -> {
+                submitAltOnce(action.alt)
+                true
+            }
+            is VerifyRedirectAction.CloseAndRetry -> {
+                closeAndRetryOnce()
+                true
+            }
+            is VerifyRedirectAction.LoadUrl -> {
+                if (wv != null) mainHandler.post { wv.loadUrl(action.url) }
+                true
+            }
+            is VerifyRedirectAction.BridgeInvoke -> {
+                if (wv != null) {
+                    mainHandler.post {
+                        wv.evaluateJavascript("window.__WeiboJSBridge && window.__WeiboJSBridge._messageQueue();", null)
+                    }
+                }
+                true
+            }
+            is VerifyRedirectAction.BridgeTransfer -> {
+                if (wv != null) {
+                    mainHandler.post {
+                        val wrapped = JSONObject()
+                            .put("scene", action.scene)
+                            .put("data", action.data)
+                            .toString()
+                        dispatchBridgeTransfer(wv, wrapped)
+                    }
+                }
+                true
+            }
+            VerifyRedirectAction.Ignore -> false
+        }
     }
 
     fun handleBridgeAction(wv: WebView, item: JSONObject) {
@@ -714,6 +825,15 @@ private fun WebAltVerifyView(
         when (action) {
             "getAid" -> replyBridge(wv, cbId, action, JSONObject().put("aid", App.store.clientAid()))
             "getWM" -> replyBridge(wv, cbId, action, JSONObject().put("wm", "2468_1001"))
+            "getNetworkType" -> {
+                val netType = when (Api.networkType()) {
+                    "wifi" -> "wifi"
+                    "none" -> "fail"
+                    else -> "wwan"
+                }
+                replyBridge(wv, cbId, action, JSONObject().put("network_type", netType))
+            }
+            "CheckCanOpenUrl" -> replyBridge(wv, cbId, action, JSONObject().put("canOpenUrl", false))
             "getBrowserInfo" -> replyBridge(
                 wv,
                 cbId,
@@ -731,20 +851,62 @@ private fun WebAltVerifyView(
                     .put("networktype", Api.networkType()),
             )
             "loginWithALT" -> {
-                val alt = item.optJSONObject("params")?.optString("alt").orEmpty()
-                replyBridge(wv, cbId, action)
-                submitAltOnce(alt)
+                val alt = extractAltFromBridgeItem(item).orEmpty()
+                replyBridge(wv, cbId, action, ok = alt.isNotBlank(), status = if (alt.isNotBlank()) 200 else 400)
+                if (alt.isNotBlank()) submitAltOnce(alt)
             }
-            else -> replyBridge(wv, cbId, action)
+            // 未登录态执行安全验证时，passport.weibo.cn 会探测 loginWeiboAccount；
+            // 必须返回失败让页面回退到 &nojsbridge=1，否则页面会误以为已同步 Cookie 而停在空白页。
+            "loginWeiboAccount" -> replyBridge(wv, cbId, action, ok = false, status = 500)
+            "closeBrowser", "close", "closeWebView", "dismiss" -> {
+                val alt = extractAltFromBridgeItem(item).orEmpty()
+                replyBridge(wv, cbId, action)
+                if (alt.isNotBlank()) submitAltOnce(alt) else closeAndRetryOnce()
+            }
+            "openURL", "openBrowser", "openScheme", "openWindow" -> {
+                val targetUrl = extractBridgeTargetUrl(item).orEmpty()
+                replyBridge(wv, cbId, action)
+                if (targetUrl.isNotBlank() && !handleVerifyRedirect(wv, targetUrl)) {
+                    val resolved = extractWebViewFallbackUrl(targetUrl) ?: targetUrl
+                    if (resolved.startsWith("http://", true) || resolved.startsWith("https://", true)) {
+                        mainHandler.post { wv.loadUrl(resolved) }
+                    }
+                }
+            }
+            "setBrowserTitle",
+            "setImmersiveStyle",
+            "setBrowserGestureBackEnable",
+            "setTopNavigationOptionItems",
+            "privateChangeFont",
+            "visibilityChange",
+            -> replyBridge(wv, cbId, action)
+            else -> replyBridge(wv, cbId, action, ok = false, status = 501)
         }
     }
 
-    val bridge = remember(onAlt) {
+    dispatchBridgeTransfer = { wv, raw ->
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+        if (json != null) {
+            val scene = json.optString("scene")
+            if (scene == "SCENE_MESSAGEQUEUE") {
+                val items = runCatching { JSONArray(json.optString("data")) }.getOrNull()
+                if (items != null) {
+                    for (i in 0 until items.length()) {
+                        items.optJSONObject(i)?.let { handleBridgeAction(wv, it) }
+                    }
+                }
+            } else {
+                extractAltFromBridgeItem(json)?.let { submitAltOnce(it) }
+            }
+        }
+    }
+
+    val bridge = remember(url) {
         object {
             @JavascriptInterface
             fun invoke() {
                 val wv = webViewRef ?: return
-                wv.post {
+                mainHandler.post {
                     wv.evaluateJavascript("window.__WeiboJSBridge && window.__WeiboJSBridge._messageQueue();", null)
                 }
             }
@@ -755,61 +917,233 @@ private fun WebAltVerifyView(
             @JavascriptInterface
             fun transferData(raw: String) {
                 val wv = webViewRef ?: return
-                val json = runCatching { JSONObject(raw) }.getOrNull() ?: return
-                val scene = json.optString("scene")
-                if (scene == "SCENE_MESSAGEQUEUE") {
-                    val items = runCatching { JSONArray(json.optString("data")) }.getOrNull() ?: return
-                    for (i in 0 until items.length()) {
-                        items.optJSONObject(i)?.let { handleBridgeAction(wv, it) }
-                    }
-                    return
-                }
-                val directAlt = json.optString("alt")
-                    .ifBlank { json.optJSONObject("params")?.optString("alt").orEmpty() }
-                    .ifBlank { json.optJSONObject("data")?.optString("alt").orEmpty() }
-                submitAltOnce(directAlt)
+                mainHandler.post { dispatchBridgeTransfer(wv, raw) }
             }
         }
     }
 
-    fun handleVerifyRedirect(target: String): Boolean {
-        val uri = runCatching { Uri.parse(target) }.getOrNull()
-        val altParam = uri?.getQueryParameter("alt").orEmpty()
-        if (altParam.isNotBlank()) {
-            submitAltOnce(altParam)
-            return true
+    Box(modifier = modifier) {
+        WeiboWebView(
+            url = url,
+            modifier = Modifier.fillMaxSize(),
+            useSessionCookie = false,
+            clearCookies = false,
+            userAgent = shareWebUa,
+            onConfigure = { wv ->
+                webViewRef = wv
+                onBindReload {
+                    loadError = null
+                    wv.reload()
+                }
+                wv.addJavascriptInterface(bridge, "WeiboJSBridgeDataTransfer")
+            },
+            onUrlLoading = { wv, target ->
+                // 只拦截带明确动作的跳转（alt / close / bridge / 拆包）；普通 http(s) 页面放行。
+                val action = parseVerifyRedirectAction(target)
+                if (action != VerifyRedirectAction.Ignore) {
+                    handleVerifyRedirect(wv, target)
+                } else {
+                    false
+                }
+            },
+            onCustomScheme = { target ->
+                handleVerifyRedirect(webViewRef, target)
+            },
+            onPageStarted = { _, _ ->
+                loadError = null
+            },
+            onPageCommitVisible = { wv, committedUrl ->
+                if (!handleVerifyRedirect(wv, committedUrl)) {
+                    injectWbjs(wv)
+                }
+            },
+            onProgressChanged = { wv, newProgress ->
+                progress = newProgress
+                if (newProgress >= 10) injectWbjs(wv)
+            },
+            onPageFinished = { finishedUrl ->
+                val wv = webViewRef ?: return@WeiboWebView
+                if (handleVerifyRedirect(wv, finishedUrl)) return@WeiboWebView
+                injectWbjs(wv)
+                if (isPostVerifyLandingUrl(finishedUrl)) {
+                    val cookies = CookieVault.readDomains()
+                    val header = CookieVault.authHeader(cookies, "m.weibo.cn")
+                    if (header.contains("SUB=")) {
+                        submitWebCookieOnce(header, cookies)
+                    }
+                }
+            },
+            onCloseWindow = {
+                closeAndRetryOnce()
+            },
+            onReceivedError = { _, code, desc ->
+                loadError = if (desc.isNotBlank()) "验证页面加载异常（$code）：$desc" else "验证页面加载异常（$code）"
+            },
+        )
+        if (progress in 1..99) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth(progress / 100f)
+                    .height(2.dp)
+                    .background(COUITheme.colorScheme.primary),
+            )
         }
-        if (target.startsWith("sinaweibo://browser/close", ignoreCase = true) ||
-            (uri?.scheme.equals("sinaweibo", ignoreCase = true) && uri?.getQueryParameter("type") == "close")
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(COUITheme.colorScheme.background.copy(alpha = 0.94f))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val schemeParam = uri?.getQueryParameter("scheme").orEmpty()
-            val nestedAlt = runCatching { Uri.parse(schemeParam).getQueryParameter("alt") }.getOrNull().orEmpty()
-            if (nestedAlt.isNotBlank()) submitAltOnce(nestedAlt) else closeAndRetryOnce()
-            return true
+            if (!loadError.isNullOrBlank()) {
+                Text(
+                    text = loadError.orEmpty(),
+                    fontSize = 12.sp,
+                    color = COUITheme.colorScheme.onSurfaceSecondary,
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    text = "重新加载",
+                    onClick = {
+                        loadError = null
+                        webViewRef?.reload()
+                    },
+                    modifier = Modifier.testTag("web_verify_retry_load"),
+                )
+                TextButton(
+                    text = "已完成验证，继续登录",
+                    onClick = { closeAndRetryOnce() },
+                    modifier = Modifier.testTag("web_verify_continue"),
+                )
+            }
         }
-        return false
     }
+}
 
-    WeiboWebView(
-        url = url,
-        modifier = modifier,
-        useSessionCookie = false,
-        clearCookies = false,
-        userAgent = shareWebUa,
-        onConfigure = { wv ->
-            webViewRef = wv
-            wv.addJavascriptInterface(bridge, "WeiboJSBridgeDataTransfer")
-        },
-        onCustomScheme = { target ->
-            handleVerifyRedirect(target)
-        },
-        onProgressChanged = { wv, progress ->
-            if (progress >= 30) injectWbjs(wv)
-        },
-        onPageFinished = { finishedUrl ->
-            if (handleVerifyRedirect(finishedUrl)) return@WeiboWebView
-            val wv = webViewRef ?: return@WeiboWebView
-            injectWbjs(wv)
-        },
-    )
+internal sealed interface VerifyRedirectAction {
+    data class SubmitAlt(val alt: String) : VerifyRedirectAction
+    data class LoadUrl(val url: String) : VerifyRedirectAction
+    data object CloseAndRetry : VerifyRedirectAction
+    data object BridgeInvoke : VerifyRedirectAction
+    data class BridgeTransfer(val scene: String, val data: String) : VerifyRedirectAction
+    data object Ignore : VerifyRedirectAction
+}
+
+internal fun parseVerifyRedirectAction(target: String): VerifyRedirectAction {
+    val trimmed = target.trim()
+    if (trimmed.isBlank()) return VerifyRedirectAction.Ignore
+    val lower = trimmed.lowercase()
+    if (lower.startsWith("sinaweibo://bridge_invoke_message")) {
+        return VerifyRedirectAction.BridgeInvoke
+    }
+    if (lower.startsWith("sinaweibo://bridge_transfer_data/")) {
+        val payload = trimmed.substring("sinaweibo://bridge_transfer_data/".length)
+        val sep = payload.indexOf('&')
+        if (sep > 0) {
+            val scene = payload.substring(0, sep)
+            val encoded = payload.substring(sep + 1)
+            val decoded = runCatching {
+                String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
+            }.getOrDefault(encoded)
+            return VerifyRedirectAction.BridgeTransfer(scene = scene, data = decoded)
+        }
+    }
+    extractAltFromUrl(trimmed)?.let { return VerifyRedirectAction.SubmitAlt(it) }
+    if (lower.startsWith("sinaweibo://browser/close") ||
+        lower.startsWith("sinaweibo://close") ||
+        lower.startsWith("sinaweibo://finish") ||
+        (lower.startsWith("sinaweibo://") && urlParam(trimmed, "type").equals("close", ignoreCase = true))
+    ) {
+        return VerifyRedirectAction.CloseAndRetry
+    }
+    extractWebViewFallbackUrl(trimmed)?.let { inner ->
+        extractAltFromUrl(inner)?.let { return VerifyRedirectAction.SubmitAlt(it) }
+        return VerifyRedirectAction.LoadUrl(inner)
+    }
+    return VerifyRedirectAction.Ignore
+}
+
+internal fun extractAltFromUrl(raw: String, depth: Int = 0): String? {
+    if (raw.isBlank() || depth > 3) return null
+    val direct = urlParam(raw, "alt")
+    if (!direct.isNullOrBlank()) return direct
+    for (nestedKey in listOf("scheme", "url", "r", "backurl")) {
+        val nested = urlParam(raw, nestedKey) ?: continue
+        val found = extractAltFromUrl(nested, depth + 1)
+        if (!found.isNullOrBlank()) return found
+    }
+    return null
+}
+
+internal fun extractAltFromBridgeItem(item: JSONObject): String? {
+    item.optString("alt").takeIf { it.isNotBlank() }?.let { return it }
+    val paramsObj = parseJsonObjectField(item, "params")
+    if (paramsObj != null) {
+        paramsObj.optString("alt").takeIf { it.isNotBlank() }?.let { return it }
+        parseJsonObjectField(paramsObj, "data")?.optString("alt")?.takeIf { it.isNotBlank() }?.let { return it }
+        for (key in listOf("url", "scheme")) {
+            paramsObj.optString(key).takeIf { it.isNotBlank() }?.let { candidate ->
+                extractAltFromUrl(candidate)?.let { return it }
+            }
+        }
+    }
+    parseJsonObjectField(item, "data")?.optString("alt")?.takeIf { it.isNotBlank() }?.let { return it }
+    return null
+}
+
+internal fun extractBridgeTargetUrl(item: JSONObject): String? {
+    val paramsObj = parseJsonObjectField(item, "params")
+    for (source in listOfNotNull(paramsObj, item)) {
+        for (key in listOf("url", "scheme", "href")) {
+            val value = source.optString(key).trim()
+            if (value.isNotBlank()) return value
+        }
+    }
+    return null
+}
+
+internal fun isPostVerifyLandingUrl(raw: String): Boolean {
+    val host = runCatching { URI(raw.trim()).host?.lowercase() }.getOrNull().orEmpty()
+    return host == "m.weibo.cn" || host == "weibo.com" || host == "www.weibo.com"
+}
+
+private fun parseJsonObjectField(obj: JSONObject, key: String): JSONObject? {
+    val value = obj.opt(key) ?: return null
+    return when (value) {
+        is JSONObject -> value
+        is String -> value.trim().takeIf { it.startsWith("{") }?.let { runCatching { JSONObject(it) }.getOrNull() }
+        else -> null
+    }
+}
+
+private fun urlParam(raw: String, name: String): String? {
+    val sections = buildList {
+        val qIdx = raw.indexOf('?')
+        val hIdx = raw.indexOf('#')
+        if (qIdx >= 0) {
+            val queryEnd = if (hIdx > qIdx) hIdx else raw.length
+            add(raw.substring(qIdx + 1, queryEnd))
+        }
+        if (hIdx >= 0 && hIdx + 1 < raw.length) {
+            val frag = raw.substring(hIdx + 1)
+            add(frag.substringAfter('?', frag))
+        }
+    }
+    for (section in sections) {
+        for (part in section.split('&')) {
+            val eq = part.indexOf('=')
+            if (eq <= 0) continue
+            if (!part.substring(0, eq).equals(name, ignoreCase = true)) continue
+            val encoded = part.substring(eq + 1)
+            val decoded = runCatching { URLDecoder.decode(encoded, "UTF-8") }.getOrDefault(encoded).trim()
+            if (decoded.isNotBlank()) return decoded
+        }
+    }
+    return null
 }
