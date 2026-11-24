@@ -875,7 +875,7 @@ fun ProfileEditDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.surfaceContainer)
+                        .background(scheme.onSurface.copy(alpha = 0.06f))
                         .clickable(enabled = !uploadingMedia && !saving) {
                             avatarPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -969,7 +969,7 @@ fun ProfileEditDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(scheme.surfaceContainer)
+                        .background(scheme.onSurface.copy(alpha = 0.06f))
                         .clickable(enabled = !uploadingMedia && !saving) {
                             coverPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
