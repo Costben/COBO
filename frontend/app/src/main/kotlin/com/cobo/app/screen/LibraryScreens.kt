@@ -397,11 +397,23 @@ private fun HistoryRowBody(item: HistoryItem, modifier: Modifier = Modifier) {
     }
 }
 
+internal fun isCurrentAccount(
+    account: Account,
+    currentUid: String?,
+    currentCookie: String?,
+    guest: Boolean,
+): Boolean {
+    if (guest) return false
+    if (!currentUid.isNullOrBlank()) return account.uid == currentUid
+    return !currentCookie.isNullOrBlank() && account.cookie == currentCookie
+}
+
 @OptIn(ExperimentalCOUIApi::class)
 @Composable
 fun AccountsScreen(nav: NavState) {
     var accounts by remember { mutableStateOf(App.store.accounts()) }
-    var currentCookie by remember { mutableStateOf(App.repo.cookie()) }
+    var currentUid by remember { mutableStateOf(App.repo.takeUnless { it.guest }?.session?.uid) }
+    var currentCookie by remember { mutableStateOf(if (App.repo.guest) null else App.repo.cookie()) }
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
     // 同一时间只展开一行，和通知栏一样：拉开新的一行，上一行自己收回去。
     var openUid by remember { mutableStateOf<String?>(null) }
@@ -424,17 +436,18 @@ fun AccountsScreen(nav: NavState) {
                                     active.gsid.isNotBlank()
                                 if (hasGsid) {
                                     renewing = true
-                                    App.toast("正在用 gsid 续签…")
+                                    App.toast("正在刷新…")
                                     screenScope.launch {
                                         try {
                                             val err = App.repo.refreshClientSessionNow()
                                             if (err == null) {
                                                 accounts = App.store.accounts()
-                                                currentCookie = App.repo.cookie()
+                                                currentUid = App.repo.takeUnless { it.guest }?.session?.uid
+                                                currentCookie = if (App.repo.guest) null else App.repo.cookie()
                                             }
                                             App.toast(
-                                                err?.let { "续签失败：$it" }
-                                                    ?: "续签成功，已刷新四域 Cookie",
+                                                err?.let { "刷新失败：$it" }
+                                                    ?: "已刷新",
                                             )
                                         } finally {
                                             renewing = false
@@ -448,7 +461,7 @@ fun AccountsScreen(nav: NavState) {
                             enabled = !renewing,
                             modifier = Modifier.couiTopAppBarActionItem().testTag("accounts_renew"),
                         ) {
-                            Icon(COUIIcons.Refresh, "长期续签", Modifier.size(24.dp))
+                            Icon(COUIIcons.Refresh, "刷新账号状态", Modifier.size(24.dp))
                         }
                         HighlightedIconButton(
                             onClick = { nav.push(Route.Login(addAccount = true, fresh = true)) },
@@ -482,7 +495,7 @@ fun AccountsScreen(nav: NavState) {
                 }
             }
             itemsIndexed(accounts, key = { _, account -> account.uid }) { index, account ->
-                val current = account.cookie == currentCookie
+                val current = isCurrentAccount(account, currentUid, currentCookie, App.repo.guest)
                 val name = account.name.ifBlank { "微博账号" }
                 val swipe = rememberNotificationSwipeState()
                 val scope = rememberCoroutineScope()
@@ -518,6 +531,7 @@ fun AccountsScreen(nav: NavState) {
                                     scope.launch { swipe.close() }
                                 } else {
                                     App.repo.switchAccount(account)
+                                    currentUid = account.uid
                                     currentCookie = account.cookie
                                     nav.reset(Route.Main)
                                 }
@@ -547,10 +561,7 @@ fun AccountsScreen(nav: NavState) {
                                 }
                             }
                             Text(
-                                buildString {
-                                    append("UID ${account.uid}")
-                                    if (account.gsid.isNotBlank()) append(" · 长期续签")
-                                },
+                                "UID ${account.uid}",
                                 fontSize = 11.sp,
                                 color = COUITheme.colorScheme.onSurfaceSecondary,
                             )
