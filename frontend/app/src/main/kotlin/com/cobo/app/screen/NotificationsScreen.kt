@@ -403,14 +403,17 @@ fun NotificationsScreen(
                 title = "回复 @${target.user?.name.orEmpty()}",
                 hint = "写回复",
                 submitText = "回复",
+                maxImages = 1,
                 onDismiss = { replyTarget = null },
-                onSubmit = { text, _, _ ->
+                onSubmit = { text, images, _ ->
                     try {
+                        val picIds = images.map { App.repo.uploadImage(it) }
                         App.repo.replyComment(
                             id = status.id,
                             mid = status.mid.ifBlank { status.id },
                             cid = target.commentId,
                             text = text,
+                            picIds = picIds,
                         )
                         App.toast("回复成功")
                         true

@@ -2768,19 +2768,45 @@ class Repo(private val context: Context, private val store: Store) {
         return true
     }
 
-    suspend fun comment(id: String, mid: String, text: String): Boolean {
+    suspend fun comment(
+        id: String,
+        mid: String,
+        text: String,
+        picIds: List<String> = emptyList(),
+    ): Boolean {
+        val effectiveText = if (picIds.isNotEmpty() && text.isBlank()) "图片评论" else text
         val ok = if (isClientChannel()) {
+            val mediaList = picIds.map { fid ->
+                uploadedContainerMedia.remove(fid) ?: ContainerApi.UploadedMedia(fid = fid)
+            }
             containerPost(
                 "comments/create",
-                form = mapOf("id" to id, "comment" to text),
+                form = ContainerApi.buildCommentParts(id, effectiveText, mediaList),
             )
+            true
+        } else if (picIds.isNotEmpty() && hasDesktopCookie()) {
+            val root = desktopPost(
+                "/ajax/comments/create",
+                form = mapOf(
+                    "id" to id,
+                    "comment" to effectiveText,
+                    "pic_id" to picIds.joinToString(","),
+                    "is_repost" to "0",
+                    "is_comment" to "0",
+                ),
+            )
+            if (root.optInt("ok", 0) != 1) {
+                throw ApiException(root.str("msg").ifBlank { root.str("message", "评论失败") })
+            }
             true
         } else {
             // The mobile endpoint takes the body as `content`; `comment` gets rejected as 100013 参数缺失.
-            postOk(
-                "https://m.weibo.cn/api/comments/create",
-                mapOf("id" to id, "mid" to mid.ifBlank { id }, "content" to text),
-            )
+            val form = LinkedHashMap<String, String>()
+            form["id"] = id
+            form["mid"] = mid.ifBlank { id }
+            form["content"] = effectiveText
+            if (picIds.isNotEmpty()) form["picId"] = picIds.joinToString(",")
+            postOk("https://m.weibo.cn/api/comments/create", form)
         }
         App.cache.clear()
         return ok
@@ -2791,24 +2817,51 @@ class Repo(private val context: Context, private val store: Store) {
      * comment id for the first reply, or a reply id to nest under that particular reply. The
      * created reply comes back so the thread can show it without re-reading a lagging list.
      */
-    suspend fun replyComment(id: String, mid: String, cid: String, text: String): Comment {
+    suspend fun replyComment(
+        id: String,
+        mid: String,
+        cid: String,
+        text: String,
+        picIds: List<String> = emptyList(),
+    ): Comment {
+        val effectiveText = if (picIds.isNotEmpty() && text.isBlank()) "图片评论" else text
         if (isClientChannel()) {
+            val mediaList = picIds.map { fid ->
+                uploadedContainerMedia.remove(fid) ?: ContainerApi.UploadedMedia(fid = fid)
+            }
             val root = containerPost(
                 "comments/reply",
-                form = mapOf("id" to id, "cid" to cid, "comment" to text),
+                form = ContainerApi.buildReplyCommentParts(id, cid, effectiveText, mediaList),
             )
             App.cache.clear()
             return Comment.from(root, depth = 1) ?: throw ApiException("回复失败")
         }
-        val root = postJson(
-            "https://m.weibo.cn/api/comments/reply",
-            mapOf(
-                "id" to id,
-                "mid" to mid.ifBlank { id },
-                "cid" to cid,
-                "content" to text,
-            ),
-        )
+        if (picIds.isNotEmpty() && hasDesktopCookie()) {
+            val root = desktopPost(
+                "/ajax/comments/reply",
+                form = mapOf(
+                    "id" to id,
+                    "cid" to cid,
+                    "comment" to effectiveText,
+                    "pic_id" to picIds.joinToString(","),
+                    "is_repost" to "0",
+                    "is_comment" to "0",
+                ),
+            )
+            if (root.optInt("ok", 0) != 1) {
+                throw ApiException(root.str("msg").ifBlank { root.str("message", "回复失败") })
+            }
+            App.cache.clear()
+            return Comment.from(root.optJSONObject("data"), depth = 1)
+                ?: throw ApiException("回复失败")
+        }
+        val form = LinkedHashMap<String, String>()
+        form["id"] = id
+        form["mid"] = mid.ifBlank { id }
+        form["cid"] = cid
+        form["content"] = effectiveText
+        if (picIds.isNotEmpty()) form["picId"] = picIds.joinToString(",")
+        val root = postJson("https://m.weibo.cn/api/comments/reply", form)
         if (root.optInt("ok", 0) != 1) throw ApiException(root.str("msg").ifBlank { root.str("message", "回复失败") })
         App.cache.clear()
         return Comment.from(root.optJSONObject("data"), depth = 1)

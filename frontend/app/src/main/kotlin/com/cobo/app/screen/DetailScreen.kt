@@ -713,10 +713,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     title = "评论",
                     hint = "写评论",
                     submitText = "发布",
+                    maxImages = 1,
                     onDismiss = { commentDialog = false },
-                    onSubmit = { text, _, _ ->
+                    onSubmit = { text, images, _ ->
                         try {
-                            App.repo.comment(id, effectiveMid(), text)
+                            val picIds = images.map { App.repo.uploadImage(it) }
+                            App.repo.comment(id, effectiveMid(), text, picIds)
                             App.toast("评论成功")
                             loadComments(true, force = true)
                             true
@@ -1325,10 +1327,12 @@ private fun CommentCard(    comment: Comment,
             title = "回复 @${target.user?.name.orEmpty()}",
             hint = "写回复",
             submitText = "回复",
+            maxImages = 1,
             onDismiss = { replyTarget = null },
-            onSubmit = { text, _, _ ->
+            onSubmit = { text, images, _ ->
                 try {
-                    val created = App.repo.replyComment(statusId, mid, target.id, text)
+                    val picIds = images.map { App.repo.uploadImage(it) }
+                    val created = App.repo.replyComment(statusId, mid, target.id, text, picIds)
                     App.toast("回复成功")
                     showNewReply(created)
                     true

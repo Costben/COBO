@@ -345,6 +345,36 @@ object ContainerApi {
         return parts
     }
 
+    internal fun buildCommentParts(
+        id: String,
+        text: String,
+        media: List<UploadedMedia> = emptyList(),
+    ): LinkedHashMap<String, String> {
+        val parts = linkedMapOf<String, String>()
+        parts["id"] = id
+        parts["comment"] = if (media.isNotEmpty() && text.isBlank()) "图片评论" else text
+        if (media.isNotEmpty()) {
+            parts["media"] = buildPublishMediaJson(media)
+        }
+        return parts
+    }
+
+    internal fun buildReplyCommentParts(
+        id: String,
+        cid: String,
+        text: String,
+        media: List<UploadedMedia> = emptyList(),
+    ): LinkedHashMap<String, String> {
+        val parts = linkedMapOf<String, String>()
+        parts["id"] = id
+        parts["cid"] = cid
+        parts["comment"] = if (media.isNotEmpty() && text.isBlank()) "图片评论" else text
+        if (media.isNotEmpty()) {
+            parts["media"] = buildPublishMediaJson(media)
+        }
+        return parts
+    }
+
     internal fun parsePicDiscovery(root: JSONObject): PicDiscovery {
         val pic = root.optJSONObject("pic") ?: root.optJSONObject("image")
         val initUrl = pic?.str("init_url").orEmpty()

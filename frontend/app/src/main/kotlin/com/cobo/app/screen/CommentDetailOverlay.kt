@@ -640,10 +640,12 @@ private fun CommentDetailSheetContent(
                 title = "回复 @${target.user?.name.orEmpty()}",
                 hint = "写回复",
                 submitText = "回复",
+                maxImages = 1,
                 onDismiss = { replyTarget = null },
-                onSubmit = { text, _, _ ->
+                onSubmit = { text, images, _ ->
                     try {
-                        val created = App.repo.replyComment(statusId, mid, target.id, text)
+                        val picIds = images.map { App.repo.uploadImage(it) }
+                        val created = App.repo.replyComment(statusId, mid, target.id, text, picIds)
                         App.toast("回复成功")
                         val byId = rawReplies.associateByTo(LinkedHashMap()) { it.id }
                         byId[created.id] = created

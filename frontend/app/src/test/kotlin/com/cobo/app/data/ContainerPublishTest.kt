@@ -76,6 +76,38 @@ class ContainerPublishTest {
     }
 
     @Test
+    fun buildCommentAndReplyPartsAttachMediaAndDefaultBlankText() {
+        val textOnly = ContainerApi.buildCommentParts(id = "500123", text = "纯文字评论")
+        assertEquals("500123", textOnly["id"])
+        assertEquals("纯文字评论", textOnly["comment"])
+        assertFalse(textOnly.containsKey("media"))
+
+        val picOnly = ContainerApi.buildCommentParts(
+            id = "500123",
+            text = "   ",
+            media = listOf(ContainerApi.UploadedMedia(fid = "0096n9LBgy1test", md5 = "abc", bypass = "unistore.pic")),
+        )
+        assertEquals("500123", picOnly["id"])
+        assertEquals("图片评论", picOnly["comment"])
+        val commentMedia = JSONArray(picOnly.getValue("media"))
+        assertEquals(1, commentMedia.length())
+        assertEquals("0096n9LBgy1test", commentMedia.getJSONObject(0).getString("fid"))
+
+        val replyWithPic = ContainerApi.buildReplyCommentParts(
+            id = "500123",
+            cid = "900456",
+            text = "",
+            media = listOf(ContainerApi.UploadedMedia(fid = "0096n9LBgy1reply", md5 = "def", bypass = "unistore.pic")),
+        )
+        assertEquals("500123", replyWithPic["id"])
+        assertEquals("900456", replyWithPic["cid"])
+        assertEquals("图片评论", replyWithPic["comment"])
+        val replyMedia = JSONArray(replyWithPic.getValue("media"))
+        assertEquals(1, replyMedia.length())
+        assertEquals("0096n9LBgy1reply", replyMedia.getJSONObject(0).getString("fid"))
+    }
+
+    @Test
     fun parsePicDiscoveryAndUploadInitSupportMssAndLegacyPlans() {
         val discovery = ContainerApi.parsePicDiscovery(
             JSONObject(
