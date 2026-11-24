@@ -68,6 +68,24 @@ class ProfileDetailParseTest {
     }
 
     @Test
+    fun clientGroupMemberForm_usesSingularUidKey() {
+        val form = clientGroupMemberForm("5368844760908634", "1642909335")
+        assertEquals(mapOf("list_id" to "5368844760908634", "uid" to "1642909335"), form)
+        assertTrue("客户端通道必须传单数 uid，不能传 uids", "uids" !in form)
+    }
+
+    @Test
+    fun diffProfileGroupIds_computesAddsRemovesAndSkipsDeleted() {
+        val (toAdd, toRemove) = diffProfileGroupIds(
+            selected = listOf("g2", "g3", ""),
+            origin = listOf("g1", "g2", "g_deleted"),
+            deleted = setOf("g_deleted"),
+        )
+        assertEquals(setOf("g3"), toAdd)
+        assertEquals(setOf("g1"), toRemove)
+    }
+
+    @Test
     fun parseProfileDetail_mapsKnownFields() {
         val data = JSONObject(
             """

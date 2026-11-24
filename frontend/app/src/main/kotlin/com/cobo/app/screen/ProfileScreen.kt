@@ -561,20 +561,31 @@ private fun ProfileMoreAction(
         )
     }
 
+    var deletedGroupIds by remember(uid) { mutableStateOf<Set<String>>(emptySet()) }
     groupSelection?.let { selection ->
         ProfileGroupDialog(
             selection = selection,
             onCreate = { App.repo.createProfileGroup(it) },
             onRename = { group, name -> App.repo.renameProfileGroup(group.gid, name) },
-            onDelete = { App.repo.deleteProfileGroup(it.gid) },
+            onDelete = { group ->
+                App.repo.deleteProfileGroup(group.gid)
+                deletedGroupIds = deletedGroupIds + group.gid
+            },
             onReorder = { App.repo.reorderProfileGroups(it) },
-            onDismiss = { groupSelection = null },
-            onConfirm = { selected ->
+            onDismiss = {
                 groupSelection = null
-                if (selected.toSet() != selection.assigned.toSet()) {
+                deletedGroupIds = emptySet()
+            },
+            onConfirm = { selected ->
+                val deleted = deletedGroupIds
+                groupSelection = null
+                deletedGroupIds = emptySet()
+                val effectiveOrigin = selection.assigned.filterNot { it in deleted }.toSet()
+                val effectiveSelected = selected.filterNot { it in deleted }.toSet()
+                if (effectiveSelected != effectiveOrigin) {
                     scope.launch {
                         runCatching {
-                            App.repo.setProfileGroups(uid, selected.toList(), selection.assigned)
+                            App.repo.setProfileGroups(uid, effectiveSelected.toList(), effectiveOrigin.toList(), deleted)
                         }
                             .onSuccess { App.toast("已更新关注分组") }
                             .onFailure { App.toast(it.message ?: "设置分组失败") }

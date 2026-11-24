@@ -166,6 +166,21 @@ internal fun parseFollowGroups(root: JSONObject?): List<FollowGroup> {
 internal fun groupIdsParam(ids: List<String>): String =
     ids.filter { it.isNotBlank() }.joinToString(",").ifBlank { UNGROUPED_GID }
 
+/** 客户端通道 `groups/members_add` / `groups/members_destroy` 表单：参数名必须是单数 `uid`，传 `uids` 会直接报「参数错误」。 */
+internal fun clientGroupMemberForm(listId: String, uid: String): Map<String, String> =
+    mapOf("list_id" to listId, "uid" to uid)
+
+/** 计算关注分组变更：返回 `(需要加入的 gid, 需要移出的 gid)`，并自动过滤空串与已删除的分组。 */
+internal fun diffProfileGroupIds(
+    selected: List<String>,
+    origin: List<String>,
+    deleted: Set<String> = emptySet(),
+): Pair<Set<String>, Set<String>> {
+    val target = selected.asSequence().filter { it.isNotBlank() && it !in deleted }.toSet()
+    val current = origin.asSequence().filter { it.isNotBlank() && it !in deleted }.toSet()
+    return (target - current) to (current - target)
+}
+
 /**
  * `ajax/profile/getGroupList` 的分组 id 列表。
  *
@@ -3778,22 +3793,34 @@ class Repo(private val context: Context, private val store: Store) {
      * 两个都缺一不可（只给 `list_ids` 时旧分组不会被移除）。空选择用 `0` 表示「未分组」。
      * 官方前端还会带一个 `list_name`，但中文名进 JSON 会被网关直接 400，服务端并不依赖它。
      */
-    suspend fun setProfileGroups(uid: String, selected: List<String>, origin: List<String>): Boolean {
+    suspend fun setProfileGroups(
+        uid: String,
+        selected: List<String>,
+        origin: List<String>,
+        deleted: Set<String> = emptySet(),
+    ): Boolean {
         if (isClientChannel()) {
-            val target = selected.filter { it.isNotBlank() }.toSet()
-            val current = origin.filter { it.isNotBlank() }.toSet()
-            for (gid in target - current) {
-                containerPost("groups/members_add", form = mapOf("list_id" to gid, "uids" to uid))
+            val (toAdd, toRemove) = diffProfileGroupIds(selected, origin, deleted)
+            for (gid in toAdd) {
+                val root = containerPost("groups/members_add", form = clientGroupMemberForm(gid, uid))
+                if (root.has("result") && !root.optBoolean("result", true)) {
+                    throw ApiException(root.str("errmsg").ifBlank { root.str("msg", "加入关注分组失败") })
+                }
             }
-            for (gid in current - target) {
-                containerPost("groups/members_destroy", form = mapOf("list_id" to gid, "uids" to uid))
+            for (gid in toRemove) {
+                val root = containerPost("groups/members_destroy", form = clientGroupMemberForm(gid, uid))
+                if (root.has("result") && !root.optBoolean("result", true)) {
+                    throw ApiException(root.str("errmsg").ifBlank { root.str("msg", "移出关注分组失败") })
+                }
             }
             return true
         }
+        val cleanSelected = selected.filter { it.isNotBlank() && it !in deleted }
+        val cleanOrigin = origin.filter { it.isNotBlank() && it !in deleted }
         val json = JSONObject()
             .put("uids", uid)
-            .put("list_ids", groupIdsParam(selected))
-            .put("origin_list_ids", groupIdsParam(origin))
+            .put("list_ids", groupIdsParam(cleanSelected))
+            .put("origin_list_ids", groupIdsParam(cleanOrigin))
             .toString()
         val root = desktopWrite("设置分组失败", "/ajax/profile/setGroup", json)
         val applied = root.optJSONObject("data")?.optBoolean("result") ?: false
