@@ -12,7 +12,9 @@ import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -24,6 +26,7 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -302,6 +305,9 @@ fun WeiboText(
     color: Color = COUITheme.colorScheme.onSurface,
     linkColor: Color = COUITheme.colorScheme.primary,
     selectable: Boolean = true,
+    /** 折叠版正文的尾部入口文案，例如「展开全文」；为 null 时不追加。 */
+    expandLabel: String? = null,
+    onExpand: (() -> Unit)? = null,
 ) {
     val linkHandler = LocalLinkHandler.current
     // 表情表加载完后，正文里的 [表情] 要重新拆一遍，否则会一直停在方括号文字上。
@@ -309,9 +315,31 @@ fun WeiboText(
     val (text, inline) = remember(html, linkHandler, linkColor, emojiVersion) {
         buildWeiboAnnotated(html, onLink = linkHandler, linkColor = linkColor)
     }
+    val expandAction by rememberUpdatedState(onExpand)
+    val display = if (expandLabel != null && onExpand != null) {
+        remember(text, expandLabel, linkColor) {
+            buildAnnotatedString {
+                append(text)
+                append("…")
+                val start = length
+                append(expandLabel)
+                addLink(
+                    LinkAnnotation.Clickable(
+                        tag = "fold_expand",
+                        styles = linkStyles(linkColor),
+                        linkInteractionListener = LinkInteractionListener { expandAction?.invoke() },
+                    ),
+                    start,
+                    length,
+                )
+            }
+        }
+    } else {
+        text
+    }
     val body: @Composable () -> Unit = {
         Text(
-            text = text,
+            text = display,
             modifier = modifier,
             color = color,
             fontSize = fontSize,

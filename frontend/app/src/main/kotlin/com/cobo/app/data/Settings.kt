@@ -291,6 +291,13 @@ class Settings(context: Context) {
     var detailCardFrame by mutableStateOf(sp.getBoolean("detail_card_frame", true))
         private set
 
+    /**
+     * 信息流长文折叠：按官方规则在 140 字（280 个半角宽度）处截断，点「展开全文」再看完整内容。
+     * 详情页始终显示全文。默认开。
+     */
+    var foldLongText by mutableStateOf(sp.getBoolean("fold_long_text", true))
+        private set
+
     /** 昵称旁是否显示 VIP / SVIP / VVIP 等级标识。默认开启。 */
     var showVipLevel by mutableStateOf(sp.getBoolean("show_vip_level", true))
         private set
@@ -576,6 +583,11 @@ class Settings(context: Context) {
     fun applyDetailCardFrame(value: Boolean) {
         detailCardFrame = value
         sp.edit().putBoolean("detail_card_frame", value).apply()
+    }
+
+    fun applyFoldLongText(value: Boolean) {
+        foldLongText = value
+        sp.edit().putBoolean("fold_long_text", value).apply()
     }
 
     fun applyShowVipLevel(value: Boolean) {

@@ -403,6 +403,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                                 nav.push(Route.Detail(quoted.id, quoted.mid, readOnly), quotedOrigin)
                             },
                             keepFrame = keepCardFrame,
+                            foldLongText = false,
                         )
                     }
 

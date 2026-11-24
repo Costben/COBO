@@ -716,6 +716,13 @@ data class Status(
     val isVote: Boolean = false,
     val voteId: String? = null,
     val visibility: StatusVisibility? = null,
+    /** 服务端标记的长微博。信息流按官方 140 字规则折叠时以它为准。 */
+    val isLongText: Boolean = false,
+    /**
+     * 长微博在信息流里的折叠版正文（官方在 280 个半角宽度处截断）。
+     * 只有拿得到全文时才有值；拿不到时 [textHtml] 本身就是服务端截断过的版本。
+     */
+    val foldedTextHtml: String? = null,
 ) {
     val plainText: String get() = stripHtml(textHtml)
 
@@ -783,7 +790,11 @@ data class Status(
 
             val longTextObj = o.optJSONObject("longText")
             val longContent = longTextObj?.str("longTextContent")?.takeIf { it.isNotBlank() }
-            val rawText = longContent ?: o.str("text")
+            val longTextFlag = o.optBoolean("isLongText") || o.optBoolean("truncated")
+            val serverText = o.str("text")
+            // 服务端自己截断的长文尾部带「…展开」标记；正文一旦补上自己的入口，这个尾巴要先去干净。
+            val rawText = longContent
+                ?: if (longTextFlag) stripServerTruncationMarker(serverText) else serverText
             val mergedUrlStruct = mergeJsonArrays(
                 o.optJSONArray("url_struct"),
                 longTextObj?.optJSONArray("url_struct"),
@@ -881,7 +892,7 @@ data class Status(
                 mergedUrlStruct,
                 mergedTopicStruct,
             )
-            val truncatedWithoutLink = (o.optBoolean("isLongText") || o.optBoolean("truncated")) &&
+            val truncatedWithoutLink = longTextFlag &&
                 longContent == null &&
                 !htmlTextBase.contains("全文")
             val htmlText = if (truncatedWithoutLink) {
@@ -890,6 +901,14 @@ data class Status(
                 htmlTextBase
             }
             val finalHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct)
+            // 官方信息流在 280 个半角宽度（约 140 个汉字）处截断长正文；有全文时另存一份折叠版，
+            // 列表按开关决定显示哪一份，详情页始终用 [finalHtml]。网页版通道拿到的已经是服务端截断过的
+            // HTML，宽度本来就在预算内，跳过即可。
+            val foldedHtml = rawText
+                .takeUnless { WeiboHtmlTagRegex.containsMatchIn(it) }
+                ?.let { foldWeiboText(it) }
+                ?.let { formatContainerTextToHtml(it, mergedUrlStruct, mergedTopicStruct) }
+                ?.let { enrichSuperTopicLinks(it, mergedUrlStruct) }
             if (pics.isEmpty() && mixPics == null) {
                 val inlinePics = picsFromUrlStruct(mergedUrlStruct).ifEmpty { inlinePicsFromHtml(finalHtml) }
                 if (inlinePics.isNotEmpty()) pics = inlinePics
@@ -916,6 +935,8 @@ data class Status(
                 isVote = isVote,
                 voteId = voteId,
                 visibility = parseStatusVisibility(o),
+                isLongText = longTextFlag || foldedHtml != null,
+                foldedTextHtml = foldedHtml,
             )
         }
     }
@@ -1299,6 +1320,107 @@ internal fun formatContainerTextToHtml(
         out.append(escapeHtmlText(raw.substring(cursor)))
     }
     return out.toString()
+}
+
+/**
+ * 官方信息流把长正文压在 280 个半角宽度（约 140 个汉字）以内，再补「…展开」。
+ * 这里按同一条规则把全文截短，供列表折叠显示。
+ */
+internal const val WeiboFeedFoldWidth = 280
+
+private val FoldUrlRegex = Regex("""https?://[^\s\u4e00-\u9fff]+""")
+private val FoldEmojiRegex = Regex("""\[[^\[\]\s]{1,8}\]""")
+private const val FoldUrlTrailing = ".,;:!?)]}）】》〉」』\"'"
+
+/**
+ * 把微博正文截到 [budget] 个半角宽度：汉字 / 全角标点 / emoji 记 2，ASCII 记 1，
+ * 零宽字符不计；链接按 URL 原长计入（官方就是这么数的，只是显示成「网页链接」）。
+ * 表情 `[微笑]` 按一个宽字符处理。原文本来就够短时返回 null。
+ */
+internal fun foldWeiboText(raw: String, budget: Int = WeiboFeedFoldWidth): String? {
+    if (raw.isEmpty()) return null
+    var index = 0
+    var width = 0
+    while (index < raw.length) {
+        val url = FoldUrlRegex.matchAt(raw, index)
+        if (url != null) {
+            val token = url.value.trimEnd { it in FoldUrlTrailing }
+            val w = displayWidthOf(token)
+            if (width + w > budget) break
+            width += w
+            index += token.length
+            continue
+        }
+        val emoji = FoldEmojiRegex.matchAt(raw, index)
+        if (emoji != null) {
+            if (width + 2 > budget) break
+            width += 2
+            index += emoji.value.length
+            continue
+        }
+        val codePoint = raw.codePointAt(index)
+        val w = displayWidthOf(codePoint)
+        if (width + w > budget) break
+        width += w
+        index += Character.charCount(codePoint)
+    }
+    if (index >= raw.length) return null
+    val folded = raw.substring(0, index).trimEnd { it == '\u200b' || it.isWhitespace() }
+    return folded.ifEmpty { null }
+}
+
+private fun displayWidthOf(text: String): Int {
+    var width = 0
+    var i = 0
+    while (i < text.length) {
+        val codePoint = text.codePointAt(i)
+        width += displayWidthOf(codePoint)
+        i += Character.charCount(codePoint)
+    }
+    return width
+}
+
+private fun displayWidthOf(codePoint: Int): Int {
+    if (codePoint == 0x200B || codePoint == 0x200C || codePoint == 0x200D || codePoint == 0xFEFF) return 0
+    return when (Character.getType(codePoint)) {
+        Character.NON_SPACING_MARK.toInt(),
+        Character.ENCLOSING_MARK.toInt(),
+        Character.COMBINING_SPACING_MARK.toInt(),
+        -> 0
+        else -> if (isWideCodePoint(codePoint)) 2 else 1
+    }
+}
+
+/** 东亚宽字符 + 中文语境下按全角算的歧义字符（引号、破折号、省略号等）。 */
+private fun isWideCodePoint(codePoint: Int): Boolean = when (codePoint) {
+    in 0x1100..0x115F -> true
+    in 0x2010..0x201F -> true
+    in 0x2026..0x2027, 0x2030, 0x2032, 0x2033 -> true
+    in 0x2E80..0x303E -> true
+    in 0x3041..0x33FF -> true
+    in 0x3400..0x4DBF -> true
+    in 0x4E00..0x9FFF -> true
+    in 0xA000..0xA4CF -> true
+    in 0xAC00..0xD7A3 -> true
+    in 0xF900..0xFAFF -> true
+    in 0xFE30..0xFE4F -> true
+    in 0xFF00..0xFF60 -> true
+    in 0xFFE0..0xFFE6 -> true
+    in 0x1F000..0x1FAFF -> true
+    in 0x20000..0x3FFFD -> true
+    else -> false
+}
+
+/**
+ * 服务端截断的长文尾部是 ` \u200b ...<span class="expand">展开</span>`，把这段标记去掉，
+ * 免得后面再补「全文」入口时出现「…展开…全文」。
+ */
+private fun stripServerTruncationMarker(html: String): String {
+    val withoutExpand = html.replace(
+        Regex("""<span[^>]*class="expand"[^>]*>.*?</span>""", RegexOption.IGNORE_CASE),
+        "",
+    )
+    return withoutExpand.trimEnd { it == '\u200b' || it == '.' || it == '…' || it.isWhitespace() }
 }
 
 private fun enrichSuperTopicLinks(textHtml: String, urlStruct: JSONArray?): String {

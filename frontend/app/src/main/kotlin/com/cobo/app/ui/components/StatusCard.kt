@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -136,6 +137,8 @@ fun StatusCard(
     onDeleted: (() -> Unit)? = null,
     /** 是否保留最外层卡片外框。关掉后只去掉卡片底色与圆角，内容横向与顶栏按钮对齐。 */
     keepFrame: Boolean = true,
+    /** 信息流按官方 140 字规则折叠长文；详情页传 false，始终显示全文。 */
+    foldLongText: Boolean = App.settings.foldLongText,
 ) {
     if (App.repo.isDeleted(status.id)) return
     // 列表画过就记住这条，详情页第一帧直接用它，不用再等接口。
@@ -179,8 +182,9 @@ fun StatusCard(
         )
         if (status.textHtml.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
-            WeiboText(
-                html = status.textHtml,
+            FoldableWeiboText(
+                status = status,
+                fold = foldLongText,
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 20.sp else 22.sp,
             )
@@ -206,6 +210,7 @@ fun StatusCard(
                 onImage = onImage,
                 onVideo = onVideo,
                 onCard = keepFrame,
+                foldLongText = foldLongText,
             )
         }
         val region = status.region.trim()
@@ -1086,9 +1091,32 @@ fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) 
     }
 }
 
+/**
+ * 卡片正文。长微博在信息流里按官方规则折叠，点「展开全文」就地展开；详情页传 fold = false。
+ * 展开状态只跟着这一条微博的 id 走，滑出屏幕再回来重新折叠。
+ */
 @Composable
-fun RetweetBlock(
+private fun FoldableWeiboText(
     status: Status,
+    fold: Boolean,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+) {
+    val folded = status.foldedTextHtml
+    val canFold = fold && !folded.isNullOrBlank() && folded != status.textHtml
+    var expanded by remember(status.id) { mutableStateOf(false) }
+    val folding = canFold && !expanded
+    WeiboText(
+        html = if (folding) folded!! else status.textHtml,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        expandLabel = if (folding) "展开全文" else null,
+        onExpand = if (folding) ({ expanded = true }) else null,
+    )
+}
+
+@Composable
+fun RetweetBlock(    status: Status,
     compact: Boolean,
     onOpen: () -> Unit,
     onUser: (User) -> Unit,
@@ -1098,6 +1126,8 @@ fun RetweetBlock(
     actionsEnabled: Boolean = true,
     /** 当前块是否直接落在卡片面上：决定嵌套块的底色，卡片去掉后要反过来才看得见。 */
     onCard: Boolean = true,
+    /** 被转发的原博在信息流里是否折叠长文。 */
+    foldLongText: Boolean = true,
 ) {
     val scheme = COUITheme.colorScheme
     remember(status) { StatusMemory.remember(status) }
@@ -1135,8 +1165,9 @@ fun RetweetBlock(
         }
         if (status.textHtml.isNotBlank()) {
             Spacer(Modifier.height(2.dp))
-            WeiboText(
-                html = status.textHtml,
+            FoldableWeiboText(
+                status = status,
+                fold = foldLongText,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
             )

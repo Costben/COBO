@@ -149,6 +149,7 @@ private class SettingsUiState(context: Context) {
     var collapseFollowGroups by mutableStateOf(App.settings.collapseFollowGroups)
     var feedCardFrame by mutableStateOf(App.settings.feedCardFrame)
     var detailCardFrame by mutableStateOf(App.settings.detailCardFrame)
+    var foldLongText by mutableStateOf(App.settings.foldLongText)
     var showVipLevel by mutableStateOf(App.settings.showVipLevel)
     var showFanLevel by mutableStateOf(App.settings.showFanLevel)
     var showVerifiedBadge by mutableStateOf(App.settings.showVerifiedBadge)
@@ -558,6 +559,21 @@ private fun LazyListScope.feedSettingsItems(
                     "已去掉主贴与热门评论外框，正文与顶栏按钮对齐"
                 },
                 modifier = Modifier.testTag("settings_detail_card_frame"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
+                checked = state.foldLongText,
+                onCheckedChange = {
+                    state.foldLongText = it
+                    App.settings.applyFoldLongText(it)
+                },
+                title = "长文折叠",
+                summary = if (state.foldLongText) {
+                    "信息流里超过 140 字的长微博只显示开头，点「展开全文」再看完整内容"
+                } else {
+                    "长微博在信息流里直接展开显示全文"
+                },
+                modifier = Modifier.testTag("settings_fold_long_text"),
                 cardListPosition = CardListPosition.Middle,
             )
             SwitchPreference(

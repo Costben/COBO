@@ -266,6 +266,8 @@ internal fun statusToSnapshot(s: Status): JSONObject = JSONObject().apply {
     put("editCount", s.editCount)
     put("isVote", s.isVote)
     put("voteId", s.voteId ?: JSONObject.NULL)
+    if (s.isLongText) put("isLongText", true)
+    s.foldedTextHtml?.let { put("foldedText", it) }
     s.visibility?.let { vis ->
         put("visibleType", vis.type)
         put("visibleLabel", vis.label)
@@ -325,6 +327,8 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
         editCount = o.int("editCount"),
         isVote = o.optBoolean("isVote"),
         voteId = o.opt("voteId")?.takeIf { it != JSONObject.NULL }?.toString()?.ifBlank { null },
+        isLongText = o.optBoolean("isLongText", false),
+        foldedTextHtml = o.str("foldedText").ifBlank { null },
         visibility = if (o.has("visibleType")) {
             val type = o.int("visibleType")
             StatusVisibility(
