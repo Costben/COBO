@@ -44,14 +44,8 @@ android {
 
 dependencies {
     val coui = "io.github.suqi8.coui.kmp"
-    // 与 settings.gradle.kts 保持一致的相对路径判断（相对 frontend/ 根）：
-    // 本地 ../coui 快照仓库存在时消费滚动快照 1.2.0-SNAPSHOT，缺失时回退到远端钉死快照版本。
-    val localCouiRepo = rootProject.file("../../coui/build/repository/local")
-    val couiVersion = if (localCouiRepo.isDirectory) {
-        "1.2.0-SNAPSHOT"
-    } else {
-        "1.2.0-d756fe5c-SNAPSHOT"
-    }
+    // 本地 ../coui 与本仓库 third-party 孤儿分支均以 1.2.0-SNAPSHOT 发布，远端由 settings.gradle.kts 按 commit SHA 钉死。
+    val couiVersion = "1.2.0-SNAPSHOT"
 
     implementation("$coui:coui-ui:$couiVersion")
     implementation("$coui:coui-icons:$couiVersion")

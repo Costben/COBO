@@ -25,18 +25,19 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
-        // 本地存在 ../../coui/build/repository/local（相对 frontend/ 根）时优先解析本地滚动快照，
-        // 避免使用参数过时的远端快照；无本地 ../coui 仓库时回退到远端钉死仓库以保证外部环境可编译。
+        // 本地存在 ../../coui/build/repository/local（相对 frontend/ 根）且未指定强制远端时优先解析本地快照；
+        // 外部环境无本地 ../coui 仓库时回退到本仓库 third-party 孤儿分支的钉死快照以保证开箱即编。
         val localCouiRepo = file("../../coui/build/repository/local")
+        val forceRemoteCoui = providers.gradleProperty("cobo.useRemoteCoui").orNull.equals("true", ignoreCase = true)
         exclusiveContent {
             forRepository {
                 maven {
-                    if (localCouiRepo.isDirectory) {
+                    if (localCouiRepo.isDirectory && !forceRemoteCoui) {
                         name = "localCouiRepo"
                         url = uri(localCouiRepo)
                     } else {
-                        name = "pinnedArtPlusCoui"
-                        url = uri("https://raw.githubusercontent.com/Costben/ArtPlus/63bcad6dc055680e2cbc58640abcbf0329b9250d/third_party/coui-repo")
+                        name = "pinnedCoboCoui"
+                        url = uri("https://raw.githubusercontent.com/Costben/COBO/512831ef8f848b7a9a96bebb5eada27a80212436/coui-repo")
                     }
                 }
             }
