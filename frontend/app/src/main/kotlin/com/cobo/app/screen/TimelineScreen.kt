@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.FeedTopAction
 import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.Status
@@ -746,30 +747,40 @@ fun TimelineScreen(
         App.feedRefreshEvents.collect { currentFollowStore.refresh() }
     }
     LaunchedEffect(Unit) {
-        App.feedTopEvents.collect { scrollToTop ->
+        App.feedTopEvents.collect { action ->
             val page = pagerState.currentPage
             val store = currentStores.getOrNull(page) ?: return@collect
             val listState = listStates.getOrNull(page)
             val reverse = App.isReverseBrowseEnabled() && store.supportsReverseBrowse
-            if (scrollToTop && reverse) {
-                // 倒序浏览下双击「微博」仅作回到顶部之用；已在顶部时才触发一次刷新。
-                val atTop = listState == null ||
-                    (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0)
-                if (!atTop) {
-                    listState.glideToTop()
-                    return@collect
+            val atTop = listState == null ||
+                isFeedAtTop(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+            when (resolveFeedTopEffect(action, atTop, reverse)) {
+                FeedTopEffect.GlideToTopOnly -> {
+                    listState?.glideToTop()
                 }
-            }
-            if (scrollToTop || !reverse) {
-                // Smooth ride back to the first card, then the same pull the finger would do, so the
-                // page slides down and the list stays put while it reloads.
-                listState?.glideToTop()
-            }
-            val pull = pullStates.getOrNull(page)
-            if (pull != null) {
-                pull.startRefresh { refreshScope.launch { store.refresh() } }
-            } else {
-                store.refresh()
+                FeedTopEffect.RefreshInPlace -> {
+                    if (!store.refreshing) {
+                        val pull = pullStates.getOrNull(page)
+                        if (pull != null) {
+                            pull.startRefresh { refreshScope.launch { store.refresh() } }
+                        } else {
+                            store.refresh()
+                        }
+                    }
+                }
+                FeedTopEffect.GlideToTopThenRefresh -> {
+                    // Smooth ride back to the first card, then the same pull the finger would do, so the
+                    // page slides down and the list stays put while it reloads.
+                    listState?.glideToTop()
+                    if (!store.refreshing) {
+                        val pull = pullStates.getOrNull(page)
+                        if (pull != null) {
+                            pull.startRefresh { refreshScope.launch { store.refresh() } }
+                        } else {
+                            store.refresh()
+                        }
+                    }
+                }
             }
         }
     }
@@ -1278,6 +1289,32 @@ private const val AutoBridgeMaxExtraPages = 2
 
 /** 判断新页是否与旧块接上的头部样本窗口大小（容忍前几条偶发被删）。 */
 private const val HeadOverlapWindow = 15
+
+internal const val FeedAtTopTolerancePx = 2
+
+internal fun isFeedAtTop(
+    firstVisibleItemIndex: Int,
+    firstVisibleItemScrollOffset: Int,
+): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= FeedAtTopTolerancePx
+
+internal enum class FeedTopEffect {
+    GlideToTopOnly,
+    GlideToTopThenRefresh,
+    RefreshInPlace,
+}
+
+internal fun resolveFeedTopEffect(
+    action: FeedTopAction,
+    atTop: Boolean,
+    reverseBrowse: Boolean,
+): FeedTopEffect = when (action) {
+    FeedTopAction.ScrollToTopOrRefresh -> {
+        if (!atTop) FeedTopEffect.GlideToTopOnly else FeedTopEffect.RefreshInPlace
+    }
+    FeedTopAction.RefreshFromAccessory -> {
+        if (reverseBrowse) FeedTopEffect.RefreshInPlace else FeedTopEffect.GlideToTopThenRefresh
+    }
+}
 
 private const val GlideSeconds = 0.3f
 // Short trips still get a visible ride: the floor is low enough that a one-card hop takes about

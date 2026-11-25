@@ -55,7 +55,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -83,8 +82,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -111,6 +112,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.FeedTopAction
 import com.cobo.app.R
 import com.cobo.app.data.Account
 import com.cobo.app.data.BottomLeftAction
@@ -646,6 +648,30 @@ fun MainShell(nav: NavState) {
     )
 
     val feedPanelCovering = tab == 0 && panelMounted
+    val autoHideFloatingBars = App.settings.autoHideFloatingBars
+    var feedFilterMenuExpanded by remember { mutableStateOf(false) }
+    var bottomBarMenuOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(feedSearchExpanded, tab) {
+        if (feedSearchExpanded || tab != 0) feedFilterMenuExpanded = false
+    }
+    val activeMainListState = when (tab) {
+        0 -> {
+            val slotKey = feedSlotKeys.getOrElse(feedPager.currentPage) { feedPager.currentPage.toString() }
+            timelineScrollHolder.listStateFor(slotKey)
+        }
+        1 -> if (guest) null else messagesState.listState
+        else -> profileListState
+    }
+    val mainTopSafeZone = if (tab == 0) FeedTitleRowHeight + 8.dp else 16.dp
+    val mainBarScroll = rememberFloatingBarScrollController(
+        enabled = autoHideFloatingBars,
+        forceShow = feedSearchExpanded || panelMounted || feedFilterMenuExpanded || bottomBarMenuOpen,
+        listState = activeMainListState,
+        topSafeZone = mainTopSafeZone,
+    )
+    LaunchedEffect(tab, feedPager.currentPage) { mainBarScroll.show() }
+    val mainBarHideProgress by rememberFloatingBarHideProgress(mainBarScroll.hidden, "mainBarHide")
+    val bottomBarHidden = mainBarHideProgress > 0.95f
 
     Box(Modifier.fillMaxSize()) {
         // Both bars float over the page, so their live edges are reported and read by
@@ -657,6 +683,7 @@ fun MainShell(nav: NavState) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .nestedScroll(mainBarScroll.connection)
                     .layerBackdropIf(blur, backdrop)
                     .background(pageContainerColor())
                     .then(if (feedPanelCovering) Modifier.clearAndSetSemantics {} else Modifier),
@@ -736,6 +763,9 @@ fun MainShell(nav: NavState) {
                     centerOptions = centerOptions,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
+                    hideProgress = { mainBarHideProgress },
+                    filterMenuExpanded = feedFilterMenuExpanded,
+                    onFilterMenuExpandedChange = { feedFilterMenuExpanded = it },
                     timelineScrollHolder = timelineScrollHolder,
                     messagesState = messagesState,
                     profileListState = profileListState,
@@ -762,13 +792,13 @@ fun MainShell(nav: NavState) {
         val profileTabAvatar = App.settings.profileTabAvatar
         val bottomLeftAction = App.settings.bottomLeftAction
         val triggerBottomLeftAction: (BottomLeftAction) -> Unit = { action ->
-            if (!feedPanelCovering) {
+            if (!feedPanelCovering && !bottomBarHidden) {
                 when (action) {
                     BottomLeftAction.Refresh -> {
                         if (tab == 1) App.requestMessagesTop()
                         else {
                             if (tab != 0) nav.setTab(0)
-                            App.requestFeedTop(scrollToTop = false)
+                            App.requestFeedTop(FeedTopAction.RefreshFromAccessory)
                         }
                     }
                     BottomLeftAction.Search -> {
@@ -819,9 +849,12 @@ fun MainShell(nav: NavState) {
             LocalPlatformBottomBarMaterialEnabled provides false,
         ) {
             PinnedBarDensity {
+                var bottomBarHeightPx by remember { mutableIntStateOf(0) }
+                val bottomBarExtraClearancePx = with(LocalDensity.current) { 24.dp.toPx() }
+                val bottomBarActive = !feedPanelCovering && !bottomBarHidden
                 FloatingBottomBar(
                     tab = tab,
-                    onTab = { target -> if (!feedPanelCovering) nav.setTab(target) },
+                    onTab = { target -> if (bottomBarActive) nav.setTab(target) },
                     bottomLeftAction = bottomLeftAction,
                     onBottomLeftClick = { triggerBottomLeftAction(bottomLeftAction) },
                     onBottomLeftActionTrigger = { action ->
@@ -831,18 +864,24 @@ fun MainShell(nav: NavState) {
                         App.settings.applyBottomLeftAction(selected)
                     },
                     onOpenSettings = {
-                        if (!feedPanelCovering) nav.push(Route.Settings)
+                        if (bottomBarActive) nav.push(Route.Settings)
                     },
-                    menuEnabled = !feedPanelCovering,
+                    menuEnabled = bottomBarActive,
+                    onMenuExpandedChange = { bottomBarMenuOpen = it },
                     bottomBarBounds = bottomBarBounds,
-                    onFeedTop = { if (!feedPanelCovering) App.requestFeedTop(scrollToTop = true) },
+                    onFeedTop = {
+                        if (bottomBarActive) {
+                            mainBarScroll.show()
+                            App.requestFeedTop(FeedTopAction.ScrollToTopOrRefresh)
+                        }
+                    },
                     onPublish = {
-                        if (!feedPanelCovering) {
+                        if (bottomBarActive) {
                             if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
                         }
                     },
                     profileAvatarUrl = if (profileTabAvatar && !guest) profileAvatarUrl else null,
-                    profileOverflowMenu = if (quickSwitchAccount && !feedPanelCovering) {
+                    profileOverflowMenu = if (quickSwitchAccount && bottomBarActive) {
                         {
                             ProfileQuickSwitchMenu(
                                 guest = guest,
@@ -859,7 +898,13 @@ fun MainShell(nav: NavState) {
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .then(if (feedPanelCovering) Modifier.clearAndSetSemantics {} else Modifier),
+                        .onSizeChanged { bottomBarHeightPx = it.height }
+                        .graphicsLayer {
+                            val travel = if (bottomBarHeightPx > 0) bottomBarHeightPx.toFloat() else bottomBarExtraClearancePx * 5f
+                            translationY = mainBarHideProgress * (travel + bottomBarExtraClearancePx)
+                            alpha = (1f - mainBarHideProgress * 1.15f).coerceIn(0f, 1f)
+                        }
+                        .then(if (!bottomBarActive) Modifier.clearAndSetSemantics {} else Modifier),
                 )
             }
         }
@@ -1006,6 +1051,9 @@ private fun MainBarUnderlay(
     centerOptions: List<FeedTabSelection>,
     collapsed: Float,
     titleHeightPx: Float,
+    hideProgress: () -> Float,
+    filterMenuExpanded: Boolean,
+    onFilterMenuExpandedChange: (Boolean) -> Unit,
     timelineScrollHolder: TimelineScrollHolder,
     messagesState: MessagesTabState,
     profileListState: LazyListState,
@@ -1070,14 +1118,23 @@ private fun MainBarUnderlay(
         }
     }
     val materialShift = { (collapsed * titleHeightPx * feedWeight.value).roundToInt() }
+    val topHideDistancePx = with(density) {
+        if (feedHasTabs) {
+            (statusBarTop + TopAppBarDefaults.SmallTopAppBarCenterHeight).toPx()
+        } else {
+            statusBarTop.toPx()
+        }
+    }
+    val topHideShift = { (hideProgress().coerceIn(0f, 1f) * topHideDistancePx * feedWeight.value).roundToInt() }
     val materialHeight = animateDpAsState(
         targetValue = if (tab == 0) feedBarHeight else pageBarHeight,
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarMaterialHeight",
     )
-    var filterMenuExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(searchExpanded, tab) {
-        if (searchExpanded || tab != 0) filterMenuExpanded = false
+    LaunchedEffect(hideProgress) {
+        snapshotFlow { hideProgress() > 0.5f }.collect { shouldClose ->
+            if (shouldClose) onFilterMenuExpandedChange(false)
+        }
     }
     // 打开菜单时补一次分组列表：设置里改过分组、或者在网页版新加了分组，这里跟着更新。
     LaunchedEffect(filterMenuExpanded) {
@@ -1088,11 +1145,12 @@ private fun MainBarUnderlay(
         AppBarSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(0, -materialShift()) }
+                .offset { IntOffset(0, -(materialShift() + topHideShift())) }
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
             scrollFraction = {
-                (feedWeight.value * feedScrollAlpha() +
+                val feedFraction = feedWeight.value * feedScrollAlpha() * (1f - hideProgress().coerceIn(0f, 1f))
+                (feedFraction +
                     messagesWeight.value * messagesScrollAlpha() +
                     meWeight.value * profileScrollAlpha()).coerceIn(0f, 1f)
             },
@@ -1114,18 +1172,23 @@ private fun MainBarUnderlay(
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(150)),
         ) {
+            val feedTabsHidden = hideProgress() > 0.95f
             Column(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = statusBarTop)
-                    .then(if (panelCovering) Modifier.clearAndSetSemantics {} else Modifier),
+                    .then(if (panelCovering || feedTabsHidden) Modifier.clearAndSetSemantics {} else Modifier),
             ) {
                 Spacer(Modifier.height(FeedTitleRowHeight))
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-                        .graphicsLayer { translationY = -collapsed * titleHeightPx },
+                        .graphicsLayer {
+                            val hp = hideProgress().coerceIn(0f, 1f)
+                            translationY = -collapsed * titleHeightPx - hp * topHideDistancePx
+                            alpha = (1f - hp * 1.25f).coerceIn(0f, 1f)
+                        },
                 ) {
                     FeedTabs(
                         pager = feedPager,
@@ -1134,13 +1197,13 @@ private fun MainBarUnderlay(
                         centerTab = centerTab,
                         centerOptions = centerOptions,
                         filterMenuExpanded = filterMenuExpanded,
-                        onFilterMenuDismiss = { filterMenuExpanded = false },
+                        onFilterMenuDismiss = { onFilterMenuExpandedChange(false) },
                         onCenterSelected = {
-                            filterMenuExpanded = false
+                            onFilterMenuExpandedChange(false)
                             onCenterSelected(it)
                         },
-                        onSelect = { page -> scope.launch { feedPager.animateScrollToPage(page) } },
-                        onFilterClick = { filterMenuExpanded = true },
+                        onSelect = { page -> if (!feedTabsHidden) scope.launch { feedPager.animateScrollToPage(page) } },
+                        onFilterClick = { if (!feedTabsHidden) onFilterMenuExpandedChange(true) },
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
@@ -1908,25 +1971,30 @@ private fun FloatingBottomBar(
     bottomBarBounds: BottomBarBounds,
     onFeedTop: () -> Unit,
     onPublish: () -> Unit,
+    onMenuExpandedChange: (Boolean) -> Unit = {},
     profileAvatarUrl: String? = null,
     profileOverflowMenu: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    // 双击「微博」= 回到顶部。用时间戳判定而不是 detectTapGestures：底栏 item 内部的
-    // combinedClickable 会先消费 up 事件，外层再加 pointerInput 收不到点击。
-    // 单击照常切 tab，不延迟；320ms 内的第二下追加一次回到顶部。
-    var lastFeedTapAt by remember { mutableLongStateOf(0L) }
+    // 首页已停留在「微博」Tab 时，单击一次直接执行二段式回顶/刷新；从其他 Tab 切回时仅切页。
     val onFeedTap: () -> Unit = {
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastFeedTapAt <= 320L) {
-            lastFeedTapAt = 0L
+        if (tab == 0) {
             onFeedTop()
         } else {
-            lastFeedTapAt = now
+            onTab(0)
         }
-        onTab(0)
     }
     var leftMenuExpanded by remember { mutableStateOf(false) }
+    var profileMenuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(leftMenuExpanded, profileMenuExpanded) {
+        onMenuExpandedChange(leftMenuExpanded || profileMenuExpanded)
+    }
+    LaunchedEffect(menuEnabled) {
+        if (!menuEnabled) {
+            leftMenuExpanded = false
+            bottomBarBounds.clear()
+        }
+    }
     val leftPopupPositionProvider = remember { bottomLeftPopupPositionProvider() }
     Box(
         modifier
@@ -2094,6 +2162,7 @@ private fun FloatingBottomBar(
                     onClick = { onTab(2) },
                     avatarUrl = profileAvatarUrl,
                     overflowMenu = profileOverflowMenu,
+                    onMenuExpandedChange = { profileMenuExpanded = it },
                     modifier = Modifier.testTag("bottom_tab_profile"),
                 )
             }
@@ -2111,11 +2180,18 @@ private fun RowScope.ProfileFloatingNavItem(
     onClick: () -> Unit,
     avatarUrl: String?,
     overflowMenu: (@Composable () -> Unit)?,
+    onMenuExpandedChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colorScheme = COUITheme.colorScheme
     val tint = if (selected) colorScheme.onSurface else colorScheme.labelPrimaryVariant
     var menuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(overflowMenu) {
+        if (overflowMenu == null) menuExpanded = false
+    }
+    LaunchedEffect(menuExpanded) {
+        onMenuExpandedChange(menuExpanded)
+    }
     val density = LocalDensity.current
     val extraRightShiftPx = with(density) { 68.dp.roundToPx() }
     val popupPositionProvider = remember(extraRightShiftPx) {

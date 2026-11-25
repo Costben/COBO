@@ -46,6 +46,13 @@ class CoboApplication : Application() {
     }
 }
 
+enum class FeedTopAction {
+    /** 底栏「微博」按钮在首页再次点击：未在顶部时回顶，已在顶部时刷新。 */
+    ScrollToTopOrRefresh,
+    /** 底栏左下角融合球「回到顶部刷新」：普通模式回顶并刷新，倒序模式原地刷新。 */
+    RefreshFromAccessory,
+}
+
 object App {
     lateinit var context: Context
         private set
@@ -179,7 +186,7 @@ object App {
     }
 
     val feedRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val feedTopEvents = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
+    val feedTopEvents = MutableSharedFlow<FeedTopAction>(extraBufferCapacity = 1)
     val messagesTopEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val detailRefreshEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val followEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -209,8 +216,8 @@ object App {
         feedRefreshEvents.tryEmit(Unit)
     }
 
-    fun requestFeedTop(scrollToTop: Boolean = true) {
-        feedTopEvents.tryEmit(scrollToTop)
+    fun requestFeedTop(action: FeedTopAction = FeedTopAction.ScrollToTopOrRefresh) {
+        feedTopEvents.tryEmit(action)
     }
 
     fun requestMessagesTop() {
