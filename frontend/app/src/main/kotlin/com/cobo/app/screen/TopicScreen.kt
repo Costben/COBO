@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,6 +24,9 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.ApiException
 import com.cobo.app.data.TopicItem
+import com.cobo.app.data.FollowedSuperTopic
+import com.cobo.app.data.followedSuperTopics
+import com.cobo.app.data.followedSuperTopicsWebUrl
 import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
@@ -30,6 +34,7 @@ import com.cobo.app.ui.Route
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.resolveWeiboLink
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FoldableIntroText
@@ -37,6 +42,9 @@ import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
@@ -110,6 +118,27 @@ fun TopicScreen(nav: NavState, initial: String = "") {
     val store = remember { SuperTopicSearchStore() }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
+
+    val followedUid = App.repo.session?.takeUnless { App.repo.guest }?.uid.orEmpty()
+    var followed by remember(followedUid) { mutableStateOf<List<FollowedSuperTopic>?>(null) }
+    var followedError by remember(followedUid) { mutableStateOf<String?>(null) }
+    var officialList by remember(followedUid) { mutableStateOf(followedSuperTopicsWebUrl(followedUid)) }
+    var reloadFollowed by remember(followedUid) { mutableStateOf(0) }
+
+    LaunchedEffect(followedUid, reloadFollowed) {
+        if (App.repo.guest || App.repo.session == null) return@LaunchedEffect
+        followedError = null
+        try {
+            if (officialList == null) officialList = followedSuperTopicsWebUrl(App.repo.ownUid())
+            followed = App.repo.followedSuperTopics()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiException) {
+            followedError = e.message ?: "读取已关注超话失败"
+        } catch (_: Exception) {
+            followedError = "读取已关注超话失败，可查看官网名单"
+        }
+    }
 
     fun openTopic(topic: TopicItem) {
         val id = topic.containerId ?: return
@@ -233,6 +262,40 @@ fun TopicScreen(nav: NavState, initial: String = "") {
                                 )
                             }
                         }
+                    }
+                }
+            }
+            if (query.isBlank()) {
+                item { Text("已关注超话", fontSize = 16.sp) }
+                when {
+                    App.repo.guest || App.repo.session == null -> item { EmptyState("登录微博后查看已关注超话") }
+                    followedError != null -> item {
+                        ErrorState(followedError!!, onRetry = { reloadFollowed++ })
+                    }
+                    followed == null -> item { LoadingState() }
+                    followed.isNullOrEmpty() -> item { EmptyState("还没有关注超话") }
+                }
+                items(followed.orEmpty(), key = { "followed-${it.id}" }) { topic ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(0.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        ArrowPreference(
+                            title = topic.name,
+                            startAction = { Avatar(topic.avatarUrl.orEmpty(), 32.dp) },
+                            centerStartAction = true,
+                            onClick = { openTopic(TopicItem(topic.name, containerId = topic.id)) },
+                        )
+                    }
+                }
+                if (!App.repo.guest && App.repo.session != null) item {
+                    if (followed != null && followedError == null) {
+                        TextButton(text = "刷新关注列表", onClick = { reloadFollowed++ })
+                    }
+                    officialList?.let { url ->
+                        TextButton(text = "查看官网关注列表", onClick = { nav.push(Route.Web(url, "我关注的超话")) })
                     }
                 }
             }

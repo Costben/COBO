@@ -21,7 +21,16 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val followedTopicsPreview = providers.gradleProperty("cobo.followedTopicsPreview").orNull == "true"
+
     buildTypes {
+        if (followedTopicsPreview) {
+            getByName("debug") {
+                applicationIdSuffix = ".followedpreview"
+                versionNameSuffix = "-followed-preview"
+                resValue("string", "app_name", "Cobo · 超话试用")
+            }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
