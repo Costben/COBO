@@ -91,6 +91,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -144,6 +145,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -528,6 +530,32 @@ private fun MediaMaterialPill(
     }
 }
 
+/** 全屏看图页无操作后自动隐藏顶部与实况控件的等待时长。 */
+internal const val ImageViewerChromeAutoHideDelayMillis = 2_500L
+
+/**
+ * 判断全屏看图页是否应当启动自动隐藏倒计时：仅当控件可见且当前没有弹层、保存/上传或拖拽退出时触发。
+ */
+internal fun shouldAutoHideImageViewerChrome(
+    chromeVisible: Boolean,
+    menuOpen: Boolean,
+    avatarMoreOpen: Boolean,
+    cropDialogOpen: Boolean,
+    fallbackDialogOpen: Boolean,
+    uploadingAvatar: Boolean,
+    saving: Boolean,
+    dismissDragging: Boolean,
+    dismissExiting: Boolean,
+): Boolean = chromeVisible &&
+    !menuOpen &&
+    !avatarMoreOpen &&
+    !cropDialogOpen &&
+    !fallbackDialogOpen &&
+    !uploadingAvatar &&
+    !saving &&
+    !dismissDragging &&
+    !dismissExiting
+
 @Composable
 fun ImageViewerScreen(
     nav: NavState,
@@ -565,6 +593,7 @@ fun ImageViewerScreen(
     val transitionOffset: () -> Offset = remember(transition) { transition?.offset ?: { Offset.Zero } }
 
     var chrome by remember { mutableStateOf(true) }
+    var chromeInteractionTick by remember { mutableIntStateOf(0) }
     var original by remember { mutableStateOf(App.settings.imageBrowseQuality == ImageBrowseQuality.Original) }
     var menu by remember { mutableStateOf(false) }
     var avatarMoreOpen by remember { mutableStateOf(false) }
@@ -620,6 +649,37 @@ fun ImageViewerScreen(
     val plateAlpha = if (light) 0.62f else 0.46f
 
     ViewerSystemBars(visible = chrome)
+
+    // 刻意不将 pagerState.currentPage 纳入依赖键，确保左右滑动翻页或缩放不触发也不重置自动隐藏，仅由点击图片唤出。
+    LaunchedEffect(
+        chrome,
+        chromeInteractionTick,
+        menu,
+        avatarMoreOpen,
+        pendingCropUri != null,
+        avatarFallbackMessage != null,
+        uploadingAvatar,
+        saver.saving,
+        frame.dismiss.dragging,
+        frame.dismiss.exiting,
+    ) {
+        if (
+            shouldAutoHideImageViewerChrome(
+                chromeVisible = chrome,
+                menuOpen = menu,
+                avatarMoreOpen = avatarMoreOpen,
+                cropDialogOpen = pendingCropUri != null,
+                fallbackDialogOpen = avatarFallbackMessage != null,
+                uploadingAvatar = uploadingAvatar,
+                saving = saver.saving,
+                dismissDragging = frame.dismiss.dragging,
+                dismissExiting = frame.dismiss.exiting,
+            )
+        ) {
+            delay(ImageViewerChromeAutoHideDelayMillis)
+            chrome = false
+        }
+    }
 
     // 长按菜单打开时，优先拦截返回键以收起菜单
     BackHandler(enabled = menu) {
@@ -737,12 +797,23 @@ fun ImageViewerScreen(
             }
         }
 
-        if (chrome) {
+        val chromeAlphaState = animateFloatAsState(
+            targetValue = if (chrome) 1f else 0f,
+            animationSpec = tween(
+                durationMillis = if (chrome) 180 else 260,
+                easing = FastOutSlowInEasing,
+            ),
+            label = "imageViewerChromeAlpha",
+        )
+        val chromeMounted by remember(chromeAlphaState) {
+            derivedStateOf { chrome || chromeAlphaState.value > 0.001f }
+        }
+        if (chromeMounted) {
             CompositionLocalProvider(LocalBackdrop provides if (blurEffectsEnabled()) backdrop else null) {
                 // The bar is up now, so its inset is real; the cutout still has to be unioned in
                 // for landscape and for devices that report them separately.
                 val topInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
-                val dismissChromeAlpha by animateFloatAsState(
+                val dismissChromeAlphaState = animateFloatAsState(
                     targetValue = if (frame.dismiss.dragging || frame.dismiss.exiting) 0f else 1f,
                     animationSpec = tween(150),
                     label = "dismissChrome",
@@ -750,7 +821,9 @@ fun ImageViewerScreen(
                 // 顶栏只在进场后半段出现、退场开头就消失，不会跟着画面一起缩小。
                 // 底下的实况标记也走这条曲线，否则返回时它会留到动画结束才不见。
                 val chromeFade: () -> Float = {
-                    ((progress() - ChromeFadeStart) / (1f - ChromeFadeStart)).coerceIn(0f, 1f) * dismissChromeAlpha
+                    ((progress() - ChromeFadeStart) / (1f - ChromeFadeStart)).coerceIn(0f, 1f) *
+                        dismissChromeAlphaState.value *
+                        chromeAlphaState.value
                 }
                 Box(
                     modifier = Modifier
@@ -761,13 +834,14 @@ fun ImageViewerScreen(
                         // the very top of the screen and runs [ScrimTail] past the controls.
                         .background(ChromeScrim)
                         .windowInsetsPadding(topInsets)
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = ScrimTail),
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = ScrimTail)
+                        .then(if (!chrome) Modifier.clearAndSetSemantics {} else Modifier),
                 ) {
                     Box(Modifier.align(Alignment.CenterStart)) {
                         HighlightedIconButton(
                             size = MediaControlHeight,
                             onClick = {
-                                if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
                                     frame.dismiss.cancelActive()
                                     nav.pop()
                                 }
@@ -796,7 +870,8 @@ fun ImageViewerScreen(
                         ) {
                             MediaMaterialPill(
                                 onClick = {
-                                    if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                    if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                        chromeInteractionTick++
                                         original = !original
                                         saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
                                     }
@@ -816,7 +891,8 @@ fun ImageViewerScreen(
                                     HighlightedIconButton(
                                         size = MediaControlHeight,
                                         onClick = {
-                                            if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                            if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                chromeInteractionTick++
                                                 avatarMoreOpen = true
                                             }
                                         },
@@ -899,7 +975,8 @@ fun ImageViewerScreen(
                                 HighlightedIconButton(
                                     size = MediaControlHeight,
                                     onClick = {
-                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                        if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                            chromeInteractionTick++
                                             saver.saveOne(
                                                 SaveImageItem(
                                                     url = current,
@@ -929,7 +1006,8 @@ fun ImageViewerScreen(
                             .align(Alignment.BottomStart)
                             .graphicsLayer { alpha = chromeFade() }
                             .navigationBarsPadding()
-                            .padding(start = 12.dp, bottom = 12.dp),
+                            .padding(start = 12.dp, bottom = 12.dp)
+                            .then(if (!chrome) Modifier.clearAndSetSemantics {} else Modifier),
                     ) {
                         LivePill()
                     }
@@ -938,13 +1016,15 @@ fun ImageViewerScreen(
                             .align(Alignment.BottomEnd)
                             .graphicsLayer { alpha = chromeFade() }
                             .navigationBarsPadding()
-                            .padding(end = 12.dp, bottom = 12.dp),
+                            .padding(end = 12.dp, bottom = 12.dp)
+                            .then(if (!chrome) Modifier.clearAndSetSemantics {} else Modifier),
                     ) {
                         HighlightedIconButton(
                             size = MediaControlHeight,
                             modifier = Modifier.testTag("live_photo_sound_toggle"),
                             onClick = {
-                                if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                    chromeInteractionTick++
                                     val next = !liveSound
                                     App.settings.applyLivePhotoSound(next)
                                     saver.flash(if (next) "已开启实况声音" else "已静音实况")
