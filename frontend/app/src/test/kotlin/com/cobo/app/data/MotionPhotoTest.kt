@@ -137,6 +137,38 @@ class MotionPhotoTest {
         }
     }
 
+    @Test
+    fun extractsStillJpegAndEmbeddedMp4FromMotionPhotoBytes() {
+        val image = tempFile(Base64.getDecoder().decode(ONE_PIXEL_JPEG), ".jpg")
+        val videoBytes = mp4Bytes("mp42")
+        val video = tempFile(videoBytes, ".mp4")
+        val output = File.createTempFile("cobo-motion-split-", ".jpg").apply { delete() }
+
+        try {
+            MotionPhotoExporter.export(image, video, output, 800_000L)
+            val allBytes = output.readBytes()
+
+            val info = MotionPhotoParser.parse(allBytes)
+            assertTrue(info.hasMotionPhoto)
+            assertEquals(videoBytes.size.toLong(), info.embeddedVideoLength)
+
+            val parts = MotionPhotoParser.extract(allBytes)
+            assertTrue("Expected non-null extracted parts", parts != null)
+            assertTrue(MotionPhotoParser.hasJpegHeader(parts!!.stillBytes))
+            assertTrue(MotionPhotoParser.isIsoBmff(parts.videoBytes))
+            assertEquals(allBytes.size - videoBytes.size, parts.stillBytes.size)
+            assertTrue(videoBytes.contentEquals(parts.videoBytes))
+
+            val plainJpeg = Base64.getDecoder().decode(ONE_PIXEL_JPEG)
+            assertFalse(MotionPhotoParser.parse(plainJpeg).hasMotionPhoto)
+            assertNull(MotionPhotoParser.extract(plainJpeg))
+        } finally {
+            image.delete()
+            video.delete()
+            output.delete()
+        }
+    }
+
     private fun tempFile(bytes: ByteArray, suffix: String): File =
         File.createTempFile("cobo-mp-test-", suffix).apply { writeBytes(bytes) }
 

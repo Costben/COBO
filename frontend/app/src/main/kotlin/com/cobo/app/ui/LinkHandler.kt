@@ -6,12 +6,16 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.cobo.app.data.CookieVault
+import com.cobo.app.data.Status
 
 /**
  * Handles link taps inside Weibo rich text. The root provides an in-app WebView
  * route so a tap never leaves the app for the system browser.
  */
 val LocalLinkHandler = staticCompositionLocalOf<(String) -> Unit> { {} }
+
+/** 卡片菜单触发「编辑微博」时由根节点推入编辑页。 */
+val LocalStatusEditor = staticCompositionLocalOf<(Status) -> Unit> { {} }
 
 /**
  * Weibo's HTML mixes absolute URLs with site-relative paths (`/status/<id>` for the

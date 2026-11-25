@@ -42,6 +42,73 @@ class ContainerPublishTest {
         assertEquals("0", first.getString("pic_source"))
         assertEquals("d41d8cd98f00b204e9800998ecf8427e", first.getString("pic_raw_md5"))
         assertEquals("0", first.getString("picStatus"))
+        assertFalse(first.has("subtype"))
+        assertFalse(first.has("video"))
+    }
+
+    @Test
+    fun buildPublishPartsSerializesLivePhotoSubtypeAndVideo() {
+        val mixed = ContainerApi.buildPublishParts(
+            text = "带实况图微博",
+            visible = 1,
+            media = listOf(
+                ContainerApi.UploadedMedia(
+                    fid = "0096n9LBgy1livecover",
+                    md5 = "11111111111111111111111111111111",
+                    bypass = "unistore.pic",
+                    subtype = "livephoto",
+                    videoFid = "0030cVQlgx08CDPtjNDp0f0f0100osh10k01",
+                ),
+                ContainerApi.UploadedMedia(
+                    fid = "0096n9LBgy1staticpic",
+                    md5 = "22222222222222222222222222222222",
+                    bypass = "unistore.pic",
+                ),
+            ),
+        )
+        val mediaArr = JSONArray(mixed.getValue("media"))
+        assertEquals(2, mediaArr.length())
+
+        val liveItem = mediaArr.getJSONObject(0)
+        assertEquals("0096n9LBgy1livecover", liveItem.getString("fid"))
+        assertEquals("pic", liveItem.getString("type"))
+        assertEquals("livephoto", liveItem.getString("subtype"))
+        assertEquals("0030cVQlgx08CDPtjNDp0f0f0100osh10k01", liveItem.getString("video"))
+        assertEquals("unistore.pic", liveItem.getString("bypass"))
+        assertEquals("11111111111111111111111111111111", liveItem.getString("pic_raw_md5"))
+
+        val staticItem = mediaArr.getJSONObject(1)
+        assertEquals("0096n9LBgy1staticpic", staticItem.getString("fid"))
+        assertEquals("pic", staticItem.getString("type"))
+        assertFalse(staticItem.has("subtype"))
+        assertFalse(staticItem.has("video"))
+    }
+
+    @Test
+    fun parseMediaDiscoveryReadsPicAndLivePhotoSections() {
+        val discovery = ContainerApi.parseMediaDiscovery(
+            JSONObject(
+                """
+                {
+                  "pic": {
+                    "bypass": "unistore.pic",
+                    "init_url": "https://unistore.weibo.cn/2/statuses/upload_file?act=init&need_https=1",
+                    "upload_url": "https://unistore.weibo.cn/2/statuses/upload_file?act=send"
+                  },
+                  "livephoto": {
+                    "bypass": "unistore.video",
+                    "init_url": "https://uniupload.weibo.com/2/statuses/upload_file?act=init&need_https=1",
+                    "upload_url": "https://uniupload.weibo.com/2/statuses/upload_file?act=send"
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )
+        assertEquals("unistore.pic", discovery.pic.bypass)
+        assertEquals("https://unistore.weibo.cn/2/statuses/upload_file?act=init&need_https=1", discovery.pic.initUrl)
+        assertEquals("unistore.video", discovery.livePhoto?.bypass)
+        assertEquals("https://uniupload.weibo.com/2/statuses/upload_file?act=init&need_https=1", discovery.livePhoto?.initUrl)
+        assertEquals("https://uniupload.weibo.com/2/statuses/upload_file?act=send", discovery.livePhoto?.uploadUrl)
     }
 
     @Test
@@ -186,5 +253,55 @@ class ContainerPublishTest {
         } catch (e: ApiException) {
             assertTrue(e.message == "发送失败")
         }
+    }
+
+    @Test
+    fun buildEditWeiboAndRepostPartsIncludeMidAndPreserveMedia() {
+        val weiboEdit = ContainerApi.buildEditWeiboParts(
+            mid = "5369129924297726",
+            text = "修改后的正文",
+            visible = 1,
+            media = listOf(
+                ContainerApi.UploadedMedia(
+                    fid = "0096n9LBgy1existinglive",
+                    subtype = "livephoto",
+                    videoFid = "0030cVQlgx08CDPtjNDp0f0f0100osh10k01",
+                ),
+            ),
+        )
+        assertEquals("5369129924297726", weiboEdit["mid"])
+        assertEquals("修改后的正文", weiboEdit["content"])
+        assertEquals("1", weiboEdit["visible"])
+        val mediaArr = JSONArray(weiboEdit.getValue("media"))
+        assertEquals(1, mediaArr.length())
+        assertEquals("0096n9LBgy1existinglive", mediaArr.getJSONObject(0).getString("fid"))
+        assertEquals("livephoto", mediaArr.getJSONObject(0).getString("subtype"))
+        assertEquals("0030cVQlgx08CDPtjNDp0f0f0100osh10k01", mediaArr.getJSONObject(0).getString("video"))
+
+        val repostEdit = ContainerApi.buildEditRepostParts(
+            mid = "5369129924297727",
+            originalId = "500123",
+            text = "修改后的转发语",
+            visible = 0,
+        )
+        assertEquals("5369129924297727", repostEdit["mid"])
+        assertEquals("500123", repostEdit["id"])
+        assertEquals("修改后的转发语", repostEdit["status"])
+        assertEquals("0", repostEdit["visible"])
+        assertFalse(repostEdit.containsKey("media"))
+    }
+
+    @Test
+    fun editableStatusTextAndPicMetadataExtractionRoundTripCleanly() {
+        val html = """第一行<br/>第二行 <img alt="[微笑]" src="x.png"/> <a href="https://t.cn/A6abc123">网页链接</a> <a href="https://t.cn/A6pic">查看图片</a> ​"""
+        assertEquals("第一行\n第二行 [微笑] https://t.cn/A6abc123", editableStatusText(html))
+
+        val pic = Pic(
+            thumb = "https://wx1.sinaimg.cn/orj360/0096n9LBgy1ijed612gorj300g00g07x.jpg",
+            large = "https://wx1.sinaimg.cn/large/0096n9LBgy1ijed612gorj300g00g07x.jpg",
+            live = "https://video.weibo.com/media/play?livephoto=https%3A%2F%2Fus.sinaimg.cn%2F0030cVQlgx08CDPtjNDp0f0f0100osh10k01.mov",
+        )
+        assertEquals("0096n9LBgy1ijed612gorj300g00g07x", pic.resolvedPicId())
+        assertEquals("0030cVQlgx08CDPtjNDp0f0f0100osh10k01", pic.resolvedLiveVideoUsid())
     }
 }

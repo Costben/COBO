@@ -1,5 +1,7 @@
 package com.cobo.app.data
 
+import android.content.Context
+import android.net.Uri
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
@@ -8,10 +10,12 @@ import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.io.StringReader
 import java.io.StringWriter
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
@@ -31,14 +35,21 @@ internal data class MotionPhotoInfo(
         get() = declaresMotionPhoto || embeddedVideoLength != null
 }
 
+internal data class MotionPhotoParts(
+    val stillBytes: ByteArray,
+    val videoBytes: ByteArray,
+)
+
 /**
  * 解析 JPEG 中的 XMP 与尾部内嵌视频，校验生成的实况图是否符合 Android Motion Photo 结构。
  */
 internal object MotionPhotoParser {
 
     private const val MAX_XMP_SCAN_BYTES = 512 * 1024
+    private const val MAX_TAIL_SCAN_BYTES = 32L * 1024 * 1024
+    private const val MIN_STILL_JPEG_BYTES = 16
 
-    private val itemTagRegex = Regex("""<[^>]+Item:Mime="video/mp4"[^>]*>""")
+    private val itemTagRegex = Regex("""<[^>]+Item:Mime="video/(?:mp4|quicktime)"[^>]*>""")
     private val itemElementRegex =
         Regex("""<[^/>\s]*:Item\b[^>]*>.*?</[^/>\s]*:Item\s*>""", RegexOption.DOT_MATCHES_ALL)
     private val lengthRegex = Regex("""Item:Length="(\d+)"""")
@@ -51,12 +62,24 @@ internal object MotionPhotoParser {
 
     private val mp4TopLevelBoxes = setOf("moov", "mdat", "free", "wide", "skip", "uuid", "meta")
 
+    fun hasJpegHeader(bytes: ByteArray): Boolean =
+        bytes.size >= 4 &&
+            (bytes[0].toInt() and 0xff) == 0xff &&
+            (bytes[1].toInt() and 0xff) == 0xd8
+
     fun hasJpegHeader(file: File): Boolean = runCatching {
         if (!file.isFile || file.length() < 4L) return false
         file.inputStream().use { input ->
             input.read() == 0xff && input.read() == 0xd8
         }
     }.getOrDefault(false)
+
+    fun isIsoBmff(bytes: ByteArray): Boolean =
+        bytes.size >= 12 &&
+            bytes[4] == 'f'.code.toByte() &&
+            bytes[5] == 't'.code.toByte() &&
+            bytes[6] == 'y'.code.toByte() &&
+            bytes[7] == 'p'.code.toByte()
 
     fun isIsoBmff(file: File): Boolean = runCatching {
         if (!file.isFile || file.length() < 12L) return false
@@ -80,6 +103,126 @@ internal object MotionPhotoParser {
     }.getOrNull()
 
     fun parse(
+        bytes: ByteArray,
+        expectMotionPhoto: Boolean = false,
+    ): MotionPhotoInfo {
+        if (bytes.size < 16) {
+            return MotionPhotoInfo(false, false, null, null, null)
+        }
+        val prefixLen = minOf(bytes.size, MAX_XMP_SCAN_BYTES)
+        val xmp = String(bytes, 0, prefixLen, StandardCharsets.ISO_8859_1)
+        val hasUltraHdr = xmp.contains("hdrgm:Version", ignoreCase = true)
+        val declaresMotionPhoto = expectMotionPhoto || declaresMotionPhotoXmp(xmp)
+        val declaredVideoLength = findDeclaredVideoLength(xmp)
+        val embeddedVideoLength = declaredVideoLength
+            ?.takeIf {
+                (declaresMotionPhoto || expectMotionPhoto) &&
+                    it in 12 until bytes.size.toLong() && hasFtypAtTail(bytes, it.toInt())
+            }
+            ?: if (declaresMotionPhoto || expectMotionPhoto) {
+                findMp4LengthInBytes(bytes, requireFollowingBox = false)
+            } else if (hasJpegHeader(bytes)) {
+                findMp4LengthInBytes(bytes, requireFollowingBox = true)
+            } else {
+                null
+            }
+        val presentationTimestampUs = presentationTimestampRegex.find(xmp)
+            ?.groupValues
+            ?.get(1)
+            ?.toLongOrNull()
+
+        return MotionPhotoInfo(
+            hasUltraHdr = hasUltraHdr,
+            declaresMotionPhoto = declaresMotionPhoto || embeddedVideoLength != null,
+            embeddedVideoLength = embeddedVideoLength,
+            declaredVideoLength = declaredVideoLength,
+            presentationTimestampUs = presentationTimestampUs,
+        )
+    }
+
+    /**
+     * 将 Android Motion Photo 拆分为静图 JPEG 与内嵌 MP4 视频字节数组；非实况图返回 `null`。
+     */
+    fun extract(bytes: ByteArray): MotionPhotoParts? {
+        if (!hasJpegHeader(bytes)) return null
+        val info = parse(bytes)
+        val videoLenLong = info.embeddedVideoLength ?: return null
+        if (videoLenLong < 12L || videoLenLong >= bytes.size.toLong()) return null
+        val videoLen = videoLenLong.toInt()
+        val stillLen = bytes.size - videoLen
+        if (stillLen < MIN_STILL_JPEG_BYTES) return null
+        if (!hasFtypAtTail(bytes, videoLen)) return null
+        return MotionPhotoParts(
+            stillBytes = bytes.copyOfRange(0, stillLen),
+            videoBytes = bytes.copyOfRange(stillLen, bytes.size),
+        )
+    }
+
+    /**
+     * 低内存探测相册 Uri 是否为 Android 实况图（优先只读头部 512KB XMP 与尾部 `ftyp` 偏移）。
+     */
+    fun inspect(context: Context, uri: Uri): MotionPhotoInfo = runCatching {
+        val resolver = context.contentResolver
+        resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            FileInputStream(pfd.fileDescriptor).channel.use { channel ->
+                val fileSize = channel.size()
+                if (fileSize >= 16L) {
+                    val prefixLen = minOf(fileSize, MAX_XMP_SCAN_BYTES.toLong()).toInt()
+                    val prefixBytes = readChannelRange(channel, 0L, prefixLen)
+                    if (!hasJpegHeader(prefixBytes)) {
+                        return@runCatching MotionPhotoInfo(false, false, null, null, null)
+                    }
+                    val xmp = String(prefixBytes, StandardCharsets.ISO_8859_1)
+                    val hasUltraHdr = xmp.contains("hdrgm:Version", ignoreCase = true)
+                    val declaresMotionPhoto = declaresMotionPhotoXmp(xmp)
+                    val declaredVideoLength = findDeclaredVideoLength(xmp)
+                    val presentationTimestampUs = presentationTimestampRegex.find(xmp)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toLongOrNull()
+
+                    val verifiedDeclared = declaredVideoLength?.takeIf {
+                        declaresMotionPhoto &&
+                            it in 12 until fileSize &&
+                            hasFtypAtChannelOffset(channel, fileSize - it)
+                    }
+                    if (verifiedDeclared != null) {
+                        return@runCatching MotionPhotoInfo(
+                            hasUltraHdr = hasUltraHdr,
+                            declaresMotionPhoto = true,
+                            embeddedVideoLength = verifiedDeclared,
+                            declaredVideoLength = declaredVideoLength,
+                            presentationTimestampUs = presentationTimestampUs,
+                        )
+                    }
+
+                    // 未声明准确偏移时（如三星 MotionPhoto_Data 或部分机型），扫描尾部验证 MP4 盒子
+                    val embedded = if (fileSize <= MAX_TAIL_SCAN_BYTES) {
+                        val all = readChannelRange(channel, 0L, fileSize.toInt())
+                        findMp4LengthInBytes(all, requireFollowingBox = !declaresMotionPhoto)
+                    } else if (declaresMotionPhoto) {
+                        val scanLen = minOf(fileSize, MAX_TAIL_SCAN_BYTES).toInt()
+                        val tail = readChannelRange(channel, fileSize - scanLen, scanLen)
+                        findMp4LengthInBytes(tail, requireFollowingBox = false)
+                    } else {
+                        null
+                    }
+                    return@runCatching MotionPhotoInfo(
+                        hasUltraHdr = hasUltraHdr,
+                        declaresMotionPhoto = embedded != null,
+                        embeddedVideoLength = embedded,
+                        declaredVideoLength = declaredVideoLength,
+                        presentationTimestampUs = presentationTimestampUs,
+                    )
+                }
+            }
+        }
+        resolver.openInputStream(uri)?.use { input ->
+            parse(input.readBytes())
+        } ?: MotionPhotoInfo(false, false, null, null, null)
+    }.getOrDefault(MotionPhotoInfo(false, false, null, null, null))
+
+    fun parse(
         file: File,
         expectMotionPhoto: Boolean = false,
     ): MotionPhotoInfo {
@@ -89,13 +232,8 @@ internal object MotionPhotoParser {
 
         val xmp = readPrefix(file)
         val hasUltraHdr = xmp.contains("hdrgm:Version", ignoreCase = true)
-        val declaresMotionPhoto = expectMotionPhoto ||
-            xmp.contains("GCamera:MotionPhoto=\"1\"") ||
-            xmp.contains("GCamera:MicroVideo=\"1\"") ||
-            xmp.contains("OpCamera:OLivePhotoVersion=\"")
-        val declaredVideoLength = findContainerVideoLength(xmp)
-            ?: microVideoOffsetRegex.find(xmp)?.groupValues?.get(1)?.toLongOrNull()
-            ?: onePlusVideoLengthRegex.find(xmp)?.groupValues?.get(1)?.toLongOrNull()
+        val declaresMotionPhoto = expectMotionPhoto || declaresMotionPhotoXmp(xmp)
+        val declaredVideoLength = findDeclaredVideoLength(xmp)
         val embeddedVideoLength = declaredVideoLength
             ?.takeIf {
                 (declaresMotionPhoto || expectMotionPhoto) &&
@@ -122,6 +260,70 @@ internal object MotionPhotoParser {
         )
     }
 
+    private fun declaresMotionPhotoXmp(xmp: String): Boolean =
+        xmp.contains("GCamera:MotionPhoto=\"1\"") ||
+            xmp.contains("GCamera:MicroVideo=\"1\"") ||
+            xmp.contains("OpCamera:OLivePhotoVersion=\"")
+
+    private fun findDeclaredVideoLength(xmp: String): Long? =
+        findContainerVideoLength(xmp)
+            ?: microVideoOffsetRegex.find(xmp)?.groupValues?.get(1)?.toLongOrNull()
+            ?: onePlusVideoLengthRegex.find(xmp)?.groupValues?.get(1)?.toLongOrNull()
+
+    private fun readChannelRange(channel: java.nio.channels.FileChannel, offset: Long, length: Int): ByteArray {
+        val out = ByteArray(length)
+        val buf = ByteBuffer.wrap(out)
+        channel.position(offset)
+        while (buf.hasRemaining()) {
+            val read = channel.read(buf)
+            if (read <= 0) break
+        }
+        return if (buf.position() == length) out else out.copyOf(buf.position())
+    }
+
+    private fun hasFtypAtChannelOffset(channel: java.nio.channels.FileChannel, offset: Long): Boolean = runCatching {
+        val type = readChannelRange(channel, offset + 4L, 4)
+        type.size == 4 && String(type, StandardCharsets.US_ASCII) == "ftyp"
+    }.getOrDefault(false)
+
+    private fun hasFtypAtTail(bytes: ByteArray, videoLength: Int): Boolean {
+        val offset = bytes.size - videoLength
+        if (offset < 0 || offset + 8 > bytes.size) return false
+        return bytes[offset + 4] == 'f'.code.toByte() &&
+            bytes[offset + 5] == 't'.code.toByte() &&
+            bytes[offset + 6] == 'y'.code.toByte() &&
+            bytes[offset + 7] == 'p'.code.toByte()
+    }
+
+    private fun findMp4LengthInBytes(
+        bytes: ByteArray,
+        requireFollowingBox: Boolean = false,
+    ): Long? {
+        for (index in 4 until bytes.size - 4) {
+            if (bytes[index] == 'f'.code.toByte() &&
+                bytes[index + 1] == 't'.code.toByte() &&
+                bytes[index + 2] == 'y'.code.toByte() &&
+                bytes[index + 3] == 'p'.code.toByte()
+            ) {
+                val boxSize = ((bytes[index - 4].toInt() and 0xff) shl 24) or
+                    ((bytes[index - 3].toInt() and 0xff) shl 16) or
+                    ((bytes[index - 2].toInt() and 0xff) shl 8) or
+                    (bytes[index - 1].toInt() and 0xff)
+                if (boxSize in 12..4096) {
+                    val ftypStart = index - 4
+                    if (requireFollowingBox) {
+                        val nextBoxOffset = ftypStart + boxSize
+                        if (nextBoxOffset + 8 > bytes.size) continue
+                        val nextType = String(bytes, nextBoxOffset + 4, 4, StandardCharsets.US_ASCII)
+                        if (nextType !in mp4TopLevelBoxes) continue
+                    }
+                    return (bytes.size - ftypStart).toLong()
+                }
+            }
+        }
+        return null
+    }
+
     private fun readPrefix(file: File): String {
         val length = minOf(file.length(), MAX_XMP_SCAN_BYTES.toLong()).toInt()
         val bytes = ByteArray(length)
@@ -136,7 +338,7 @@ internal object MotionPhotoParser {
             lengthRegex.find(tag)?.groupValues?.get(1)?.toLongOrNull()?.let { return it }
         }
         return itemElementRegex.findAll(xmp)
-            .firstOrNull { it.value.contains("video/mp4") }
+            .firstOrNull { it.value.contains("video/mp4") || it.value.contains("video/quicktime") }
             ?.let { match ->
                 lengthRegex.find(match.value)?.groupValues?.get(1)?.toLongOrNull()
                     ?: elementLengthRegex.find(match.value)?.groupValues?.get(1)?.toLongOrNull()

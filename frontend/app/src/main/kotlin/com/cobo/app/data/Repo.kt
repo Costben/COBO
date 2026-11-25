@@ -327,6 +327,12 @@ class Repo(private val context: Context, private val store: Store) {
     var deletedVersion by mutableIntStateOf(0)
         private set
 
+    /** 本次会话内已编辑过的微博快照，供信息流、个人主页与详情页立即刷新显示。 */
+    val editedStatuses = mutableStateMapOf<String, Status>()
+
+    var editedVersion by mutableIntStateOf(0)
+        private set
+
     /** 本次会话内关注/取关过的用户状态覆盖，跨卡片、详情页与个人主页即时同步。 */
     val followStateOverrides = mutableStateMapOf<String, Boolean>()
 
@@ -465,6 +471,17 @@ class Repo(private val context: Context, private val store: Store) {
     fun isFavorited(status: Status): Boolean = isFavorited(status.id)
 
     fun isDeleted(id: String): Boolean = id.isNotBlank() && deletedStatusIds[id] == true
+
+    fun editedStatus(id: String, mid: String = ""): Status? =
+        id.takeIf { it.isNotBlank() }?.let { editedStatuses[it] }
+            ?: mid.takeIf { it.isNotBlank() }?.let { editedStatuses[it] }
+
+    private fun recordEditedStatus(updated: Status) {
+        if (updated.id.isNotBlank()) editedStatuses[updated.id] = updated
+        if (updated.mid.isNotBlank()) editedStatuses[updated.mid] = updated
+        StatusMemory.remember(updated)
+        editedVersion++
+    }
 
     fun toggleLocalFavorite(status: Status): Boolean {
         val nowFavorited = store.toggleFavorite(status)
@@ -2947,6 +2964,94 @@ class Repo(private val context: Context, private val store: Store) {
         return ok
     }
 
+    sealed interface EditableStatusMedia {
+        data class Existing(val pic: Pic, val keepLive: Boolean = pic.isLive) : EditableStatusMedia
+        data class Uploaded(val fid: String) : EditableStatusMedia
+    }
+
+    /** 编辑微博走客户端容器通道 `statuses/modify_weibo` / `statuses/modify_repost`。 */
+    fun supportsEditStatus(): Boolean = isClientChannel()
+
+    suspend fun editStatus(
+        status: Status,
+        text: String,
+        mediaEntries: List<EditableStatusMedia>,
+        visible: Int = 0,
+    ): Status {
+        if (!isClientChannel()) {
+            throw ApiException("网页登录暂不支持编辑微博，请使用客户端登录后重试")
+        }
+        val targetMid = status.mid.ifBlank { status.id }
+        if (targetMid.isBlank()) throw ApiException("无法识别要编辑的微博")
+        val mediaList = mediaEntries.mapNotNull { entry ->
+            when (entry) {
+                is EditableStatusMedia.Existing -> {
+                    val fid = entry.pic.resolvedPicId()
+                    if (fid.isBlank()) return@mapNotNull null
+                    val liveUsid = if (entry.keepLive) entry.pic.resolvedLiveVideoUsid() else ""
+                    ContainerApi.UploadedMedia(
+                        fid = fid,
+                        subtype = if (liveUsid.isNotBlank()) "livephoto" else "",
+                        videoFid = liveUsid,
+                    )
+                }
+                is EditableStatusMedia.Uploaded -> {
+                    if (entry.fid.isBlank()) return@mapNotNull null
+                    uploadedContainerMedia.remove(entry.fid) ?: ContainerApi.UploadedMedia(fid = entry.fid)
+                }
+            }
+        }
+        val resp = if (status.retweeted != null) {
+            val originalId = status.retweeted.id.ifBlank { status.retweeted.mid }
+            if (originalId.isBlank()) throw ApiException("无法识别原微博")
+            val parts = ContainerApi.buildEditRepostParts(
+                mid = targetMid,
+                originalId = originalId,
+                text = text,
+                visible = visible,
+                media = mediaList,
+            )
+            containerPostMultipart("statuses/modify_repost", parts = parts)
+        } else {
+            val parts = ContainerApi.buildEditWeiboParts(
+                mid = targetMid,
+                text = text,
+                visible = visible,
+                media = mediaList,
+            )
+            containerPostMultipart("statuses/modify_weibo", parts = parts)
+        }
+        App.cache.clear()
+        val parsed = Status.from(resp)
+            ?: Status.from(resp.optJSONObject("status"))
+            ?: Status.from(resp.optJSONObject("data"))
+            ?: runCatching { detail(status.id, force = true) }.getOrNull()
+        val updated = if (parsed != null) {
+            parsed.copy(
+                user = parsed.user ?: status.user,
+                retweeted = parsed.retweeted ?: status.retweeted,
+                editCount = maxOf(parsed.editCount, status.editCount + 1),
+            )
+        } else {
+            status.copy(
+                textHtml = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>"),
+                editCount = status.editCount + 1,
+                visibility = when (visible) {
+                    1 -> StatusVisibility(type = 1, label = "私密")
+                    6 -> StatusVisibility(type = 6, label = "好友圈")
+                    else -> null
+                },
+            )
+        }
+        withContext(Dispatchers.Main.immediate) {
+            recordEditedStatus(updated)
+        }
+        App.notifyPublished()
+        App.requestDetailRefresh(status.id)
+        if (targetMid != status.id) App.requestDetailRefresh(targetMid)
+        return updated
+    }
+
     suspend fun publish(text: String, picIds: List<String>, visible: Int = 0): Boolean {
         val ok = if (isClientChannel()) {
             val mediaList = picIds.map { fid ->
@@ -3173,7 +3278,9 @@ class Repo(private val context: Context, private val store: Store) {
         return out.values.take(20)
     }
 
-    suspend fun uploadImage(uri: Uri): String {
+    fun supportsLivePhotoPublish(): Boolean = isClientChannel()
+
+    suspend fun uploadImage(uri: Uri, asLivePhoto: Boolean = false): String {
         val resolver = context.contentResolver
         val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
             ?: throw ApiException("无法读取图片")
@@ -3184,17 +3291,37 @@ class Repo(private val context: Context, private val store: Store) {
             mime.contains("webp") -> "pic.webp"
             else -> "pic.jpg"
         }
-        if (isClientChannel()) {
-            val md5Hex = ContainerApi.md5Hex(bytes)
+        val motionParts = if (mime.contains("jpeg", ignoreCase = true) || mime.contains("jpg", ignoreCase = true) || MotionPhotoParser.hasJpegHeader(bytes)) {
+            MotionPhotoParser.extract(bytes)
+        } else {
+            null
+        }
+        if (asLivePhoto && motionParts != null && isClientChannel()) {
             val uploaded = withContainerAuth { uid, gsid, aid ->
-                ContainerApi.uploadPic(uid, gsid, aid, bytes, name, md5Hex)
+                ContainerApi.uploadLivePhoto(
+                    uid = uid,
+                    gsid = gsid,
+                    aid = aid,
+                    stillBytes = motionParts.stillBytes,
+                    videoBytes = motionParts.videoBytes,
+                    stillFileName = name,
+                )
+            }
+            uploadedContainerMedia[uploaded.fid] = uploaded
+            return uploaded.fid
+        }
+        val uploadBytes = motionParts?.stillBytes ?: bytes
+        if (isClientChannel()) {
+            val md5Hex = ContainerApi.md5Hex(uploadBytes)
+            val uploaded = withContainerAuth { uid, gsid, aid ->
+                ContainerApi.uploadPic(uid, gsid, aid, uploadBytes, name, md5Hex)
             }
             uploadedContainerMedia[uploaded.fid] = uploaded
             return uploaded.fid
         }
         if (isClientLogin()) {
-            val md5Hex = ContainerApi.md5Hex(bytes)
-            val root = Api.uploadDesktopPic(bytes, session?.uid.orEmpty(), md5Hex, mime, desktopCookie())
+            val md5Hex = ContainerApi.md5Hex(uploadBytes)
+            val root = Api.uploadDesktopPic(uploadBytes, session?.uid.orEmpty(), md5Hex, mime, desktopCookie())
             val pid = root.optJSONObject("pic")?.str("pid").orEmpty()
                 .ifBlank { root.optJSONObject("data")?.optJSONObject("pics")?.optJSONObject("pic_1")?.str("pid").orEmpty() }
             if (pid.isBlank()) throw ApiException(root.str("msg").ifBlank { root.str("errno", "图片上传失败") })
@@ -3204,7 +3331,7 @@ class Repo(private val context: Context, private val store: Store) {
         val st = st()
         val root = Api.upload(
             "https://m.weibo.cn/api/statuses/uploadPic",
-            bytes,
+            uploadBytes,
             name,
             mime,
             cookie,

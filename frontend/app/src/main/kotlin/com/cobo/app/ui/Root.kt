@@ -300,6 +300,10 @@ fun CoboRoot() {
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
     CompositionLocalProvider(
         LocalLinkHandler provides linkHandler,
+        LocalStatusEditor provides { target ->
+            com.cobo.app.data.StatusMemory.remember(target)
+            nav.push(Route.EditStatus(target.id, target.mid))
+        },
         LocalImageSaver provides imageSaver,
         LocalImageOrigins provides imageOrigins,
         LocalExpandOriginVisibility provides expandOriginVisibility,
@@ -837,6 +841,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
         is Route.Publish -> PublishScreen(nav, route.draft)
+        is Route.EditStatus -> PublishScreen(nav, draft = "", editStatusId = route.id, editStatusMid = route.mid)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
         is Route.Notifications -> NotificationsScreen(nav, route.initialTab)
         is Route.Web -> WebScreen(nav, route.url, route.title)

@@ -82,6 +82,68 @@ fun chatPlainText(html: String?): String {
     return stripHtml(withAlt).replace("\uFFFC", "").trim()
 }
 
+private val EditableImgAltRegex = Regex("""<img[^>]*\balt\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>""", RegexOption.IGNORE_CASE)
+private val EditableShortLinkRegex = Regex(
+    """<a\b[^>]*\bhref\s*=\s*(?:"(https?://t\.cn/[A-Za-z0-9]+)"|'(https?://t\.cn/[A-Za-z0-9]+)')[^>]*>(.*?)</a>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val EditableBrRegex = Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE)
+private val EditableTagRegex = Regex("""<[^>]+>""")
+private val SinaPicIdRegex = Regex("""^[A-Za-z0-9]{16,40}$""")
+
+/** 把微博富文本 HTML 还原成适合在编辑器里继续修改的纯文本（保留表情短码、换行、短链，去掉零宽占位符）。 */
+fun editableStatusText(html: String?): String {
+    if (html.isNullOrBlank()) return ""
+    val withEmojis = html.replace(EditableImgAltRegex) { m ->
+        m.groupValues[1].ifEmpty { m.groupValues[2] }
+    }
+    val withLinks = withEmojis.replace(EditableShortLinkRegex) { m ->
+        val url = m.groupValues[1].ifEmpty { m.groupValues[2] }
+        val inner = m.groupValues[3].replace(EditableTagRegex, "").trim()
+        when {
+            inner == "查看图片" -> ""
+            inner.startsWith("http://", ignoreCase = true) || inner.startsWith("https://", ignoreCase = true) -> inner
+            else -> url
+        }
+    }
+    val normalizedBreaks = withLinks.replace(EditableBrRegex, "\n")
+    val plain = normalizedBreaks
+        .replace(EditableTagRegex, "")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("\uFFFC", "")
+        .replace("\u200B", "")
+    return plain.trim()
+}
+
+internal fun extractPicIdFromUrl(url: String): String {
+    if (url.isBlank()) return ""
+    val fileName = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
+    val stem = fileName.substringBeforeLast('.', fileName)
+    return if (SinaPicIdRegex.matches(stem)) stem else ""
+}
+
+internal fun extractLiveVideoUsid(liveUrl: String): String {
+    if (liveUrl.isBlank()) return ""
+    val decoded = if (liveUrl.contains("livephoto=")) {
+        val rawParam = liveUrl.substringAfter("livephoto=").substringBefore('&')
+        runCatching { java.net.URLDecoder.decode(rawParam, "UTF-8") }.getOrDefault(rawParam)
+    } else {
+        liveUrl
+    }
+    val clean = decoded.substringBefore('?').substringBefore('#')
+    val fileName = clean.substringAfterLast('/')
+    if (!fileName.endsWith(".mov", ignoreCase = true) && !fileName.endsWith(".mp4", ignoreCase = true)) {
+        return ""
+    }
+    val stem = fileName.substringBeforeLast('.')
+    return stem.takeIf { it.isNotBlank() && !it.contains('/') && !it.contains('&') }.orEmpty()
+}
+
 /**
  * 微博会员。接口给的四个字段：`mbtype`（0 从未开通，2 开通过但已过期，大于 2 为在期（实测 11 / 12，12 是年费））、
  * `mbrank`（会员等级，1 起步，常见 1–10+）、`svip`（1 = 超级会员）、`vvip`（1 = 黑金/VVIP，优先级高于 svip）。
@@ -210,9 +272,13 @@ data class Pic(
     val durationSec: Int = 0,
     /** 为 true 时看图页与保存直接沿用原始卡片/签名地址，不再把路径段改写成 `/large/`。 */
     val preserveUrl: Boolean = false,
+    /** 微博图片唯一 ID（`pid` / `fid`），编辑微博保留原图时直接复用。 */
+    val pid: String = "",
 ) {
     val isLive: Boolean get() = live.isNotBlank()
     val isVideo: Boolean get() = videoUrl.isNotBlank()
+    fun resolvedPicId(): String = pid.ifBlank { extractPicIdFromUrl(large.ifBlank { thumb }) }
+    fun resolvedLiveVideoUsid(): String = extractLiveVideoUsid(live)
 }
 
 // 实况视频地址：m.weibo.cn 放在 videoSrc，weibo.com 的 pic_infos 放在 video。
@@ -259,12 +325,13 @@ internal fun picsOf(o: JSONObject): List<Pic> {
                 if (id.isBlank()) continue
                 val parsed = infos?.optJSONObject(id)?.let { picOf(it) }
                 if (parsed != null) {
-                    add(parsed)
+                    add(if (parsed.pid.isBlank()) parsed.copy(pid = id) else parsed)
                 } else {
                     add(
                         Pic(
                             thumb = "https://wx1.sinaimg.cn/orj360/$id.jpg",
                             large = "https://wx1.sinaimg.cn/large/$id.jpg",
+                            pid = id,
                         ),
                     )
                 }
@@ -323,6 +390,7 @@ private fun picOf(p: JSONObject): Pic? {
         return null
     }
     val geo = large?.optJSONObject("geo") ?: p.optJSONObject("geo")
+    val resolvedPid = pid.ifBlank { extractPicIdFromUrl(largeUrl.ifBlank { thumbUrl }) }
     return Pic(
         thumb = thumbUrl,
         large = largeUrl,
@@ -332,6 +400,7 @@ private fun picOf(p: JSONObject): Pic? {
         videoUrl = videoInfo?.url.orEmpty(),
         videoTitle = videoInfo?.title.orEmpty(),
         durationSec = videoInfo?.durationSec ?: 0,
+        pid = resolvedPid,
     )
 }
 

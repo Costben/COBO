@@ -77,6 +77,7 @@ import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
 import com.cobo.app.ui.LocalLinkHandler
+import com.cobo.app.ui.LocalStatusEditor
 import com.cobo.app.ui.LiveBadgeSize
 import com.cobo.app.ui.isLongImageAspect
 import com.cobo.app.ui.LocalImageOrigins
@@ -110,6 +111,7 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Community
 import io.github.suqi8.coui.kmp.icon.extended.Contacts
 import io.github.suqi8.coui.kmp.icon.extended.Delete
+import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
@@ -149,21 +151,24 @@ fun StatusCard(
     /** 信息流按官方 140 字规则折叠长文；详情页传 false，始终显示全文。 */
     foldLongText: Boolean = App.settings.foldLongText,
 ) {
-    if (App.repo.isDeleted(status.id)) return
+    val displayStatus = App.repo.editedStatus(status.id, status.mid) ?: status
+    if (App.repo.isDeleted(displayStatus.id)) return
     // 列表画过就记住这条，详情页第一帧直接用它，不用再等接口。
-    remember(status) { StatusMemory.remember(status) }
+    remember(displayStatus) { StatusMemory.remember(displayStatus) }
     val scheme = COUITheme.colorScheme
     val scope = rememberCoroutineScope()
     val linkHandler = LocalLinkHandler.current
-    val effectiveFavorited = App.repo.isFavorited(status.id)
-    var cloudFavorited by remember(status.id) { mutableStateOf(status.favorited) }
-    val author = status.user
+    val statusEditor = LocalStatusEditor.current
+    val effectiveFavorited = App.repo.isFavorited(displayStatus.id)
+    var cloudFavorited by remember(displayStatus.id) { mutableStateOf(displayStatus.favorited) }
+    val author = displayStatus.user
     val authorId = author?.id.orEmpty()
     val isGuest = App.repo.guest
     val isSelf = !isGuest && authorId.isNotBlank() && authorId == App.repo.session?.uid
+    val canEdit = isSelf
     val canDelete = isSelf
     val canFollow = author != null && authorId.isNotBlank() && !isSelf
-    val reportMid = status.mid.ifBlank { status.id }
+    val reportMid = displayStatus.mid.ifBlank { displayStatus.id }
     val canReport = !isGuest && !isSelf && reportMid.isNotBlank()
     val effectiveFollowing = when {
         !canFollow -> false
@@ -176,11 +181,22 @@ fun StatusCard(
         effectiveFollowing -> "取消关注"
         else -> "关注"
     }
-    var confirmDelete by remember(status.id) { mutableStateOf(false) }
-    var deleting by remember(status.id) { mutableStateOf(false) }
+    var confirmDelete by remember(displayStatus.id) { mutableStateOf(false) }
+    var deleting by remember(displayStatus.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
-        val nowFavorited = App.repo.toggleLocalFavorite(status)
+        val nowFavorited = App.repo.toggleLocalFavorite(displayStatus)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
+    }
+    val handleEdit: (() -> Unit)? = if (canEdit) {
+        {
+            if (displayStatus.video != null || displayStatus.pics.any { it.isVideo }) {
+                App.toast("暂不支持编辑含视频的微博")
+            } else {
+                statusEditor(displayStatus)
+            }
+        }
+    } else {
+        null
     }
     val handleFollow: (() -> Unit)? = if (canFollow) {
         {
@@ -208,7 +224,7 @@ fun StatusCard(
     }
     val content: @Composable ColumnScope.() -> Unit = {
         StatusHeader(
-            status = status,
+            status = displayStatus,
             onUser = onUser,
             compact = compact,
             favorited = effectiveFavorited,
@@ -219,7 +235,7 @@ fun StatusCard(
                     App.toast("请先登录微博")
                 } else {
                     scope.launch {
-                        runCatching { App.repo.favorite(status.id, cloudFavorited) }
+                        runCatching { App.repo.favorite(displayStatus.id, cloudFavorited) }
                             .onSuccess {
                                 cloudFavorited = !cloudFavorited
                                 App.toast(if (cloudFavorited) "已收藏到微博" else "已取消微博收藏")
@@ -232,30 +248,31 @@ fun StatusCard(
             followLabel = followMenuLabel,
             onToggleFollow = handleFollow,
             onReport = if (canReport) { { linkHandler(statusReportUrl(reportMid)) } } else null,
+            onEdit = handleEdit,
             onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
         )
-        if (status.textHtml.isNotBlank()) {
+        if (displayStatus.textHtml.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             FoldableWeiboText(
-                status = status,
+                status = displayStatus,
                 fold = foldLongText,
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 20.sp else 22.sp,
             )
         }
-        val showOuterVote = status.isVote && (
-            status.retweeted?.isVote != true ||
-                (status.voteId != null && status.retweeted.voteId != null && status.voteId != status.retweeted.voteId)
+        val showOuterVote = displayStatus.isVote && (
+            displayStatus.retweeted?.isVote != true ||
+                (displayStatus.voteId != null && displayStatus.retweeted.voteId != null && displayStatus.voteId != displayStatus.retweeted.voteId)
             )
         if (showOuterVote) {
             Spacer(Modifier.height(8.dp))
-            StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = keepFrame)
+            StatusVoteCard(status = displayStatus, actionsEnabled = actionsEnabled, onCard = keepFrame)
         }
-        StatusMedia(status, compact, onImage, onVideo, onCard = keepFrame)
-        if (status.retweeted != null) {
+        StatusMedia(displayStatus, compact, onImage, onVideo, onCard = keepFrame)
+        if (displayStatus.retweeted != null) {
             Spacer(Modifier.height(8.dp))
             RetweetBlock(
-                status = status.retweeted,
+                status = displayStatus.retweeted,
                 compact = compact,
                 actionsEnabled = actionsEnabled,
                 onOpen = onOpen,
@@ -267,7 +284,7 @@ fun StatusCard(
                 foldLongText = foldLongText,
             )
         }
-        val region = status.region.trim()
+        val region = displayStatus.region.trim()
         if (showActions || region.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Row(
@@ -290,21 +307,21 @@ fun StatusCard(
                     Spacer(Modifier.width(8.dp))
                     ActionIcon(
                         icon = CoboIcons.Repost,
-                        text = fmtCount(status.reposts),
+                        text = fmtCount(displayStatus.reposts),
                         onClick = onRepost,
                         enabled = actionsEnabled,
                     )
                     ActionIcon(
                         icon = CoboIcons.Comment,
-                        text = fmtCount(status.comments),
+                        text = fmtCount(displayStatus.comments),
                         onClick = onComment,
                         enabled = actionsEnabled,
                     )
                     ActionIcon(
-                        icon = if (status.liked) CoboIcons.HeartFill else CoboIcons.Heart,
-                        text = fmtCount(status.attitudes),
+                        icon = if (displayStatus.liked) CoboIcons.HeartFill else CoboIcons.Heart,
+                        text = fmtCount(displayStatus.attitudes),
                         onClick = onLike,
-                        tint = if (status.liked) scheme.primary else scheme.onSurfaceSecondary,
+                        tint = if (displayStatus.liked) scheme.primary else scheme.onSurfaceSecondary,
                         enabled = actionsEnabled,
                     )
                 }
@@ -380,6 +397,7 @@ fun StatusHeader(
     followLabel: String = if (following) "取消关注" else "关注",
     onToggleFollow: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
@@ -425,7 +443,7 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onDelete != null)) {
+                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onEdit != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
@@ -437,6 +455,7 @@ fun StatusHeader(
                         followLabel = followLabel,
                         onToggleFollow = onToggleFollow,
                         onReport = onReport,
+                        onEdit = onEdit,
                         onDelete = onDelete,
                     )
                 }
@@ -514,6 +533,7 @@ private fun StatusMoreButton(
     followLabel: String,
     onToggleFollow: (() -> Unit)?,
     onReport: (() -> Unit)?,
+    onEdit: (() -> Unit)?,
     onDelete: (() -> Unit)?,
 ) {
     val scheme = COUITheme.colorScheme
@@ -523,6 +543,7 @@ private fun StatusMoreButton(
             (if (onToggleFavorite != null) 1 else 0) +
             (if (onToggleFollow != null) 1 else 0) +
             (if (onReport != null) 1 else 0) +
+            (if (onEdit != null) 1 else 0) +
             (if (onDelete != null) 1 else 0)
     val squircleEnabled = isSquircleEnabled()
     val moreButtonShape = remember(squircleEnabled) { SquircleShape(6.dp, squircleEnabled = squircleEnabled) }
@@ -644,6 +665,27 @@ private fun StatusMoreButton(
                             dismiss?.invoke()
                             expanded = false
                             onReport()
+                        },
+                    )
+                }
+                if (onEdit != null) {
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "编辑微博",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(COUIIcons.Edit, null, Modifier.size(18.dp), tint = scheme.onSurfaceContainer)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onEdit()
                         },
                     )
                 }

@@ -23,12 +23,22 @@ object ContainerApi {
         val fid: String,
         val md5: String = "",
         val bypass: String = "unistore.image",
-    )
+        val subtype: String = "",
+        val videoFid: String = "",
+    ) {
+        val isLivePhoto: Boolean
+            get() = subtype.isNotBlank() && videoFid.isNotBlank()
+    }
 
     internal data class PicDiscovery(
         val initUrl: String,
         val uploadUrl: String,
         val bypass: String,
+    )
+
+    internal data class MediaDiscovery(
+        val pic: PicDiscovery,
+        val livePhoto: PicDiscovery?,
     )
 
     internal sealed interface PicUploadInit {
@@ -53,14 +63,14 @@ object ContainerApi {
         ) : PicUploadInit
     }
 
-    private data class PicDiscoveryCache(
+    private data class MediaDiscoveryCache(
         val uid: String,
         val fetchedAtMs: Long,
-        val info: PicDiscovery,
+        val info: MediaDiscovery,
     )
 
     @Volatile
-    private var picDiscoveryCache: PicDiscoveryCache? = null
+    private var mediaDiscoveryCache: MediaDiscoveryCache? = null
 
     private fun buildQuery(
         path: String,
@@ -310,6 +320,10 @@ object ContainerApi {
                 .put("picStatus", "0")
             if (item.bypass.isNotBlank()) obj.put("bypass", item.bypass)
             if (item.md5.isNotBlank()) obj.put("pic_raw_md5", item.md5)
+            if (item.isLivePhoto) {
+                obj.put("subtype", item.subtype)
+                obj.put("video", item.videoFid)
+            }
             arr.put(obj)
         }
         return arr.toString()
@@ -329,6 +343,17 @@ object ContainerApi {
         return parts
     }
 
+    internal fun buildEditWeiboParts(
+        mid: String,
+        text: String,
+        visible: Int = 0,
+        media: List<UploadedMedia> = emptyList(),
+    ): LinkedHashMap<String, String> {
+        val parts = buildPublishParts(text, visible, media)
+        parts["mid"] = mid
+        return parts
+    }
+
     internal fun buildRepostParts(
         id: String,
         text: String,
@@ -342,6 +367,18 @@ object ContainerApi {
         if (media.isNotEmpty()) {
             parts["media"] = buildPublishMediaJson(media)
         }
+        return parts
+    }
+
+    internal fun buildEditRepostParts(
+        mid: String,
+        originalId: String,
+        text: String,
+        visible: Int = 0,
+        media: List<UploadedMedia> = emptyList(),
+    ): LinkedHashMap<String, String> {
+        val parts = buildRepostParts(originalId, text, visible, media)
+        parts["mid"] = mid
         return parts
     }
 
@@ -375,14 +412,31 @@ object ContainerApi {
         return parts
     }
 
-    internal fun parsePicDiscovery(root: JSONObject): PicDiscovery {
+    internal fun parseMediaDiscovery(root: JSONObject): MediaDiscovery {
         val pic = root.optJSONObject("pic") ?: root.optJSONObject("image")
-        val initUrl = pic?.str("init_url").orEmpty()
-        val uploadUrl = pic?.str("upload_url").orEmpty()
-        val bypass = pic?.str("bypass").orEmpty().ifBlank { "unistore.image" }
-        if (initUrl.isBlank()) throw ApiException("获取图片上传配置失败")
-        return PicDiscovery(initUrl = initUrl, uploadUrl = uploadUrl, bypass = bypass)
+        val picInitUrl = pic?.str("init_url").orEmpty()
+        val picUploadUrl = pic?.str("upload_url").orEmpty()
+        val picBypass = pic?.str("bypass").orEmpty().ifBlank { "unistore.image" }
+        if (picInitUrl.isBlank()) throw ApiException("获取图片上传配置失败")
+        val live = root.optJSONObject("livephoto")
+        val liveInitUrl = live?.str("init_url").orEmpty()
+        val liveDiscovery = if (liveInitUrl.isNotBlank()) {
+            PicDiscovery(
+                initUrl = liveInitUrl,
+                uploadUrl = live?.str("upload_url").orEmpty(),
+                bypass = live?.str("bypass").orEmpty().ifBlank { "unistore.video" },
+            )
+        } else {
+            null
+        }
+        return MediaDiscovery(
+            pic = PicDiscovery(initUrl = picInitUrl, uploadUrl = picUploadUrl, bypass = picBypass),
+            livePhoto = liveDiscovery,
+        )
     }
+
+    internal fun parsePicDiscovery(root: JSONObject): PicDiscovery =
+        parseMediaDiscovery(root).pic
 
     internal fun parseUploadInit(root: JSONObject, fallbackUploadUrl: String): PicUploadInit {
         checkSuccess(root)
@@ -423,9 +477,9 @@ object ContainerApi {
         )
     }
 
-    private suspend fun discoverUploadEndpoints(uid: String, gsid: String, aid: String): PicDiscovery {
+    private suspend fun discoverUploadEndpoints(uid: String, gsid: String, aid: String): MediaDiscovery {
         val now = System.currentTimeMillis()
-        val cached = picDiscoveryCache
+        val cached = mediaDiscoveryCache
         if (cached != null && cached.uid == uid && now - cached.fetchedAtMs < PIC_DISCOVERY_TTL_MS) {
             return cached.info
         }
@@ -441,8 +495,8 @@ object ContainerApi {
                 "auth_accept" to "video",
             ),
         )
-        val info = parsePicDiscovery(root)
-        picDiscoveryCache = PicDiscoveryCache(uid = uid, fetchedAtMs = now, info = info)
+        val info = parseMediaDiscovery(root)
+        mediaDiscoveryCache = MediaDiscoveryCache(uid = uid, fetchedAtMs = now, info = info)
         return info
     }
 
@@ -477,35 +531,36 @@ object ContainerApi {
         return query
     }
 
-    suspend fun uploadPic(
+    private suspend fun uploadFile(
         uid: String,
         gsid: String,
-        aid: String = "",
+        aid: String,
+        endpoint: PicDiscovery,
+        uploadType: String,
         bytes: ByteArray,
         fileName: String,
         md5Hex: String,
-    ): UploadedMedia {
-        if (bytes.isEmpty()) throw ApiException("图片内容为空")
-        val resolvedAid = aid.ifBlank { ClientLogin.ensureAid() }
-        val discovery = discoverUploadEndpoints(uid, gsid, resolvedAid)
-        val initProps = JSONObject().put("ori", "0").toString()
+        ori: String = "0",
+    ): String {
+        val initProps = JSONObject().put("ori", ori).toString()
         val initQuery = buildUploadQueryBase(
             uid = uid,
             gsid = gsid,
-            aid = resolvedAid,
+            aid = aid,
             includeGsid = true,
             includeSource = false,
         ).apply {
-            put("type", "pic")
+            put("type", uploadType)
             put("check", md5Hex)
             put("name", fileName)
             put("length", bytes.size.toString())
             put("mediaprops", initProps)
         }
-        val initResp = Api.containerUrlGetShare(discovery.initUrl, initQuery, ClientLogin.validatorHeaders(uid))
+        val initResp = Api.containerUrlGetShare(endpoint.initUrl, initQuery, ClientLogin.validatorHeaders(uid))
         ClientLogin.recordValidator(initResp.xValidator)
-        val plan = parseUploadInit(initResp.json, discovery.uploadUrl)
+        val plan = parseUploadInit(initResp.json, endpoint.uploadUrl)
 
+        val oriInt = ori.toIntOrNull() ?: 0
         val totalChunks = (bytes.size + plan.chunkBytes - 1) / plan.chunkBytes
         var legacyFid = ""
         for (index in 0 until totalChunks) {
@@ -519,7 +574,7 @@ object ContainerApi {
             val uploadQuery = buildUploadQueryBase(
                 uid = uid,
                 gsid = gsid,
-                aid = resolvedAid,
+                aid = aid,
                 includeGsid = plan.auth.isBlank(),
                 includeSource = true,
             )
@@ -538,7 +593,7 @@ object ContainerApi {
                 }
                 is PicUploadInit.Legacy -> {
                     val sendProps = JSONObject()
-                        .put("ori", 0)
+                        .put("ori", oriInt)
                         .put("pri", 0)
                         .put("print_mark", 0)
                         .toString()
@@ -552,7 +607,7 @@ object ContainerApi {
                     uploadQuery["filecheck"] = md5Hex
                     uploadQuery["filetoken"] = plan.fileToken
                     uploadQuery["filelength"] = bytes.size.toString()
-                    uploadQuery["type"] = "pic"
+                    uploadQuery["type"] = uploadType
                     uploadQuery["file_source"] = "9"
                     uploadQuery["mediaprops"] = sendProps
                     plan.uploadUrl
@@ -573,16 +628,98 @@ object ContainerApi {
                     }
                 }
                 is PicUploadInit.Legacy -> {
-                    val picId = resp.json.str("pic_id").ifBlank { resp.json.str("fid") }
-                    if (picId.isNotBlank()) legacyFid = picId
+                    val id = if (uploadType == "livephoto") {
+                        resp.json.str("usid")
+                            .ifBlank { resp.json.str("fid") }
+                            .ifBlank { resp.json.str("pic_id") }
+                    } else {
+                        resp.json.str("pic_id")
+                            .ifBlank { resp.json.str("fid") }
+                            .ifBlank { resp.json.str("usid") }
+                    }
+                    if (id.isNotBlank()) legacyFid = id
                 }
             }
         }
-        val fid = when (plan) {
+        return when (plan) {
             is PicUploadInit.Mss -> plan.mediaId
-            is PicUploadInit.Legacy -> legacyFid.ifBlank { throw ApiException("图片上传失败") }
+            is PicUploadInit.Legacy -> legacyFid.ifBlank {
+                throw ApiException(if (uploadType == "livephoto") "实况视频上传失败" else "图片上传失败")
+            }
         }
-        return UploadedMedia(fid = fid, md5 = md5Hex, bypass = discovery.bypass)
+    }
+
+    suspend fun uploadPic(
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        bytes: ByteArray,
+        fileName: String,
+        md5Hex: String,
+    ): UploadedMedia {
+        if (bytes.isEmpty()) throw ApiException("图片内容为空")
+        val resolvedAid = aid.ifBlank { ClientLogin.ensureAid() }
+        val discovery = discoverUploadEndpoints(uid, gsid, resolvedAid)
+        val fid = uploadFile(
+            uid = uid,
+            gsid = gsid,
+            aid = resolvedAid,
+            endpoint = discovery.pic,
+            uploadType = "pic",
+            bytes = bytes,
+            fileName = fileName,
+            md5Hex = md5Hex,
+            ori = "0",
+        )
+        return UploadedMedia(fid = fid, md5 = md5Hex, bypass = discovery.pic.bypass)
+    }
+
+    suspend fun uploadLivePhoto(
+        uid: String,
+        gsid: String,
+        aid: String = "",
+        stillBytes: ByteArray,
+        videoBytes: ByteArray,
+        stillFileName: String = "pic.jpg",
+        videoFileName: String = "live.mov",
+        subtype: String = "livephoto",
+    ): UploadedMedia {
+        if (stillBytes.isEmpty()) throw ApiException("图片内容为空")
+        if (videoBytes.isEmpty()) throw ApiException("实况视频内容为空")
+        val resolvedAid = aid.ifBlank { ClientLogin.ensureAid() }
+        val discovery = discoverUploadEndpoints(uid, gsid, resolvedAid)
+        val liveEndpoint = discovery.livePhoto ?: throw ApiException("获取实况图上传配置失败")
+        val stillMd5 = md5Hex(stillBytes)
+        val videoMd5 = md5Hex(videoBytes)
+        val picFid = uploadFile(
+            uid = uid,
+            gsid = gsid,
+            aid = resolvedAid,
+            endpoint = discovery.pic,
+            uploadType = "pic",
+            bytes = stillBytes,
+            fileName = stillFileName,
+            md5Hex = stillMd5,
+            ori = "1",
+        )
+        val videoUsid = uploadFile(
+            uid = uid,
+            gsid = gsid,
+            aid = resolvedAid,
+            endpoint = liveEndpoint,
+            uploadType = "livephoto",
+            bytes = videoBytes,
+            fileName = videoFileName,
+            md5Hex = videoMd5,
+            ori = "1",
+        )
+        return UploadedMedia(
+            fid = picFid,
+            md5 = stillMd5,
+            bypass = discovery.pic.bypass,
+            subtype = subtype,
+            videoFid = videoUsid,
+        )
     }
 
     /**

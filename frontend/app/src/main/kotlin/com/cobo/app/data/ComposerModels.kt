@@ -12,6 +12,12 @@ enum class WeiboVisibility(
     Self(1, "私密", "仅自己可见"),
 }
 
+fun StatusVisibility?.toWeiboVisibility(): WeiboVisibility = when (this?.type) {
+    1 -> WeiboVisibility.Self
+    6 -> WeiboVisibility.Circle
+    else -> WeiboVisibility.Public
+}
+
 data class TopicSuggestion(
     val title: String,
     val desc: String = "",

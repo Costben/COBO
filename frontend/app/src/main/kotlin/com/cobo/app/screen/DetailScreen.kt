@@ -332,6 +332,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         }
     }
 
+    val editedVersion = App.repo.editedVersion
+    LaunchedEffect(id, mid, editedVersion) {
+        val updated = App.repo.editedStatus(id, mid) ?: return@LaunchedEffect
+        status = updated
+    }
+
     LaunchedEffect(listState, comments.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { last ->
