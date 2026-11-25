@@ -688,6 +688,10 @@ fun ProfileContent(
     suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
         val target = tabState.resolvedUid ?: return
         if (tabState.loading) return
+        if (!reset && tabState.sinceId.isNullOrBlank()) {
+            tabState.end = true
+            return
+        }
         tabState.loading = true
         if (reset && showRefresh) tabState.refreshing = true
         try {

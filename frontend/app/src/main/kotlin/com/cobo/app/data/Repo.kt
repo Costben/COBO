@@ -1431,7 +1431,10 @@ class Repo(private val context: Context, private val store: Store) {
                         permits.withPermit {
                             val since = lock.withLock { pending[uid] }
                             val page = runCatching {
-                                container("107603$uid", sinceId = since, force = force, cookie = cookie)
+                                filterUserStatusesPage(
+                                    uid,
+                                    container("107603$uid", sinceId = since, force = force, cookie = cookie),
+                                )
                             }.getOrNull() ?: return@withPermit
                             lock.withLock {
                                 // since_id 是闭区间：边界那条会原样再回来一次，只要更旧的。
@@ -1538,7 +1541,7 @@ class Repo(private val context: Context, private val store: Store) {
             for (uid in uids.take(SPECIAL_DIRECT_USERS)) {
                 if (System.currentTimeMillis() > deadline) break
                 val page = runCatching {
-                    container("107603$uid", force = force, cookie = cookie)
+                    filterUserStatusesPage(uid, container("107603$uid", force = force, cookie = cookie))
                 }.getOrNull() ?: continue
                 for (status in page.items) kept.putIfAbsent(status.id, status)
             }
@@ -4199,13 +4202,13 @@ class Repo(private val context: Context, private val store: Store) {
             if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
             val root = containerGet("profile/statuses", params)
             enrichContainerLongTextCardsRoot(root)
-            return parseContainerCards(root)
+            return filterUserStatusesPage(uid, parseContainerCards(root))
         }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
             val desktop = runCatching { desktopUserStatuses(uid, sinceId) }.getOrNull()
-            if (desktop != null) return desktop
+            if (desktop != null) return filterUserStatusesPage(uid, desktop)
         }
-        return container("107603$uid", sinceId, force = force)
+        return filterUserStatusesPage(uid, container("107603$uid", sinceId, force = force))
     }
 
     private suspend fun desktopUserStatuses(uid: String, cursor: String?): FeedPage? {

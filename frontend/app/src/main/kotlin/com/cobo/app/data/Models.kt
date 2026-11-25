@@ -2392,6 +2392,23 @@ private fun parseCardsFromData(data: JSONObject?): FeedPage {
 }
 
 /**
+ * 过滤个人主页时间线分页结果，只保留目标用户 [uid] 本人发布的微博。
+ *
+ * 微博 `profile/statuses` 与 `107603<uid>` 在本人可见微博展示完毕后，会继续下发其他用户的
+ * 推荐微博并附带推荐流游标；这里统一剔除非该用户的条目，并在整页无本人微博或尾部已进入
+ * 推荐流（连续 2 条及以上非本人微博）时截断后续游标（`sinceId = null`），让主页自然停在底端。
+ */
+internal fun filterUserStatusesPage(uid: String, page: FeedPage): FeedPage {
+    val targetUid = uid.trim()
+    if (targetUid.isBlank()) return page
+    val raw = page.items
+    val own = raw.filter { it.user?.id?.trim() == targetUid }
+    val trailingForeignCount = raw.asReversed().takeWhile { it.user?.id?.trim() != targetUid }.size
+    val nextSince = if (own.isEmpty() || trailingForeignCount >= 2) null else page.sinceId
+    return page.copy(items = own, sinceId = nextSince)
+}
+
+/**
  * 搜索联想列表里的单项：普通关键词建议，或第 5–7 位的大V/官方号直达项。
  */
 sealed interface SearchSuggestEntry {
