@@ -17,22 +17,95 @@ class FeedTopActionTest {
     }
 
     @Test
-    fun feedTabTapScrollsToTopFirstThenRefreshesWhenAtTop() {
+    fun toggleTopOrReturnHandlesAllStates() {
         assertEquals(
-            FeedTopEffect.GlideToTopOnly,
-            resolveFeedTopEffect(FeedTopAction.ScrollToTopOrRefresh, atTop = false, reverseBrowse = false),
+            FeedTopEffect.GlideToTopAndSaveAnchor,
+            resolveFeedTopEffect(
+                action = FeedTopAction.ToggleTopOrReturn,
+                atTop = false,
+                hasSavedAnchor = false,
+                reverseBrowse = false,
+            ),
         )
         assertEquals(
-            FeedTopEffect.GlideToTopOnly,
-            resolveFeedTopEffect(FeedTopAction.ScrollToTopOrRefresh, atTop = false, reverseBrowse = true),
+            FeedTopEffect.GlideToTopAndSaveAnchor,
+            resolveFeedTopEffect(
+                action = FeedTopAction.ToggleTopOrReturn,
+                atTop = false,
+                hasSavedAnchor = true,
+                reverseBrowse = true,
+            ),
+        )
+        assertEquals(
+            FeedTopEffect.ReturnToSavedAnchor,
+            resolveFeedTopEffect(
+                action = FeedTopAction.ToggleTopOrReturn,
+                atTop = true,
+                hasSavedAnchor = true,
+                reverseBrowse = false,
+            ),
+        )
+        assertEquals(
+            FeedTopEffect.NoOp,
+            resolveFeedTopEffect(
+                action = FeedTopAction.ToggleTopOrReturn,
+                atTop = true,
+                hasSavedAnchor = false,
+                reverseBrowse = false,
+            ),
+        )
+    }
+
+    @Test
+    fun refreshFromTabRespectsReverseBrowse() {
+        assertEquals(
+            FeedTopEffect.GlideToTopThenRefresh,
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromTab,
+                atTop = false,
+                hasSavedAnchor = true,
+                reverseBrowse = false,
+            ),
         )
         assertEquals(
             FeedTopEffect.RefreshInPlace,
-            resolveFeedTopEffect(FeedTopAction.ScrollToTopOrRefresh, atTop = true, reverseBrowse = false),
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromTab,
+                atTop = false,
+                hasSavedAnchor = true,
+                reverseBrowse = true,
+            ),
+        )
+    }
+
+    @Test
+    fun legacyDoubleTapKeepsUpstreamBehavior() {
+        assertEquals(
+            FeedTopEffect.GlideToTopThenRefresh,
+            resolveFeedTopEffect(
+                action = FeedTopAction.LegacyDoubleTap,
+                atTop = false,
+                hasSavedAnchor = false,
+                reverseBrowse = false,
+            ),
+        )
+        assertEquals(
+            FeedTopEffect.GlideToTopOnly,
+            resolveFeedTopEffect(
+                action = FeedTopAction.LegacyDoubleTap,
+                atTop = false,
+                hasSavedAnchor = false,
+                reverseBrowse = true,
+            ),
         )
         assertEquals(
             FeedTopEffect.RefreshInPlace,
-            resolveFeedTopEffect(FeedTopAction.ScrollToTopOrRefresh, atTop = true, reverseBrowse = true),
+            resolveFeedTopEffect(
+                action = FeedTopAction.LegacyDoubleTap,
+                atTop = true,
+                hasSavedAnchor = false,
+                reverseBrowse = true,
+            ),
         )
     }
 
@@ -40,19 +113,39 @@ class FeedTopActionTest {
     fun bottomLeftAccessoryKeepsUpstreamBehavior() {
         assertEquals(
             FeedTopEffect.GlideToTopThenRefresh,
-            resolveFeedTopEffect(FeedTopAction.RefreshFromAccessory, atTop = false, reverseBrowse = false),
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromAccessory,
+                atTop = false,
+                hasSavedAnchor = false,
+                reverseBrowse = false,
+            ),
         )
         assertEquals(
             FeedTopEffect.GlideToTopThenRefresh,
-            resolveFeedTopEffect(FeedTopAction.RefreshFromAccessory, atTop = true, reverseBrowse = false),
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromAccessory,
+                atTop = true,
+                hasSavedAnchor = false,
+                reverseBrowse = false,
+            ),
         )
         assertEquals(
             FeedTopEffect.RefreshInPlace,
-            resolveFeedTopEffect(FeedTopAction.RefreshFromAccessory, atTop = false, reverseBrowse = true),
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromAccessory,
+                atTop = false,
+                hasSavedAnchor = false,
+                reverseBrowse = true,
+            ),
         )
         assertEquals(
             FeedTopEffect.RefreshInPlace,
-            resolveFeedTopEffect(FeedTopAction.RefreshFromAccessory, atTop = true, reverseBrowse = true),
+            resolveFeedTopEffect(
+                action = FeedTopAction.RefreshFromAccessory,
+                atTop = true,
+                hasSavedAnchor = false,
+                reverseBrowse = true,
+            ),
         )
     }
 }

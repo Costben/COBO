@@ -31,6 +31,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_font",
             "settings_predictive_back_entry",
             "settings_auto_hide_floating_bars",
+            "settings_feed_tab_tap_to_top_and_return",
             "settings_feed_left_tab",
             "settings_feed_center_tab",
             "settings_feed_right_tab",
@@ -173,6 +174,21 @@ class SettingsE2eTest : UiE2eTest() {
             waitUntil("滑动自动隐藏浮动栏开关没有切回") { App.settings.autoHideFloatingBars == before }
         } finally {
             App.settings.applyAutoHideFloatingBars(before)
+        }
+    }
+
+    @Test
+    fun feedTabTapToTopAndReturn_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.feedTabTapToTopAndReturn
+        try {
+            scrollToTag("settings_feed_tab_tap_to_top_and_return")
+            tapTag("settings_feed_tab_tap_to_top_and_return")
+            waitUntil("底栏微博单击回顶与返回开关没有切换") { App.settings.feedTabTapToTopAndReturn != before }
+            tapTag("settings_feed_tab_tap_to_top_and_return")
+            waitUntil("底栏微博单击回顶与返回开关没有切回") { App.settings.feedTabTapToTopAndReturn == before }
+        } finally {
+            App.settings.applyFeedTabTapToTopAndReturn(before)
         }
     }
 

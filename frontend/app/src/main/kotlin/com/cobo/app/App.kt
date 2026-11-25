@@ -47,8 +47,12 @@ class CoboApplication : Application() {
 }
 
 enum class FeedTopAction {
-    /** 底栏「微博」按钮在首页再次点击：未在顶部时回顶，已在顶部时刷新。 */
-    ScrollToTopOrRefresh,
+    /** 增强手势开启时单击底栏「微博」：未在顶部时记录当前位置并回顶；已在顶部且有记录时返回原位。 */
+    ToggleTopOrReturn,
+    /** 增强手势开启时双击底栏「微博」：触发刷新（普通模式回顶刷新，倒序模式原地刷新）。 */
+    RefreshFromTab,
+    /** 默认模式（开关关闭）双击底栏「微博」：保留上游原有行为（普通模式回顶刷新，倒序模式未在顶回顶、在顶刷新）。 */
+    LegacyDoubleTap,
     /** 底栏左下角融合球「回到顶部刷新」：普通模式回顶并刷新，倒序模式原地刷新。 */
     RefreshFromAccessory,
 }
@@ -216,7 +220,7 @@ object App {
         feedRefreshEvents.tryEmit(Unit)
     }
 
-    fun requestFeedTop(action: FeedTopAction = FeedTopAction.ScrollToTopOrRefresh) {
+    fun requestFeedTop(action: FeedTopAction = FeedTopAction.LegacyDoubleTap) {
         feedTopEvents.tryEmit(action)
     }
 

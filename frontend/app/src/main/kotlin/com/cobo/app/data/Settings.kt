@@ -302,6 +302,13 @@ class Settings(context: Context) {
         private set
 
     /**
+     * 底栏「微博」单击回顶与返回：开启后在微博页单击底栏「微博」可在顶部与上次浏览位置间切换，
+     * 双击触发刷新；关闭时保留原有双击回顶手势。默认关。
+     */
+    var feedTabTapToTopAndReturn by mutableStateOf(sp.getBoolean("feed_tab_tap_to_top_and_return", false))
+        private set
+
+    /**
      * 允许横屏：关掉之后 Activity 钉死竖屏，也就不会进入左右双页。默认开，跟随系统方向。
      */
     var allowLandscape by mutableStateOf(sp.getBoolean("allow_landscape", true))
@@ -601,6 +608,11 @@ class Settings(context: Context) {
     fun applyAutoHideFloatingBars(value: Boolean) {
         autoHideFloatingBars = value
         sp.edit().putBoolean("auto_hide_floating_bars", value).apply()
+    }
+
+    fun applyFeedTabTapToTopAndReturn(value: Boolean) {
+        feedTabTapToTopAndReturn = value
+        sp.edit().putBoolean("feed_tab_tap_to_top_and_return", value).apply()
     }
 
     fun applyAllowLandscape(value: Boolean) {

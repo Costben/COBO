@@ -50,11 +50,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,7 +87,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -207,7 +211,10 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 internal sealed class FeedTabSpec {
@@ -670,8 +677,10 @@ fun MainShell(nav: NavState) {
         topSafeZone = mainTopSafeZone,
     )
     LaunchedEffect(tab, feedPager.currentPage) { mainBarScroll.show() }
-    val mainBarHideProgress by rememberFloatingBarHideProgress(mainBarScroll.hidden, "mainBarHide")
-    val bottomBarHidden = mainBarHideProgress > 0.95f
+    val mainBarHideProgress = mainBarScroll.hideProgress
+    val bottomBarHidden by remember(mainBarHideProgress) {
+        derivedStateOf { mainBarHideProgress.value >= FloatingBarNonInteractiveThreshold }
+    }
 
     Box(Modifier.fillMaxSize()) {
         // Both bars float over the page, so their live edges are reported and read by
@@ -763,7 +772,7 @@ fun MainShell(nav: NavState) {
                     centerOptions = centerOptions,
                     collapsed = collapsed,
                     titleHeightPx = barTitleHeightPx,
-                    hideProgress = { mainBarHideProgress },
+                    hideProgress = mainBarHideProgress,
                     filterMenuExpanded = feedFilterMenuExpanded,
                     onFilterMenuExpandedChange = { feedFilterMenuExpanded = it },
                     timelineScrollHolder = timelineScrollHolder,
@@ -791,6 +800,7 @@ fun MainShell(nav: NavState) {
         val quickSwitchAccount = App.settings.quickSwitchAccount
         val profileTabAvatar = App.settings.profileTabAvatar
         val bottomLeftAction = App.settings.bottomLeftAction
+        val feedTabTapToTopAndReturn = App.settings.feedTabTapToTopAndReturn
         val triggerBottomLeftAction: (BottomLeftAction) -> Unit = { action ->
             if (!feedPanelCovering && !bottomBarHidden) {
                 when (action) {
@@ -850,62 +860,88 @@ fun MainShell(nav: NavState) {
         ) {
             PinnedBarDensity {
                 var bottomBarHeightPx by remember { mutableIntStateOf(0) }
+                var restingBottomBarTop by remember { mutableFloatStateOf(0f) }
+                var restingBottomBarHeight by remember { mutableFloatStateOf(0f) }
                 val bottomBarExtraClearancePx = with(LocalDensity.current) { 24.dp.toPx() }
                 val bottomBarActive = !feedPanelCovering && !bottomBarHidden
-                FloatingBottomBar(
-                    tab = tab,
-                    onTab = { target -> if (bottomBarActive) nav.setTab(target) },
-                    bottomLeftAction = bottomLeftAction,
-                    onBottomLeftClick = { triggerBottomLeftAction(bottomLeftAction) },
-                    onBottomLeftActionTrigger = { action ->
-                        triggerBottomLeftAction(action)
-                    },
-                    onBottomLeftPinSelect = { selected ->
-                        App.settings.applyBottomLeftAction(selected)
-                    },
-                    onOpenSettings = {
-                        if (bottomBarActive) nav.push(Route.Settings)
-                    },
-                    menuEnabled = bottomBarActive,
-                    onMenuExpandedChange = { bottomBarMenuOpen = it },
-                    bottomBarBounds = bottomBarBounds,
-                    onFeedTop = {
-                        if (bottomBarActive) {
-                            mainBarScroll.show()
-                            App.requestFeedTop(FeedTopAction.ScrollToTopOrRefresh)
-                        }
-                    },
-                    onPublish = {
-                        if (bottomBarActive) {
-                            if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
-                        }
-                    },
-                    profileAvatarUrl = if (profileTabAvatar && !guest) profileAvatarUrl else null,
-                    profileOverflowMenu = if (quickSwitchAccount && bottomBarActive) {
-                        {
-                            ProfileQuickSwitchMenu(
-                                guest = guest,
-                                onSwitchAccount = { account ->
-                                    App.repo.switchAccount(account)
-                                    nav.reset(Route.Main)
-                                },
-                                onAddAccount = { nav.push(Route.SmsLogin(addAccount = true)) },
-                                onManageAccounts = { nav.push(Route.Accounts) },
-                            )
-                        }
+                LaunchedEffect(bottomBarActive, restingBottomBarTop, restingBottomBarHeight) {
+                    if (bottomBarActive && restingBottomBarHeight > 0f) {
+                        bottomBarBounds.report(restingBottomBarTop, restingBottomBarHeight)
                     } else {
-                        null
-                    },
-                    modifier = Modifier
+                        bottomBarBounds.clear()
+                    }
+                }
+                // 外层容器不随 graphicsLayer 平移，始终向页面汇报静止态底栏坐标，
+                // 避免恢复动画刚起步时将屏幕外的临时位置写进 bottomBarBounds。
+                Box(
+                    Modifier
                         .align(Alignment.BottomCenter)
-                        .onSizeChanged { bottomBarHeightPx = it.height }
-                        .graphicsLayer {
-                            val travel = if (bottomBarHeightPx > 0) bottomBarHeightPx.toFloat() else bottomBarExtraClearancePx * 5f
-                            translationY = mainBarHideProgress * (travel + bottomBarExtraClearancePx)
-                            alpha = (1f - mainBarHideProgress * 1.15f).coerceIn(0f, 1f)
-                        }
-                        .then(if (!bottomBarActive) Modifier.clearAndSetSemantics {} else Modifier),
-                )
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coords ->
+                            val barTop = coords.positionInRoot().y
+                            val barHeight = coords.size.height.toFloat()
+                            if (barHeight > 0f && (restingBottomBarTop != barTop || restingBottomBarHeight != barHeight)) {
+                                restingBottomBarTop = barTop
+                                restingBottomBarHeight = barHeight
+                            }
+                        },
+                ) {
+                    FloatingBottomBar(
+                        tab = tab,
+                        onTab = { target -> if (bottomBarActive) nav.setTab(target) },
+                        tapToTopAndReturn = feedTabTapToTopAndReturn,
+                        bottomLeftAction = bottomLeftAction,
+                        onBottomLeftClick = { triggerBottomLeftAction(bottomLeftAction) },
+                        onBottomLeftActionTrigger = { action ->
+                            triggerBottomLeftAction(action)
+                        },
+                        onBottomLeftPinSelect = { selected ->
+                            App.settings.applyBottomLeftAction(selected)
+                        },
+                        onOpenSettings = {
+                            if (bottomBarActive) nav.push(Route.Settings)
+                        },
+                        menuEnabled = bottomBarActive,
+                        onMenuExpandedChange = { bottomBarMenuOpen = it },
+                        onFeedAction = { action ->
+                            if (bottomBarActive) {
+                                mainBarScroll.show()
+                                App.requestFeedTop(action)
+                            }
+                        },
+                        onPublish = {
+                            if (bottomBarActive) {
+                                if (guest) App.toast("纯本地模式不能发微博，登录后可用") else nav.push(Route.Publish())
+                            }
+                        },
+                        profileAvatarUrl = if (profileTabAvatar && !guest) profileAvatarUrl else null,
+                        profileOverflowMenu = if (quickSwitchAccount && bottomBarActive) {
+                            {
+                                ProfileQuickSwitchMenu(
+                                    guest = guest,
+                                    onSwitchAccount = { account ->
+                                        App.repo.switchAccount(account)
+                                        nav.reset(Route.Main)
+                                    },
+                                    onAddAccount = { nav.push(Route.SmsLogin(addAccount = true)) },
+                                    onManageAccounts = { nav.push(Route.Accounts) },
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { bottomBarHeightPx = it.height }
+                            .graphicsLayer {
+                                val hp = mainBarHideProgress.value.coerceIn(0f, 1f)
+                                val travel = if (bottomBarHeightPx > 0) bottomBarHeightPx.toFloat() else bottomBarExtraClearancePx * 5f
+                                translationY = hp * (travel + bottomBarExtraClearancePx)
+                                alpha = (1f - hp * 1.25f).coerceIn(0f, 1f)
+                            }
+                            .then(if (!bottomBarActive) Modifier.clearAndSetSemantics {} else Modifier),
+                    )
+                }
             }
         }
 
@@ -1051,7 +1087,7 @@ private fun MainBarUnderlay(
     centerOptions: List<FeedTabSelection>,
     collapsed: Float,
     titleHeightPx: Float,
-    hideProgress: () -> Float,
+    hideProgress: State<Float>,
     filterMenuExpanded: Boolean,
     onFilterMenuExpandedChange: (Boolean) -> Unit,
     timelineScrollHolder: TimelineScrollHolder,
@@ -1118,39 +1154,51 @@ private fun MainBarUnderlay(
         }
     }
     val materialShift = { (collapsed * titleHeightPx * feedWeight.value).roundToInt() }
-    val topHideDistancePx = with(density) {
+    // AppBarSurface 隐藏时仅上移分段标签行高度，使底边停在状态栏下沿，
+    // 借由 COUI AppBarBlurOverlay 自带 24dp 渐隐过渡作为状态栏模糊蒙版。
+    val barSurfaceHideDistancePx = with(density) {
+        if (feedHasTabs) TopAppBarDefaults.SmallTopAppBarCenterHeight.toPx() else 0f
+    }
+    val feedTabsHideDistancePx = with(density) {
         if (feedHasTabs) {
             (statusBarTop + TopAppBarDefaults.SmallTopAppBarCenterHeight).toPx()
         } else {
             statusBarTop.toPx()
         }
     }
-    val topHideShift = { (hideProgress().coerceIn(0f, 1f) * topHideDistancePx * feedWeight.value).roundToInt() }
+    val barSurfaceHideShift = {
+        (hideProgress.value.coerceIn(0f, 1f) * barSurfaceHideDistancePx * feedWeight.value).roundToInt()
+    }
     val materialHeight = animateDpAsState(
         targetValue = if (tab == 0) feedBarHeight else pageBarHeight,
         animationSpec = tween(MainTabFadeMillis),
         label = "mainBarMaterialHeight",
     )
     LaunchedEffect(hideProgress) {
-        snapshotFlow { hideProgress() > 0.5f }.collect { shouldClose ->
-            if (shouldClose) onFilterMenuExpandedChange(false)
-        }
+        snapshotFlow { hideProgress.value > 0.5f }
+            .distinctUntilChanged()
+            .collect { shouldClose ->
+                if (shouldClose) onFilterMenuExpandedChange(false)
+            }
     }
     // 打开菜单时补一次分组列表：设置里改过分组、或者在网页版新加了分组，这里跟着更新。
     LaunchedEffect(filterMenuExpanded) {
         if (filterMenuExpanded) onMenuOpened()
     }
 
+    val feedTabsHidden by remember(hideProgress) {
+        derivedStateOf { hideProgress.value >= FloatingBarNonInteractiveThreshold }
+    }
+
     Box(modifier) {
         AppBarSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(0, -(materialShift() + topHideShift())) }
+                .offset { IntOffset(0, -(materialShift() + barSurfaceHideShift())) }
                 .reportTopBarBottom(bounds),
             containerColor = pageContainerColor(),
             scrollFraction = {
-                val feedFraction = feedWeight.value * feedScrollAlpha() * (1f - hideProgress().coerceIn(0f, 1f))
-                (feedFraction +
+                (feedWeight.value * feedScrollAlpha() +
                     messagesWeight.value * messagesScrollAlpha() +
                     meWeight.value * profileScrollAlpha()).coerceIn(0f, 1f)
             },
@@ -1172,7 +1220,6 @@ private fun MainBarUnderlay(
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(150)),
         ) {
-            val feedTabsHidden = hideProgress() > 0.95f
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1185,8 +1232,8 @@ private fun MainBarUnderlay(
                         .fillMaxWidth()
                         .height(TopAppBarDefaults.SmallTopAppBarCenterHeight)
                         .graphicsLayer {
-                            val hp = hideProgress().coerceIn(0f, 1f)
-                            translationY = -collapsed * titleHeightPx - hp * topHideDistancePx
+                            val hp = hideProgress.value.coerceIn(0f, 1f)
+                            translationY = -collapsed * titleHeightPx - hp * feedTabsHideDistancePx
                             alpha = (1f - hp * 1.25f).coerceIn(0f, 1f)
                         },
                 ) {
@@ -1962,26 +2009,58 @@ internal fun buildCenterMenuEntries(
 private fun FloatingBottomBar(
     tab: Int,
     onTab: (Int) -> Unit,
+    tapToTopAndReturn: Boolean,
     bottomLeftAction: BottomLeftAction,
     onBottomLeftClick: () -> Unit,
     onBottomLeftActionTrigger: (BottomLeftAction) -> Unit,
     onBottomLeftPinSelect: (BottomLeftAction) -> Unit,
     onOpenSettings: () -> Unit,
     menuEnabled: Boolean,
-    bottomBarBounds: BottomBarBounds,
-    onFeedTop: () -> Unit,
+    onFeedAction: (FeedTopAction) -> Unit,
     onPublish: () -> Unit,
     onMenuExpandedChange: (Boolean) -> Unit = {},
     profileAvatarUrl: String? = null,
     profileOverflowMenu: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    // 首页已停留在「微博」Tab 时，单击一次直接执行二段式回顶/刷新；从其他 Tab 切回时仅切页。
+    val tapScope = rememberCoroutineScope()
+    var lastFeedTapAt by remember { mutableLongStateOf(0L) }
+    var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
+    LaunchedEffect(tab, tapToTopAndReturn, menuEnabled) {
+        if (tab != 0 || !tapToTopAndReturn || !menuEnabled) {
+            pendingSingleTapJob?.cancel()
+            pendingSingleTapJob = null
+        }
+        if (!menuEnabled) lastFeedTapAt = 0L
+    }
     val onFeedTap: () -> Unit = {
-        if (tab == 0) {
-            onFeedTop()
-        } else {
+        if (!tapToTopAndReturn) {
+            // 默认关闭增强手势：保持原有「单击切页、320ms 内双击回顶/刷新」逻辑。
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastFeedTapAt <= 320L) {
+                lastFeedTapAt = 0L
+                onFeedAction(FeedTopAction.LegacyDoubleTap)
+            } else {
+                lastFeedTapAt = now
+            }
             onTab(0)
+        } else if (tab != 0) {
+            pendingSingleTapJob?.cancel()
+            pendingSingleTapJob = null
+            onTab(0)
+        } else {
+            val activePending = pendingSingleTapJob
+            if (activePending?.isActive == true) {
+                activePending.cancel()
+                pendingSingleTapJob = null
+                onFeedAction(FeedTopAction.RefreshFromTab)
+            } else {
+                pendingSingleTapJob = tapScope.launch {
+                    delay(240L)
+                    pendingSingleTapJob = null
+                    onFeedAction(FeedTopAction.ToggleTopOrReturn)
+                }
+            }
         }
     }
     var leftMenuExpanded by remember { mutableStateOf(false) }
@@ -1990,10 +2069,7 @@ private fun FloatingBottomBar(
         onMenuExpandedChange(leftMenuExpanded || profileMenuExpanded)
     }
     LaunchedEffect(menuEnabled) {
-        if (!menuEnabled) {
-            leftMenuExpanded = false
-            bottomBarBounds.clear()
-        }
+        if (!menuEnabled) leftMenuExpanded = false
     }
     val leftPopupPositionProvider = remember { bottomLeftPopupPositionProvider() }
     Box(
@@ -2005,9 +2081,7 @@ private fun FloatingBottomBar(
         // 底栏条 56dp / 项 48dp / 圆钮 56dp 由组件自己的 token 决定。
         run {
             BottomFloatingAccessoryNavigationBar(
-                modifier = Modifier
-                    .then(if (menuEnabled) Modifier.popupBottomBarrier() else Modifier)
-                    .reportBottomBarTop(bottomBarBounds, active = menuEnabled),
+                modifier = if (menuEnabled) Modifier.popupBottomBarrier() else Modifier,
                 startAccessory = {
                     Box(
                         modifier = Modifier
@@ -2186,7 +2260,7 @@ private fun RowScope.ProfileFloatingNavItem(
     val colorScheme = COUITheme.colorScheme
     val tint = if (selected) colorScheme.onSurface else colorScheme.labelPrimaryVariant
     var menuExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(overflowMenu) {
+    LaunchedEffect(overflowMenu == null) {
         if (overflowMenu == null) menuExpanded = false
     }
     LaunchedEffect(menuExpanded) {

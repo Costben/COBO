@@ -44,6 +44,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -104,8 +105,8 @@ import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.extractResolvablePhotoLinksFromHtml
 import com.cobo.app.ui.imageOrigin
+import com.cobo.app.ui.FloatingBarNonInteractiveThreshold
 import com.cobo.app.ui.layerBackdropIf
-import com.cobo.app.ui.rememberFloatingBarHideProgress
 import com.cobo.app.ui.rememberFloatingBarScrollController
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
@@ -379,8 +380,10 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         listState = listState,
         topSafeZone = 16.dp,
     )
-    val detailHideProgress by rememberFloatingBarHideProgress(detailBarScroll.hidden, "detailBarHide")
-    val detailBarHidden = detailHideProgress > 0.95f
+    val detailHideProgress = detailBarScroll.hideProgress
+    val detailBarHidden by remember(detailHideProgress) {
+        derivedStateOf { detailHideProgress.value >= FloatingBarNonInteractiveThreshold }
+    }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         Box(
@@ -627,14 +630,16 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 DetailFloatingToolbar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = BottomFloatingNavigationBarDefaults.navigationBarPadding())
                         .onSizeChanged { toolbarHeightPx = it.height }
                         .graphicsLayer {
+                            val hp = detailHideProgress.value.coerceIn(0f, 1f)
                             val travel = if (toolbarHeightPx > 0) toolbarHeightPx.toFloat() else toolbarExtraClearancePx * 5f
-                            translationY = detailHideProgress * (travel + toolbarExtraClearancePx)
-                            alpha = (1f - detailHideProgress * 1.15f).coerceIn(0f, 1f)
+                            translationY = hp * (travel + toolbarExtraClearancePx)
+                            alpha = (1f - hp * 1.25f).coerceIn(0f, 1f)
                         }
+                        .padding(bottom = BottomFloatingNavigationBarDefaults.navigationBarPadding())
                         .then(if (detailBarHidden) Modifier.clearAndSetSemantics {} else Modifier),
+                    barrierEnabled = !detailBarHidden,
                 ) {
                     DetailFloatingToolbarItem(
                         icon = CoboIcons.Repost,
@@ -1734,6 +1739,7 @@ private fun SortProgressLine(visible: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun DetailFloatingToolbar(
     modifier: Modifier = Modifier,
+    barrierEnabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -1756,7 +1762,7 @@ private fun DetailFloatingToolbar(
             .heightIn(min = BottomFloatingToolbarDefaults.MinHeight),
         contentAlignment = Alignment.Center,
     ) {
-        Box(modifier = Modifier.popupBottomBarrier()) {
+        Box(modifier = if (barrierEnabled) Modifier.popupBottomBarrier() else Modifier) {
             if (!isDark && capsuleWidthPx > 0) {
                 Box(
                     modifier = Modifier

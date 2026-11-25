@@ -79,6 +79,7 @@ import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -577,11 +578,15 @@ class FeedStore(
  * 每一页的位置记忆。左右滑会把整页拆掉重装，滚动位置本身记在 `LazyListState` 里；这里只记
  * 这一格上一次交给的是哪个流，以及已经为哪一次刷新回到过顶部。
  */
+internal data class FeedScrollAnchor(val index: Int, val offset: Int)
+
 internal class PageMemory {
     var store: FeedStore? = null
     var generation = -1
     /** 这一格是不是已经装载过一次；第一次装载不算刷新，不该把人拉回顶部。 */
     var seen = false
+    /** 单击底栏「微博」回顶前记录的浏览位置，再点一次时返回；手动滚动或刷新后清空。 */
+    var returnAnchor: FeedScrollAnchor? = null
 }
 
 /**
@@ -746,38 +751,116 @@ fun TimelineScreen(
     LaunchedEffect(Unit) {
         App.feedRefreshEvents.collect { currentFollowStore.refresh() }
     }
+    var topActionJob by remember { mutableStateOf<Job?>(null) }
+    var programmaticScrollActive by remember { mutableStateOf(false) }
+    LaunchedEffect(pagerState, listStates, pageMemory) {
+        snapshotFlow {
+            val current = pagerState.currentPage
+            val state = listStates.getOrNull(current)
+            if (state == null) {
+                Triple(current, false, true)
+            } else {
+                Triple(
+                    current,
+                    state.isScrollInProgress,
+                    isFeedAtTop(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset),
+                )
+            }
+        }.collect { (current, scrolling, atTop) ->
+            if (scrolling && !programmaticScrollActive && !atTop) {
+                pageMemory.getOrNull(current)?.returnAnchor = null
+            }
+        }
+    }
     LaunchedEffect(Unit) {
         App.feedTopEvents.collect { action ->
+            val running = topActionJob?.isActive == true
+            if (running && (action == FeedTopAction.ToggleTopOrReturn || action == FeedTopAction.LegacyDoubleTap)) {
+                // 回顶或返回原位动画进行中时忽略重入点击，避免事件缓冲并在完成后误触发下一步或刷新。
+                return@collect
+            }
+            if (running) {
+                topActionJob?.cancel()
+                programmaticScrollActive = false
+            }
             val page = pagerState.currentPage
             val store = currentStores.getOrNull(page) ?: return@collect
             val listState = listStates.getOrNull(page)
+            val memory = pageMemory.getOrNull(page)
             val reverse = App.isReverseBrowseEnabled() && store.supportsReverseBrowse
             val atTop = listState == null ||
                 isFeedAtTop(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-            when (resolveFeedTopEffect(action, atTop, reverse)) {
-                FeedTopEffect.GlideToTopOnly -> {
-                    listState?.glideToTop()
-                }
-                FeedTopEffect.RefreshInPlace -> {
-                    if (!store.refreshing) {
-                        val pull = pullStates.getOrNull(page)
-                        if (pull != null) {
-                            pull.startRefresh { refreshScope.launch { store.refresh() } }
-                        } else {
-                            store.refresh()
+            val effect = resolveFeedTopEffect(
+                action = action,
+                atTop = atTop,
+                hasSavedAnchor = memory?.returnAnchor != null,
+                reverseBrowse = reverse,
+            )
+            if (effect == FeedTopEffect.NoOp) return@collect
+            topActionJob = refreshScope.launch {
+                when (effect) {
+                    FeedTopEffect.NoOp -> Unit
+                    FeedTopEffect.GlideToTopOnly -> {
+                        programmaticScrollActive = true
+                        try {
+                            listState?.glideToTop()
+                        } finally {
+                            programmaticScrollActive = false
                         }
                     }
-                }
-                FeedTopEffect.GlideToTopThenRefresh -> {
-                    // Smooth ride back to the first card, then the same pull the finger would do, so the
-                    // page slides down and the list stays put while it reloads.
-                    listState?.glideToTop()
-                    if (!store.refreshing) {
-                        val pull = pullStates.getOrNull(page)
-                        if (pull != null) {
-                            pull.startRefresh { refreshScope.launch { store.refresh() } }
-                        } else {
-                            store.refresh()
+                    FeedTopEffect.GlideToTopAndSaveAnchor -> {
+                        if (listState != null && memory != null) {
+                            memory.returnAnchor = FeedScrollAnchor(
+                                index = listState.firstVisibleItemIndex,
+                                offset = listState.firstVisibleItemScrollOffset,
+                            )
+                        }
+                        programmaticScrollActive = true
+                        try {
+                            listState?.glideToTop()
+                        } finally {
+                            programmaticScrollActive = false
+                        }
+                    }
+                    FeedTopEffect.ReturnToSavedAnchor -> {
+                        val target = memory?.returnAnchor
+                        memory?.returnAnchor = null
+                        if (target != null && listState != null && store.entryCount() > 0) {
+                            val clampedIndex = target.index.coerceIn(0, store.entryCount() - 1)
+                            programmaticScrollActive = true
+                            try {
+                                listState.animateScrollToItem(clampedIndex, target.offset.coerceAtLeast(0))
+                            } finally {
+                                programmaticScrollActive = false
+                            }
+                        }
+                    }
+                    FeedTopEffect.RefreshInPlace -> {
+                        memory?.returnAnchor = null
+                        if (!store.refreshing) {
+                            val pull = pullStates.getOrNull(page)
+                            if (pull != null) {
+                                pull.startRefresh { refreshScope.launch { store.refresh() } }
+                            } else {
+                                store.refresh()
+                            }
+                        }
+                    }
+                    FeedTopEffect.GlideToTopThenRefresh -> {
+                        memory?.returnAnchor = null
+                        programmaticScrollActive = true
+                        try {
+                            listState?.glideToTop()
+                        } finally {
+                            programmaticScrollActive = false
+                        }
+                        if (!store.refreshing) {
+                            val pull = pullStates.getOrNull(page)
+                            if (pull != null) {
+                                pull.startRefresh { refreshScope.launch { store.refresh() } }
+                            } else {
+                                store.refresh()
+                            }
                         }
                     }
                 }
@@ -917,6 +1000,7 @@ private fun TimelinePage(
         if (previous !== store) {
             memory.generation = store.generation
             memory.seen = store.loaded
+            memory.returnAnchor = null
             if (previous != null) listState.scrollToItem(0)
         }
         if (!store.loaded) store.loadInitial()
@@ -927,6 +1011,7 @@ private fun TimelinePage(
     LaunchedEffect(store.generation) {
         if (store.generation > memory.generation) {
             memory.generation = store.generation
+            memory.returnAnchor = null
             // 第一次装载不算刷新：这一页要么本来就停在第一条，要么刚被顶到模糊的下沿，
             // 两种位置都不该再被拉回顶部。
             if (memory.seen) listState.glideToTop()
@@ -1298,7 +1383,10 @@ internal fun isFeedAtTop(
 ): Boolean = firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= FeedAtTopTolerancePx
 
 internal enum class FeedTopEffect {
+    NoOp,
     GlideToTopOnly,
+    GlideToTopAndSaveAnchor,
+    ReturnToSavedAnchor,
     GlideToTopThenRefresh,
     RefreshInPlace,
 }
@@ -1306,10 +1394,21 @@ internal enum class FeedTopEffect {
 internal fun resolveFeedTopEffect(
     action: FeedTopAction,
     atTop: Boolean,
+    hasSavedAnchor: Boolean,
     reverseBrowse: Boolean,
 ): FeedTopEffect = when (action) {
-    FeedTopAction.ScrollToTopOrRefresh -> {
-        if (!atTop) FeedTopEffect.GlideToTopOnly else FeedTopEffect.RefreshInPlace
+    FeedTopAction.ToggleTopOrReturn -> when {
+        !atTop -> FeedTopEffect.GlideToTopAndSaveAnchor
+        hasSavedAnchor -> FeedTopEffect.ReturnToSavedAnchor
+        else -> FeedTopEffect.NoOp
+    }
+    FeedTopAction.RefreshFromTab -> {
+        if (reverseBrowse) FeedTopEffect.RefreshInPlace else FeedTopEffect.GlideToTopThenRefresh
+    }
+    FeedTopAction.LegacyDoubleTap -> when {
+        reverseBrowse && !atTop -> FeedTopEffect.GlideToTopOnly
+        reverseBrowse -> FeedTopEffect.RefreshInPlace
+        else -> FeedTopEffect.GlideToTopThenRefresh
     }
     FeedTopAction.RefreshFromAccessory -> {
         if (reverseBrowse) FeedTopEffect.RefreshInPlace else FeedTopEffect.GlideToTopThenRefresh
