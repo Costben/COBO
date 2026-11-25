@@ -912,14 +912,20 @@ data class Status(
                 htmlTextBase
             }
             val finalHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct)
-            // 官方信息流在 280 个半角宽度（约 140 个汉字）处截断长正文；有全文时另存一份折叠版，
-            // 列表按开关决定显示哪一份，详情页始终用 [finalHtml]。网页版通道拿到的已经是服务端截断过的
-            // HTML，宽度本来就在预算内，跳过即可。
-            val foldedHtml = rawText
-                .takeUnless { WeiboHtmlTagRegex.containsMatchIn(it) }
-                ?.let { foldWeiboText(it) }
-                ?.let { formatContainerTextToHtml(it, mergedUrlStruct, mergedTopicStruct) }
-                ?.let { enrichSuperTopicLinks(it, mergedUrlStruct) }
+            val isServerTruncated = truncatedWithoutLink ||
+                (longTextFlag && longContent == null && isServerTruncatedHtml(finalHtml))
+            // 官方信息流在 280 个半角宽度（约 140 个汉字）或超过 7 行处截断长正文；有全文时另存一份折叠版，
+            // 列表（含搜索结果、热搜/话题、超话与各信息流）按开关决定显示哪一份，详情页始终用 [finalHtml]。
+            // 仅有服务端截断版（尾部带「全文」跳详情页）时不再叠加本地折叠。
+            val foldedHtml = if (isServerTruncated) {
+                null
+            } else if (!WeiboHtmlTagRegex.containsMatchIn(rawText)) {
+                foldWeiboText(rawText)
+                    ?.let { formatContainerTextToHtml(it, mergedUrlStruct, mergedTopicStruct) }
+                    ?.let { enrichSuperTopicLinks(it, mergedUrlStruct) }
+            } else {
+                foldWeiboHtml(finalHtml)
+            }
             if (pics.isEmpty() && mixPics == null) {
                 val inlinePics = picsFromUrlStruct(mergedUrlStruct).ifEmpty { inlinePicsFromHtml(finalHtml) }
                 if (inlinePics.isNotEmpty()) pics = inlinePics
@@ -1338,21 +1344,51 @@ internal fun formatContainerTextToHtml(
  * 这里按同一条规则把全文截短，供列表折叠显示。
  */
 internal const val WeiboFeedFoldWidth = 280
+internal const val WeiboFeedFoldMaxNewlines = 6
+internal const val WeiboIntroFoldWidth = 140
+internal const val WeiboIntroFoldMaxNewlines = 2
 
 private val FoldUrlRegex = Regex("""https?://[^\s\u4e00-\u9fff]+""")
 private val FoldEmojiRegex = Regex("""\[[^\[\]\s]{1,8}\]""")
+private val FoldHtmlEntityRegex = Regex("""&(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);""")
+private val FoldHtmlTagNameRegex = Regex("""^<\s*(/?)\s*([A-Za-z][A-Za-z0-9]*)""")
+private val FoldTrailingBrRegex = Regex("""(?:<br\s*/?>|\s)+$""", RegexOption.IGNORE_CASE)
+private val FoldVoidTags = setOf("br", "img", "hr", "input", "meta", "link", "wbr")
 private const val FoldUrlTrailing = ".,;:!?)]}）】》〉」』\"'"
 
+/** 服务端已截断并附带「全文」详情跳转链接的正文，避免再叠加一次本地「展开全文」。 */
+internal fun isServerTruncatedHtml(html: String): Boolean =
+    html.contains(">全文</a>")
+
 /**
- * 把微博正文截到 [budget] 个半角宽度：汉字 / 全角标点 / emoji 记 2，ASCII 记 1，
- * 零宽字符不计；链接按 URL 原长计入（官方就是这么数的，只是显示成「网页链接」）。
- * 表情 `[微笑]` 按一个宽字符处理。原文本来就够短时返回 null。
+ * 把微博正文截到 [budget] 个半角宽度或最多 [maxNewlines] 个换行（约 7 行）：
+ * 汉字 / 全角标点 / emoji 记 2，ASCII 记 1，零宽字符不计；链接按 URL 原长计入
+ * （官方就是这么数的，只是显示成「网页链接」）。表情 `[微笑]` 按一个宽字符处理。
+ * 原文本来就够短时返回 null。
  */
-internal fun foldWeiboText(raw: String, budget: Int = WeiboFeedFoldWidth): String? {
+internal fun foldWeiboText(
+    raw: String,
+    budget: Int = WeiboFeedFoldWidth,
+    maxNewlines: Int = WeiboFeedFoldMaxNewlines,
+): String? {
     if (raw.isEmpty()) return null
     var index = 0
     var width = 0
+    var newlines = 0
     while (index < raw.length) {
+        val ch = raw[index]
+        if (ch == '\r') {
+            index++
+            continue
+        }
+        if (ch == '\n') {
+            if (newlines >= maxNewlines) break
+            newlines++
+            if (width + 1 > budget) break
+            width += 1
+            index++
+            continue
+        }
         val url = FoldUrlRegex.matchAt(raw, index)
         if (url != null) {
             val token = url.value.trimEnd { it in FoldUrlTrailing }
@@ -1376,8 +1412,202 @@ internal fun foldWeiboText(raw: String, budget: Int = WeiboFeedFoldWidth): Strin
         index += Character.charCount(codePoint)
     }
     if (index >= raw.length) return null
+    val remaining = raw.substring(index).trim { it == '\u200b' || it.isWhitespace() }
+    if (remaining.isEmpty()) return null
     val folded = raw.substring(0, index).trimEnd { it == '\u200b' || it.isWhitespace() }
     return folded.ifEmpty { null }
+}
+
+private data class FoldOpenTag(
+    val name: String,
+    val startIndex: Int,
+    var hasContent: Boolean = false,
+)
+
+private fun hasVisibleHtmlContent(html: String, startIndex: Int): Boolean {
+    var i = startIndex
+    while (i < html.length) {
+        if (html[i] == '<') {
+            val close = html.indexOf('>', i + 1)
+            if (close < 0) return true
+            i = close + 1
+            continue
+        }
+        val entity = FoldHtmlEntityRegex.matchAt(html, i)
+        if (entity != null) {
+            val v = entity.value.lowercase()
+            if (v != "&nbsp;" && v != "&#10;" && v != "&#13;" && v != "&#x0a;" && v != "&#xa;") {
+                return true
+            }
+            i += entity.value.length
+            continue
+        }
+        val c = html[i]
+        if (c != '\u200b' && c != '\ufeff' && !c.isWhitespace()) return true
+        i++
+    }
+    return false
+}
+
+/**
+ * 对带 HTML 标签的微博正文（搜索结果高亮 `<em>`、网页/桌面端 `<a>`/`<br/>`/`<span>` 等）
+ * 按同一半角宽度与行数预算截断，并保持所有外层标签闭合完整、不把实体或标签截断。
+ */
+internal fun foldWeiboHtml(
+    html: String,
+    budget: Int = WeiboFeedFoldWidth,
+    maxNewlines: Int = WeiboFeedFoldMaxNewlines,
+): String? {
+    if (html.isBlank()) return null
+    val out = StringBuilder(html.length.coerceAtMost(budget * 3))
+    val openTags = ArrayList<FoldOpenTag>()
+    var index = 0
+    var width = 0
+    var newlines = 0
+    var cut = false
+
+    fun markContent() {
+        for (tag in openTags) tag.hasContent = true
+    }
+
+    while (index < html.length) {
+        if (html[index] == '<') {
+            val close = html.indexOf('>', index + 1)
+            if (close > index) {
+                val tagText = html.substring(index, close + 1)
+                val match = FoldHtmlTagNameRegex.find(tagText)
+                val isClosing = match?.groupValues?.get(1) == "/"
+                val tagName = match?.groupValues?.get(2)?.lowercase().orEmpty()
+                val isSelfClosing = tagText.endsWith("/>") || tagName in FoldVoidTags
+                if (tagName == "br") {
+                    if (newlines >= maxNewlines) {
+                        cut = true
+                        break
+                    }
+                    newlines++
+                    out.append(tagText)
+                } else if (isClosing) {
+                    val idx = openTags.indexOfLast { it.name == tagName }
+                    if (idx >= 0) openTags.removeAt(idx)
+                    out.append(tagText)
+                } else if (!isSelfClosing && tagName.isNotEmpty()) {
+                    openTags.add(FoldOpenTag(tagName, out.length))
+                    out.append(tagText)
+                } else {
+                    out.append(tagText)
+                }
+                index = close + 1
+                continue
+            }
+        }
+        if (html[index] == '&') {
+            val entity = FoldHtmlEntityRegex.matchAt(html, index)
+            if (entity != null) {
+                val lower = entity.value.lowercase()
+                if (lower == "&#10;" || lower == "&#x0a;" || lower == "&#xa;") {
+                    if (newlines >= maxNewlines) {
+                        cut = true
+                        break
+                    }
+                    newlines++
+                    out.append(entity.value)
+                    index += entity.value.length
+                    continue
+                }
+                if (width + 1 > budget) {
+                    cut = true
+                    break
+                }
+                width += 1
+                markContent()
+                out.append(entity.value)
+                index += entity.value.length
+                continue
+            }
+        }
+        val ch = html[index]
+        if (ch == '\r') {
+            index++
+            continue
+        }
+        if (ch == '\n') {
+            if (newlines >= maxNewlines) {
+                cut = true
+                break
+            }
+            newlines++
+            if (width + 1 > budget) {
+                cut = true
+                break
+            }
+            width += 1
+            out.append(ch)
+            index++
+            continue
+        }
+        val emoji = FoldEmojiRegex.matchAt(html, index)
+        if (emoji != null) {
+            if (width + 2 > budget) {
+                cut = true
+                break
+            }
+            width += 2
+            markContent()
+            out.append(emoji.value)
+            index += emoji.value.length
+            continue
+        }
+        val inAnchor = openTags.any { it.name == "a" }
+        if (!inAnchor) {
+            val url = FoldUrlRegex.matchAt(html, index)
+            if (url != null) {
+                val token = url.value.trimEnd { it in FoldUrlTrailing }
+                val w = displayWidthOf(token)
+                if (width + w > budget) {
+                    cut = true
+                    break
+                }
+                width += w
+                markContent()
+                out.append(token)
+                index += token.length
+                continue
+            }
+        }
+        val codePoint = html.codePointAt(index)
+        val w = displayWidthOf(codePoint)
+        if (width + w > budget) {
+            cut = true
+            break
+        }
+        width += w
+        if (w > 0 && !Character.isWhitespace(codePoint)) markContent()
+        val charCount = Character.charCount(codePoint)
+        out.append(html, index, index + charCount)
+        index += charCount
+    }
+
+    if (!cut || !hasVisibleHtmlContent(html, index)) return null
+
+    // 截断点前面若有刚打开但尚无内容的标签，直接回退掉避免产出空标签。
+    for (i in openTags.lastIndex downTo 0) {
+        val tag = openTags[i]
+        if (!tag.hasContent && tag.startIndex <= out.length) {
+            out.setLength(tag.startIndex)
+            openTags.removeAt(i)
+        } else {
+            break
+        }
+    }
+    val trimmed = out.toString()
+        .replace(FoldTrailingBrRegex, "")
+        .trimEnd { it == '\u200b' || it.isWhitespace() }
+    if (trimmed.isEmpty()) return null
+    val result = StringBuilder(trimmed)
+    for (i in openTags.lastIndex downTo 0) {
+        result.append("</").append(openTags[i].name).append('>')
+    }
+    return result.toString()
 }
 
 private fun displayWidthOf(text: String): Int {

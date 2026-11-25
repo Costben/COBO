@@ -64,6 +64,7 @@ import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
+import com.cobo.app.ui.components.FoldableIntroText
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.LoadingState
@@ -268,7 +269,11 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                             }
                                             if (info.description.isNotBlank()) {
                                                 Spacer(Modifier.height(10.dp))
-                                                Text(info.description, fontSize = 14.sp)
+                                                FoldableIntroText(
+                                                    text = info.description,
+                                                    fontSize = 14.sp,
+                                                    lineHeight = 20.sp,
+                                                )
                                             }
                                             Spacer(Modifier.height(8.dp))
                                         }

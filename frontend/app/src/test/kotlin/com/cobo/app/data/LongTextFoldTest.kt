@@ -129,4 +129,63 @@ class LongTextFoldTest {
         assertFalse(status.plainText.contains("展开"))
         assertTrue(status.plainText.endsWith("全文"))
     }
+
+    @Test
+    fun foldsHtmlSearchResultAndBalancesOpenTags() {
+        val html = "#<a href=\"/k/热搜\">热搜话题</a># " + "正文内容".repeat(40) + "<em>关键词尾段</em>后续文字"
+        val folded = foldWeiboHtml(html)
+        assertNotNull(folded)
+        assertTrue(folded!!.contains("<a href=\"/k/热搜\">热搜话题</a>"))
+        // 截断发生在 <em> 内部时必须补闭合标签，不破坏 HTML 结构。
+        assertEquals(folded.split("<em").size, folded.split("</em>").size)
+        assertEquals(folded.split("<a ").size, folded.split("</a>").size)
+        assertFalse(folded.contains("后续文字"))
+    }
+
+    @Test
+    fun parseFoldsSearchStatusContainingHtmlTags() {
+        val longHtml = "<a href=\"/k/话题\">#热搜#</a> " + "<em>测试</em>" + "长内容".repeat(60)
+        val json = JSONObject(
+            """
+            {
+              "id": "5368732950999999",
+              "mid": "5368732950999999",
+              "text": ${JSONObject.quote(longHtml)},
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": false
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json)!!
+        assertTrue(status.isLongText)
+        assertNotNull(status.foldedTextHtml)
+        assertTrue(stripHtml(status.foldedTextHtml).length < status.plainText.length)
+    }
+
+    @Test
+    fun foldsMultiLineTextAndHtmlExceedingLineLimit() {
+        val multiLine = (1..10).joinToString("\n") { "第${it}行短句" }
+        val foldedPlain = foldWeiboText(multiLine)
+        assertNotNull(foldedPlain)
+        assertEquals(6, foldedPlain!!.count { it == '\n' })
+        assertFalse(foldedPlain.contains("第8行"))
+
+        val multiBr = (1..10).joinToString("<br/>") { "第${it}行短句" }
+        val foldedHtml = foldWeiboHtml(multiBr)
+        assertNotNull(foldedHtml)
+        assertFalse(foldedHtml!!.contains("第8行"))
+    }
+
+    @Test
+    fun foldsLongIntroWithIntroBudget() {
+        val longIntro = "这是一个非常长的超话或者话题简介内容".repeat(6)
+        val folded = foldWeiboText(longIntro, budget = WeiboIntroFoldWidth, maxNewlines = WeiboIntroFoldMaxNewlines)
+        assertNotNull(folded)
+        assertTrue(folded!!.length < longIntro.length)
+
+        val shortIntro = "简短介绍"
+        assertNull(foldWeiboText(shortIntro, budget = WeiboIntroFoldWidth, maxNewlines = WeiboIntroFoldMaxNewlines))
+    }
 }

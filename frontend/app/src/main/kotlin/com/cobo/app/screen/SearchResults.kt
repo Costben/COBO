@@ -59,6 +59,7 @@ import com.cobo.app.ui.Route
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
+import com.cobo.app.ui.components.FoldableIntroText
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
@@ -434,7 +435,7 @@ fun TopicRow(
                     meta,
                     fontSize = 11.sp,
                     color = scheme.onSurfaceSecondary,
-                    maxLines = 2,
+                    maxLines = if (App.settings.foldLongText) 2 else Int.MAX_VALUE,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 3.dp),
                 )
@@ -528,12 +529,13 @@ private fun SearchFeaturedUserCard(
                 )
             }
             if (user.description.isNotBlank() && user.description != featured.desc1) {
-                Text(
+                FoldableIntroText(
                     text = user.description,
+                    budget = 100,
+                    maxNewlines = 1,
                     fontSize = 13.sp,
+                    lineHeight = 18.sp,
                     color = scheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }

@@ -32,6 +32,7 @@ import com.cobo.app.ui.resolveWeiboLink
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
+import com.cobo.app.ui.components.FoldableIntroText
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
@@ -222,7 +223,14 @@ fun TopicScreen(nav: NavState, initial: String = "") {
                             TextButton(text = topic.title, onClick = { openTopic(topic) }, modifier = Modifier.fillMaxWidth())
                             val description = listOf(topic.desc1, topic.desc2).filter { it.isNotBlank() }.joinToString(" · ")
                             if (description.isNotBlank()) {
-                                Text(description, fontSize = 12.sp, color = COUITheme.colorScheme.onSurfaceSecondary)
+                                FoldableIntroText(
+                                    text = description,
+                                    budget = 120,
+                                    maxNewlines = 1,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = COUITheme.colorScheme.onSurfaceSecondary,
+                                )
                             }
                         }
                     }

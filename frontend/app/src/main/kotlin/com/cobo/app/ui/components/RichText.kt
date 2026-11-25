@@ -13,8 +13,10 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,7 +38,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.cobo.app.App
 import com.cobo.app.data.WeiboEmojiBitmaps
+import com.cobo.app.data.WeiboIntroFoldMaxNewlines
+import com.cobo.app.data.WeiboIntroFoldWidth
+import com.cobo.app.data.foldWeiboText
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.LocalLinkHandler
@@ -351,6 +357,74 @@ fun WeiboText(
         )
     }
     if (selectable) SelectionContainer { body() } else body()
+}
+
+/**
+ * 可折叠简介文本：用于超话、话题/热搜、搜索精选卡片与个人主页的较长简介。
+ * 受设置中的「长文折叠」（[App.settings.foldLongText]）控制；过长时默认折叠并在尾部附「展开 / 收起」。
+ */
+@Composable
+fun FoldableIntroText(
+    text: String,
+    modifier: Modifier = Modifier,
+    fold: Boolean = App.settings.foldLongText,
+    budget: Int = WeiboIntroFoldWidth,
+    maxNewlines: Int = WeiboIntroFoldMaxNewlines,
+    fontSize: TextUnit = 14.sp,
+    lineHeight: TextUnit = 20.sp,
+    color: Color = COUITheme.colorScheme.onSurface,
+    linkColor: Color = COUITheme.colorScheme.primary,
+) {
+    val clean = remember(text) { text.trim() }
+    if (clean.isEmpty()) return
+    val folded = remember(clean, budget, maxNewlines) {
+        foldWeiboText(clean, budget = budget, maxNewlines = maxNewlines)
+    }
+    val canFold = fold && folded != null && folded != clean
+    var expanded by remember(clean) { mutableStateOf(false) }
+    val folding = canFold && !expanded
+    val display = remember(clean, folded, canFold, folding, linkColor) {
+        buildAnnotatedString {
+            if (!canFold) {
+                append(clean)
+            } else if (folding && folded != null) {
+                append(folded)
+                append("…")
+                val start = length
+                append("展开")
+                addLink(
+                    LinkAnnotation.Clickable(
+                        tag = "intro_expand",
+                        styles = linkStyles(linkColor),
+                        linkInteractionListener = LinkInteractionListener { expanded = true },
+                    ),
+                    start,
+                    length,
+                )
+            } else {
+                append(clean)
+                append(" ")
+                val start = length
+                append("收起")
+                addLink(
+                    LinkAnnotation.Clickable(
+                        tag = "intro_collapse",
+                        styles = linkStyles(linkColor),
+                        linkInteractionListener = LinkInteractionListener { expanded = false },
+                    ),
+                    start,
+                    length,
+                )
+            }
+        }
+    }
+    Text(
+        text = display,
+        modifier = modifier,
+        color = color,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+    )
 }
 
 /**

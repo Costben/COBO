@@ -598,9 +598,9 @@ private fun LazyListScope.feedSettingsItems(
                 },
                 title = "长文折叠",
                 summary = if (state.foldLongText) {
-                    "信息流里超过 140 字的长微博只显示开头，点「展开全文」再看完整内容"
+                    "信息流、搜索结果、热搜/话题与超话里的长微博及较长简介默认折叠，点「展开」查看完整内容"
                 } else {
-                    "长微博在信息流里直接展开显示全文"
+                    "信息流、搜索结果与超话/话题里的长微博和简介直接展开显示"
                 },
                 modifier = Modifier.testTag("settings_fold_long_text"),
                 cardListPosition = CardListPosition.Middle,

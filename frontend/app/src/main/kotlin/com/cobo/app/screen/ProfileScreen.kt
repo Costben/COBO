@@ -120,6 +120,7 @@ import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
+import com.cobo.app.ui.components.FoldableIntroText
 import com.cobo.app.ui.components.FollowTagBadge
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.MemberBadge
@@ -1809,11 +1810,11 @@ private fun ProfileHeader(
         ) {
             if (!user?.description.isNullOrBlank()) {
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    user.description,
+                FoldableIntroText(
+                    text = user.description,
                     fontSize = 13.sp,
-                    color = scheme.onSurfaceSecondary,
                     lineHeight = 18.sp,
+                    color = scheme.onSurfaceSecondary,
                 )
             }
             Spacer(Modifier.height(12.dp))

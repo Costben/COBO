@@ -71,6 +71,8 @@ import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.formatWeiboTime
+import com.cobo.app.data.foldWeiboHtml
+import com.cobo.app.data.isServerTruncatedHtml
 import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
@@ -1234,12 +1236,16 @@ private fun FoldableWeiboText(
     fontSize: TextUnit,
     lineHeight: TextUnit,
 ) {
-    val folded = status.foldedTextHtml
+    val folded = remember(status.id, status.textHtml, status.foldedTextHtml) {
+        status.foldedTextHtml ?: status.textHtml
+            .takeIf { it.isNotBlank() && !isServerTruncatedHtml(it) }
+            ?.let { foldWeiboHtml(it) }
+    }
     val canFold = fold && !folded.isNullOrBlank() && folded != status.textHtml
     var expanded by remember(status.id) { mutableStateOf(false) }
     val folding = canFold && !expanded
     WeiboText(
-        html = if (folding) folded!! else status.textHtml,
+        html = if (folding && folded != null) folded else status.textHtml,
         fontSize = fontSize,
         lineHeight = lineHeight,
         expandLabel = if (folding) "展开全文" else null,

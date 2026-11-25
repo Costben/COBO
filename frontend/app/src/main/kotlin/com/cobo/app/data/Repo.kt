@@ -1778,6 +1778,7 @@ class Repo(private val context: Context, private val store: Store) {
         }
         if (isClientChannel()) {
             val root = containerGet("page", params)
+            enrichContainerLongTextCardsRoot(root)
             val parsed = parseContainerSuperTopic(root, id, tabId, currentPage = pageNumber ?: 1)
             return if (tabId.lowercase().endsWith("_-_video") && parsed.items.isNotEmpty()) {
                 hydrateSuperTopicVideoItems(parsed)
