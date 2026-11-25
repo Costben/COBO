@@ -500,7 +500,10 @@ private fun ProfileMoreAction(
                                         enabled = !loadingGroups,
                                         onClick = {
                                             if (!loadingGroups) {
-                                                if (user?.following == false) {
+                                                val effectiveFollowing = user?.let {
+                                                    App.repo.isFollowingUser(uid, it.following)
+                                                }
+                                                if (effectiveFollowing == false) {
                                                     // 服务端对未关注的人只会静默吞掉，先在本地拦下来。
                                                     App.toast("先关注对方才能设置关注分组")
                                                 } else {
@@ -694,9 +697,17 @@ fun ProfileContent(
                 tabState.end = false
             }
             val known = tabState.items.mapTo(HashSet()) { it.id }
-            page.items.forEach { if (known.add(it.id)) tabState.items.add(it) }
+            var added = 0
+            page.items.forEach {
+                if (known.add(it.id)) {
+                    tabState.items.add(it)
+                    added++
+                }
+            }
             tabState.sinceId = page.sinceId
-            if (page.items.isEmpty()) tabState.end = true
+            if (page.items.isEmpty() || page.sinceId.isNullOrBlank() || (!reset && added == 0)) {
+                tabState.end = true
+            }
             tabState.error = null
             tabState.loadedUid = target
         } catch (t: Throwable) {
@@ -791,8 +802,9 @@ fun ProfileContent(
                 val tag = FollowTags[currentUser?.id ?: uid]
                 val targetId = currentUser?.id ?: tabState.resolvedUid
                 val isSelf = !App.repo.guest && !targetId.isNullOrBlank() && targetId == App.repo.session?.uid
+                val currentFollowing = currentUser?.let { App.repo.isFollowingUser(it.id, it.following) } == true
                 ProfileHeader(
-                    user = currentUser,
+                    user = currentUser?.copy(following = currentFollowing),
                     tag = tag,
                     topInset = topInset,
                     pullState = pullState,
@@ -824,7 +836,7 @@ fun ProfileContent(
                     },
                     followLabel = when {
                         App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
-                        currentUser?.following == true -> "已关注"
+                        currentFollowing -> "已关注"
                         else -> "关注"
                     },
                     onFollow = currentUser?.let { target ->
@@ -840,18 +852,23 @@ fun ProfileContent(
                             null
                         } else {
                             {
-                                scope.launch {
-                                    runCatching { App.repo.follow(target.id, !target.following) }
-                                        .onSuccess {
-                                            tabState.user = target.copy(
-                                                following = !target.following,
-                                                followers = (target.followers +
-                                                    if (target.following) -1 else 1).coerceAtLeast(0),
-                                            )
-                                            App.notifyFollowChanged()
-                                            App.toast(if (target.following) "已取消关注" else "已关注")
-                                        }
-                                        .onFailure { App.toast(it.message ?: "操作失败") }
+                                if (!App.repo.isFollowInFlight(target.id)) {
+                                    val targetFollow = !currentFollowing
+                                    scope.launch {
+                                        runCatching { App.repo.follow(target.id, targetFollow) }
+                                            .onSuccess { applied ->
+                                                if (applied) {
+                                                    tabState.user = target.copy(
+                                                        following = targetFollow,
+                                                        followers = (target.followers +
+                                                            if (targetFollow) 1 else -1).coerceAtLeast(0),
+                                                    )
+                                                    App.notifyFollowChanged()
+                                                    App.toast(if (targetFollow) "已关注" else "已取消关注")
+                                                }
+                                            }
+                                            .onFailure { App.toast(it.message ?: "操作失败") }
+                                    }
                                 }
                             }
                         }

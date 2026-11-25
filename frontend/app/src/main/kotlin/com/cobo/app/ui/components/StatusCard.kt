@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.BigPicInfo
+import com.cobo.app.data.FollowTag
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
@@ -110,6 +111,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
+import io.github.suqi8.coui.kmp.icon.extended.Report
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
@@ -150,16 +152,57 @@ fun StatusCard(
     remember(status) { StatusMemory.remember(status) }
     val scheme = COUITheme.colorScheme
     val scope = rememberCoroutineScope()
+    val linkHandler = LocalLinkHandler.current
     val effectiveFavorited = App.repo.isFavorited(status.id)
     var cloudFavorited by remember(status.id) { mutableStateOf(status.favorited) }
-    val canDelete = !App.repo.guest &&
-        !status.user?.id.isNullOrBlank() &&
-        status.user?.id == App.repo.session?.uid
+    val author = status.user
+    val authorId = author?.id.orEmpty()
+    val isGuest = App.repo.guest
+    val isSelf = !isGuest && authorId.isNotBlank() && authorId == App.repo.session?.uid
+    val canDelete = isSelf
+    val canFollow = author != null && authorId.isNotBlank() && !isSelf
+    val reportMid = status.mid.ifBlank { status.id }
+    val canReport = !isGuest && !isSelf && reportMid.isNotBlank()
+    val effectiveFollowing = when {
+        !canFollow -> false
+        isGuest -> FollowTags[authorId] == FollowTag.Local
+        else -> App.repo.isFollowingUser(authorId, author.following)
+    }
+    val followMenuLabel = when {
+        isGuest && effectiveFollowing -> "取消本地关注"
+        isGuest -> "本地关注"
+        effectiveFollowing -> "取消关注"
+        else -> "关注"
+    }
     var confirmDelete by remember(status.id) { mutableStateOf(false) }
     var deleting by remember(status.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(status)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
+    }
+    val handleFollow: (() -> Unit)? = if (canFollow) {
+        {
+            if (isGuest) {
+                val on = FollowTags[authorId] == FollowTag.Local
+                FollowTags.set(authorId, if (on) null else FollowTag.Local)
+                App.notifyFollowChanged()
+                App.toast(if (on) "已取消本地关注" else "已加入本地关注")
+            } else if (!App.repo.isFollowInFlight(authorId)) {
+                val targetFollow = !effectiveFollowing
+                scope.launch {
+                    runCatching { App.repo.follow(authorId, targetFollow) }
+                        .onSuccess { applied ->
+                            if (applied) {
+                                App.notifyFollowChanged()
+                                App.toast(if (targetFollow) "已关注" else "已取消关注")
+                            }
+                        }
+                        .onFailure { App.toast(it.message ?: "操作失败") }
+                }
+            }
+        }
+    } else {
+        null
     }
     val content: @Composable ColumnScope.() -> Unit = {
         StatusHeader(
@@ -183,6 +226,10 @@ fun StatusCard(
                     }
                 }
             },
+            following = effectiveFollowing,
+            followLabel = followMenuLabel,
+            onToggleFollow = handleFollow,
+            onReport = if (canReport) { { linkHandler(statusReportUrl(reportMid)) } } else null,
             onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
         )
         if (status.textHtml.isNotBlank()) {
@@ -327,6 +374,10 @@ fun StatusHeader(
     showMore: Boolean = true,
     onToggleFavorite: (() -> Unit)? = null,
     onToggleCloudFavorite: (() -> Unit)? = null,
+    following: Boolean = false,
+    followLabel: String = if (following) "取消关注" else "关注",
+    onToggleFollow: (() -> Unit)? = null,
+    onReport: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
@@ -372,7 +423,7 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onDelete != null)) {
+                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
@@ -380,6 +431,10 @@ fun StatusHeader(
                         cloudFavorited = cloudFavorited,
                         onToggleFavorite = onToggleFavorite,
                         onToggleCloudFavorite = onToggleCloudFavorite,
+                        following = following,
+                        followLabel = followLabel,
+                        onToggleFollow = onToggleFollow,
+                        onReport = onReport,
                         onDelete = onDelete,
                     )
                 }
@@ -439,6 +494,13 @@ private fun StatusVisibilityIcon(
     )
 }
 
+/** 网页版举报入口：`type=1` 是举报微博，`url` 指向这条微博。 */
+internal fun statusReportUrl(mid: String): String {
+    val target = java.net.URLEncoder.encode("/detail/$mid", "UTF-8")
+    return "https://service.account.weibo.com/reportspam" +
+        "?rid=$mid&from=10106&type=1&url=$target&bottomnav=1&wvr=5"
+}
+
 @Composable
 private fun StatusMoreButton(
     statusId: String,
@@ -446,6 +508,10 @@ private fun StatusMoreButton(
     cloudFavorited: Boolean,
     onToggleFavorite: (() -> Unit)?,
     onToggleCloudFavorite: (() -> Unit)?,
+    following: Boolean,
+    followLabel: String,
+    onToggleFollow: (() -> Unit)?,
+    onReport: (() -> Unit)?,
     onDelete: (() -> Unit)?,
 ) {
     val scheme = COUITheme.colorScheme
@@ -453,6 +519,8 @@ private fun StatusMoreButton(
     val optionSize =
         (if (onToggleCloudFavorite != null) 1 else 0) +
             (if (onToggleFavorite != null) 1 else 0) +
+            (if (onToggleFollow != null) 1 else 0) +
+            (if (onReport != null) 1 else 0) +
             (if (onDelete != null) 1 else 0)
     val squircleEnabled = isSquircleEnabled()
     val moreButtonShape = remember(squircleEnabled) { SquircleShape(6.dp, squircleEnabled = squircleEnabled) }
@@ -530,6 +598,50 @@ private fun StatusMoreButton(
                             dismiss?.invoke()
                             expanded = false
                             onToggleFavorite()
+                        },
+                    )
+                }
+                if (onToggleFollow != null) {
+                    val followIcon = if (following) CoboIcons.Unfollow else CoboIcons.Follow
+                    val followTint = if (following) scheme.primary else scheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = followLabel,
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(followIcon, null, Modifier.size(18.dp), tint = followTint)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onToggleFollow()
+                        },
+                    )
+                }
+                if (onReport != null) {
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "举报微博",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(COUIIcons.Report, null, Modifier.size(18.dp), tint = scheme.onSurfaceContainer)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onReport()
                         },
                     )
                 }

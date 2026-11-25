@@ -804,4 +804,40 @@ object CoboIcons {
             lineTo(15.2f, 14.4f)
         }
     }
+
+    /** 关注用户：人形轮廓 + 右侧加号。 */
+    val Follow: ImageVector by lazy {
+        outline("Follow") {
+            moveTo(9.5f, 4.5f)
+            curveTo(11.32f, 4.5f, 12.8f, 5.98f, 12.8f, 7.8f)
+            curveTo(12.8f, 9.62f, 11.32f, 11.1f, 9.5f, 11.1f)
+            curveTo(7.68f, 11.1f, 6.2f, 9.62f, 6.2f, 7.8f)
+            curveTo(6.2f, 5.98f, 7.68f, 4.5f, 9.5f, 4.5f)
+            close()
+            moveTo(3.5f, 19.5f)
+            curveTo(3.5f, 16.0f, 6.1f, 13.8f, 9.5f, 13.8f)
+            curveTo(12.9f, 13.8f, 15.5f, 16.0f, 15.5f, 19.5f)
+            moveTo(18.5f, 8.8f)
+            verticalLineTo(14.2f)
+            moveTo(15.8f, 11.5f)
+            horizontalLineTo(21.2f)
+        }
+    }
+
+    /** 取消关注用户：人形轮廓 + 右侧减号。 */
+    val Unfollow: ImageVector by lazy {
+        outline("Unfollow") {
+            moveTo(9.5f, 4.5f)
+            curveTo(11.32f, 4.5f, 12.8f, 5.98f, 12.8f, 7.8f)
+            curveTo(12.8f, 9.62f, 11.32f, 11.1f, 9.5f, 11.1f)
+            curveTo(7.68f, 11.1f, 6.2f, 9.62f, 6.2f, 7.8f)
+            curveTo(6.2f, 5.98f, 7.68f, 4.5f, 9.5f, 4.5f)
+            close()
+            moveTo(3.5f, 19.5f)
+            curveTo(3.5f, 16.0f, 6.1f, 13.8f, 9.5f, 13.8f)
+            curveTo(12.9f, 13.8f, 15.5f, 16.0f, 15.5f, 19.5f)
+            moveTo(15.8f, 11.5f)
+            horizontalLineTo(21.2f)
+        }
+    }
 }

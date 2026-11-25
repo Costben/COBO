@@ -327,6 +327,21 @@ class Repo(private val context: Context, private val store: Store) {
     var deletedVersion by mutableIntStateOf(0)
         private set
 
+    /** 本次会话内关注/取关过的用户状态覆盖，跨卡片、详情页与个人主页即时同步。 */
+    val followStateOverrides = mutableStateMapOf<String, Boolean>()
+
+    private val followInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun isFollowInFlight(uid: String): Boolean = uid.isNotBlank() && followInFlight.contains(uid)
+
+    fun isFollowingUser(uid: String, fallback: Boolean): Boolean =
+        if (uid.isBlank()) fallback else followStateOverrides[uid] ?: fallback
+
+    fun recordFollowState(uid: String, following: Boolean) {
+        if (uid.isBlank()) return
+        followStateOverrides[uid] = following
+    }
+
     data class StatusLikeEvent(
         val id: String,
         val liked: Boolean,
@@ -660,6 +675,8 @@ class Repo(private val context: Context, private val store: Store) {
         hotflowReplyCids.clear()
         statusLikeEvents.clear()
         likeVersion++
+        followStateOverrides.clear()
+        followInFlight.clear()
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -2734,38 +2751,50 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     suspend fun follow(uid: String, follow: Boolean): Boolean {
-        if (isClientChannel()) {
-            containerPost(
-                if (follow) "friendships/create" else "friendships/destroy",
-                form = mapOf("uid" to uid),
+        if (uid.isBlank()) throw ApiException("用户不存在")
+        if (!followInFlight.add(uid)) return false
+        try {
+            if (isClientChannel()) {
+                containerPost(
+                    if (follow) "friendships/create" else "friendships/destroy",
+                    form = mapOf("uid" to uid),
+                )
+                withContext(Dispatchers.Main.immediate) {
+                    recordFollowState(uid, follow)
+                }
+                return true
+            }
+            val cookie = loginCookie()
+            val url = if (follow) {
+                "https://m.weibo.cn/api/friendships/create"
+            } else {
+                // The mobile web app really uses this spelling for unfollow.
+                "https://m.weibo.cn/api/friendships/destory"
+            }
+            var st = st()
+            var root = Api.post(url, mapOf("uid" to uid, "st" to st), cookie, st)
+            if (!root.has("data") && root.optInt("ok", 0) != 1 &&
+                root.str("msg").contains("st", ignoreCase = true)
+            ) {
+                st = config(force = true).st
+                root = Api.post(url, mapOf("uid" to uid, "st" to st), cookie, st)
+            }
+            val ok = root.has("data") || root.optInt("ok", 0) == 1
+            if (!ok) throw ApiException(root.str("msg", "操作失败"))
+            App.cache.invalidate(
+                Api.url(
+                    "https://m.weibo.cn/api/container/getIndex",
+                    mapOf("type" to "uid", "value" to uid),
+                ),
+                cookie,
             )
+            withContext(Dispatchers.Main.immediate) {
+                recordFollowState(uid, follow)
+            }
             return true
+        } finally {
+            followInFlight.remove(uid)
         }
-        val cookie = loginCookie()
-        val url = if (follow) {
-            "https://m.weibo.cn/api/friendships/create"
-        } else {
-            // The mobile web app really uses this spelling for unfollow.
-            "https://m.weibo.cn/api/friendships/destory"
-        }
-        var st = st()
-        var root = Api.post(url, mapOf("uid" to uid, "st" to st), cookie, st)
-        if (!root.has("data") && root.optInt("ok", 0) != 1 &&
-            root.str("msg").contains("st", ignoreCase = true)
-        ) {
-            st = config(force = true).st
-            root = Api.post(url, mapOf("uid" to uid, "st" to st), cookie, st)
-        }
-        val ok = root.has("data") || root.optInt("ok", 0) == 1
-        if (!ok) throw ApiException(root.str("msg", "操作失败"))
-        App.cache.invalidate(
-            Api.url(
-                "https://m.weibo.cn/api/container/getIndex",
-                mapOf("type" to "uid", "value" to uid),
-            ),
-            cookie,
-        )
-        return true
     }
 
     suspend fun comment(
@@ -3915,6 +3944,9 @@ class Repo(private val context: Context, private val store: Store) {
         val numeric = uid.toLongOrNull() ?: throw ApiException("用户不存在")
         if (isClientChannel()) {
             containerPost("blocks/create", form = mapOf("uid" to numeric.toString()))
+            withContext(Dispatchers.Main.immediate) {
+                recordFollowState(uid, false)
+            }
             return true
         }
         val json = JSONObject()
@@ -3926,6 +3958,9 @@ class Repo(private val context: Context, private val store: Store) {
         val root = desktopPost("/ajax/statuses/filterUser", json = json)
         if (root.optInt("ok", 0) != 1) {
             throw ApiException(root.str("msg").ifBlank { root.str("message", "拉黑失败") })
+        }
+        withContext(Dispatchers.Main.immediate) {
+            recordFollowState(uid, false)
         }
         return true
     }

@@ -693,24 +693,33 @@ fun LazyListScope.searchResultsItems(
                     key = { _, f -> "featured_${f.user.id}" },
                 ) { idx, featured ->
                     val linkHandler = LocalLinkHandler.current
+                    val effectiveUser = featured.user.copy(
+                        following = App.repo.isFollowingUser(featured.user.id, featured.user.following),
+                    )
                     Box(Modifier.padding(horizontal = 12.dp)) {
                         SearchFeaturedUserCard(
-                            featured = featured,
+                            featured = featured.copy(user = effectiveUser),
                             onOpenProfile = { nav.push(Route.Profile(featured.user.id)) },
                             onFollowClick = {
-                                val target = featured.user
-                                scope.launch {
-                                    runCatching { App.repo.follow(target.id, !target.following) }
-                                        .onSuccess { nowFollowing ->
-                                            val realIdx = state.featuredUsers.indexOfFirst { it.user.id == target.id }
-                                            if (realIdx >= 0) {
-                                                state.featuredUsers[realIdx] = state.featuredUsers[realIdx].copy(
-                                                    user = target.copy(following = nowFollowing),
-                                                )
+                                val target = effectiveUser
+                                if (!App.repo.isFollowInFlight(target.id)) {
+                                    val targetFollow = !target.following
+                                    scope.launch {
+                                        runCatching { App.repo.follow(target.id, targetFollow) }
+                                            .onSuccess { applied ->
+                                                if (applied) {
+                                                    val realIdx = state.featuredUsers.indexOfFirst { it.user.id == target.id }
+                                                    if (realIdx >= 0) {
+                                                        state.featuredUsers[realIdx] = state.featuredUsers[realIdx].copy(
+                                                            user = target.copy(following = targetFollow),
+                                                        )
+                                                    }
+                                                    App.notifyFollowChanged()
+                                                    App.toast(if (targetFollow) "已关注" else "已取消关注")
+                                                }
                                             }
-                                            App.toast(if (nowFollowing) "已关注" else "已取消关注")
-                                        }
-                                        .onFailure { App.toast(it.message ?: "操作失败") }
+                                            .onFailure { App.toast(it.message ?: "操作失败") }
+                                    }
                                 }
                             },
                             onOpenLink = { url -> linkHandler(url) },

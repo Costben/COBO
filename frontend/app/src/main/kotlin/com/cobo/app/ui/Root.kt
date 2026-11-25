@@ -186,7 +186,12 @@ fun CoboRoot() {
                 if (!App.settings.inAppBrowser && isExternalWebLink(target)) {
                     openExternalUrl(context, target)
                 } else {
-                    nav.push(Route.Web(target, "网页"))
+                    val title = if (target.contains("service.account.weibo.com/reportspam", ignoreCase = true)) {
+                        "举报"
+                    } else {
+                        "网页"
+                    }
+                    nav.push(Route.Web(target, title))
                 }
             }
             fun openImageViewer(imageUrl: String) {

@@ -24,6 +24,17 @@ fun JSONObject.int(key: String, def: Int = 0): Int {
     }
 }
 
+fun JSONObject.bool(key: String, def: Boolean = false): Boolean {
+    val v = opt(key) ?: return def
+    if (v == JSONObject.NULL) return def
+    return when (v) {
+        is Boolean -> v
+        is Number -> v.toInt() != 0
+        is String -> v.equals("true", ignoreCase = true) || v == "1"
+        else -> def
+    }
+}
+
 /**
  * m.weibo.cn 把「粉丝」这类可能上亿的计数按中文习惯压缩成展示字符串下发，
  * 例如 `"followers_count": "72.3万"` / `"1.2亿"` / `"26"`，直接走 [int] 会得到 0
@@ -142,9 +153,9 @@ data class User(
                     o.str("round_avatar_large"),
                     o.str("round_profile_image_url"),
                 ).firstOrNull { !isPlaceholderWeiboMediaUrl(it) }.orEmpty(),
-                verified = o.optBoolean("verified", false),
+                verified = o.bool("verified", false),
                 verifiedType = o.optInt("verified_type", -1),
-                following = o.optBoolean("following", false),
+                following = o.bool("following", false),
                 description = o.str("description"),
                 followers = o.count("followers_count", o.count("followers_count_str")),
                 friends = o.int("follow_count", o.int("friends_count", o.count("friends_count_str"))),
