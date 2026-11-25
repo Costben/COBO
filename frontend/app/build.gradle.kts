@@ -23,6 +23,10 @@ android {
 
     val followedTopicsPreview = providers.gradleProperty("cobo.followedTopicsPreview").orNull == "true"
 
+    if (followedTopicsPreview) {
+        buildFeatures { resValues = true }
+    }
+
     buildTypes {
         if (followedTopicsPreview) {
             getByName("debug") {
