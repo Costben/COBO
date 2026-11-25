@@ -49,6 +49,7 @@ import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.Status
 import com.cobo.app.ui.NavState
+import com.cobo.app.ui.LocalBottomBarBounds
 import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.FeedTitleRowHeight
 import com.cobo.app.ui.attachToRow
@@ -1047,15 +1048,18 @@ private fun TimelinePage(
                         val index = entry.statusIndex
                         val origin = rememberExpandOrigin()
                         val topBar = LocalTopBarBounds.current
+                        val bottomBar = LocalBottomBarBounds.current
                         val showDivider = !feedCardFrame && entries.drop(entryIndex + 1).firstOrNull {
                             it !is FeedEntry.Post || !App.repo.isDeleted(it.status.id)
                         } is FeedEntry.Post
-                        // Hand the card's list and bar to the origin so a return can lift the row out from
-                        // under the bar instead of drawing the card over it.
+                        // Hand the card's list and bars to the origin so a return can lift the row out from
+                        // under either the top bar or the floating bottom bar instead of drawing over them.
                         SideEffect {
                             origin.listState = listState
                             origin.rowKey = status.id
+                            origin.originKey = "card:${status.id}"
                             origin.topBar = topBar
+                            origin.bottomBar = bottomBar
                         }
                         StatusCard(
                             status = status,
@@ -1069,7 +1073,7 @@ private fun TimelinePage(
                             onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
                             actionsEnabled = !store.readOnly,
                             onOpenQuoted = { quoted, quotedOrigin ->
-                                quotedOrigin.attachToRow(listState, status.id, topBar)
+                                quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
                                 nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
                             },
                             keepFrame = feedCardFrame,

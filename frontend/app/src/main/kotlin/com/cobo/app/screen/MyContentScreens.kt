@@ -545,6 +545,7 @@ private fun StatusFeedList(
                 SideEffect {
                     origin.listState = listState
                     origin.rowKey = status.id
+                    origin.originKey = "card:${status.id}"
                     origin.topBar = topBar
                 }
                 StatusCard(

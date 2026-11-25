@@ -326,10 +326,9 @@ class ImageSaveState internal constructor(
 
     internal var tick by mutableIntStateOf(0)
 
-    /** Shows a short status line; the caller only has to render [hud]. */
+    /** 统一交由全局 COUI Snackbar 弹出保存进度与结果提示。 */
     fun flash(text: String) {
-        hud = text
-        tick++
+        com.cobo.app.App.toast(text)
     }
 
     fun saveOne(item: SaveImageItem) {

@@ -28,7 +28,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,9 +49,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.memory.MemoryCache
+import coil3.request.ImageRequest
 import com.cobo.app.data.Membership
 import com.cobo.app.data.VerifiedKind
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
@@ -67,6 +72,31 @@ import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
+private val SinaAvatarHostRegex = Regex("""^(tvax|tva|wx)\d+\.sinaimg\.cn$""", RegexOption.IGNORE_CASE)
+
+/**
+ * 归一化微博头像缓存键：列表与详情接口会为同一张头像签发不同的 `Expires`/`ssig` 查询串或
+ * `tvax1..4` CDN 子域，按路径归一化后打开详情页直接命中内存缓存，避免头像闪灰重载。
+ */
+internal fun canonicalAvatarCacheKey(url: String): String {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) return ""
+    val withoutFragment = trimmed.substringBefore('#')
+    val schemeEnd = withoutFragment.indexOf("://")
+    if (schemeEnd <= 0) return "avatar:$withoutFragment"
+    val afterScheme = withoutFragment.substring(schemeEnd + 3)
+    val pathStart = afterScheme.indexOf('/')
+    if (pathStart <= 0) return "avatar:$withoutFragment"
+    val host = afterScheme.substring(0, pathStart).lowercase()
+    val pathWithQuery = afterScheme.substring(pathStart)
+    val pathOnly = pathWithQuery.substringBefore('?')
+    val hostMatch = SinaAvatarHostRegex.matchEntire(host)
+    if (hostMatch != null && pathOnly.length > 1) {
+        return "avatar:${hostMatch.groupValues[1].lowercase()}.sinaimg.cn$pathOnly"
+    }
+    return "avatar:$withoutFragment"
+}
+
 @Composable
 fun Avatar(
     url: String?,
@@ -75,6 +105,28 @@ fun Avatar(
     verifiedKind: VerifiedKind = VerifiedKind.None,
 ) {
     val scheme = COUITheme.colorScheme
+    val context = LocalContext.current
+    val cacheKey = remember(url) { url?.takeIf { it.isNotBlank() }?.let(::canonicalAvatarCacheKey) }
+    var lastCacheKey by remember { mutableStateOf<MemoryCache.Key?>(null) }
+    val request = remember(context, url, cacheKey, lastCacheKey) {
+        if (url.isNullOrBlank()) {
+            null
+        } else {
+            ImageRequest.Builder(context)
+                .data(url)
+                .size(256)
+                .apply {
+                    if (!cacheKey.isNullOrBlank()) {
+                        memoryCacheKey(cacheKey)
+                        diskCacheKey(cacheKey)
+                        placeholderMemoryCacheKey(lastCacheKey ?: MemoryCache.Key(cacheKey))
+                    } else if (lastCacheKey != null) {
+                        placeholderMemoryCacheKey(lastCacheKey)
+                    }
+                }
+                .build()
+        }
+    }
     Box(modifier = modifier.size(size)) {
         Box(
             modifier = Modifier
@@ -82,11 +134,12 @@ fun Avatar(
                 .clip(CircleShape)
                 .background(scheme.surfaceContainerHigh),
         ) {
-            if (!url.isNullOrBlank()) {
+            if (request != null) {
                 AsyncImage(
-                    model = url,
+                    model = request,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    onSuccess = { lastCacheKey = it.result.memoryCacheKey },
                     modifier = Modifier.fillMaxSize(),
                 )
             }

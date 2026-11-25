@@ -43,16 +43,16 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 val ExpandEasing = CubicBezierEasing(0.3f, 0f, 0.1f, 1f)
-const val ExpandEnterMillis = 420
-const val ExpandExitMillis = 220
-const val RouteSlideMillis = 320
+const val ExpandEnterMillis = 480
+const val ExpandExitMillis = 280
+const val RouteSlideMillis = 340
 const val RouteParallaxDivisor = 4f
 
 /**
  * The viewer's own growth out of a thumbnail and back into it. Both ways run at the same rate:
  * a shorter way back read as the picture snapping shut instead of folding away.
  */
-const val ImageZoomMillis = 420
+const val ImageZoomMillis = 440
 
 /**
  * How far the route being shown is into its own entrance, for a page that draws that entrance
@@ -100,19 +100,37 @@ class ExpandOrigin(
     /** The bar floating over [listState]; its bottom edge is the line the card has to clear. */
     var topBar: TopBarBounds? = null
 
+    /** The floating bottom bar over [listState]; its top edge is the lower line the card clears. */
+    var bottomBar: BottomBarBounds? = null
+
     /** The card's key in [listState], used to check the card is still on screen before moving it. */
     var rowKey: Any? = null
 
-    /** How far past the bar's own edge its material keeps drawing, in pixels. */
+    /**
+     * Distinct identity for hiding the active origin during expand/return transitions.
+     * Kept separate from [rowKey] because a retweet card and its nested quoted block share the
+     * same LazyColumn [rowKey] but must never hide each other.
+     */
+    var originKey: Any? = null
+
+    /** How far past the top bar's own edge its material keeps drawing, in pixels. */
     var clearancePx: Float = 0f
+
+    /** Extra gap kept above [bottomBar]'s top edge, in pixels. */
+    var bottomClearancePx: Float = 0f
 }
 
 @Composable
 fun rememberExpandOrigin(cornerRadius: Dp = 24.dp): ExpandOrigin {
     val layer = rememberGraphicsLayer()
-    val clearance = with(LocalDensity.current) { AppBarBlurOverlayDefaults.ExtraHeight.toPx() }
-    return remember(layer, cornerRadius, clearance) {
-        ExpandOrigin(layer, cornerRadius).apply { clearancePx = clearance }
+    val density = LocalDensity.current
+    val clearance = with(density) { AppBarBlurOverlayDefaults.ExtraHeight.toPx() }
+    val bottomClearance = with(density) { 8.dp.toPx() }
+    return remember(layer, cornerRadius, clearance, bottomClearance) {
+        ExpandOrigin(layer, cornerRadius).apply {
+            clearancePx = clearance
+            bottomClearancePx = bottomClearance
+        }
     }
 }
 
@@ -143,8 +161,8 @@ internal class ExpandOriginVisibility(
     private fun matches(active: ExpandOrigin?, candidate: ExpandOrigin): Boolean {
         if (active == null) return false
         if (active === candidate) return true
-        val key = active.rowKey
-        return key != null && key == candidate.rowKey
+        val key = active.originKey
+        return key != null && key == candidate.originKey
     }
 }
 
@@ -341,11 +359,14 @@ class NavState {
             withFrameNanos { }
             val expand = entry.expand
             if (!expand) entry.fade.snapTo(1f)
-            val millis = when {
-                expand -> ExpandEnterMillis
-                entry.growsFromImage -> ImageZoomMillis
-                else -> RouteSlideMillis
-            }
+            val speed = App.settings.animationSpeed
+            val millis = speed.scaleDuration(
+                when {
+                    expand -> ExpandEnterMillis
+                    entry.growsFromImage -> ImageZoomMillis
+                    else -> RouteSlideMillis
+                },
+            )
             coroutineScope {
                 launch {
                     entry.progress.animateTo(
@@ -357,7 +378,7 @@ class NavState {
                     launch {
                         entry.fade.animateTo(
                             targetValue = 1f,
-                            animationSpec = tween(ExpandEnterMillis, easing = LinearEasing),
+                            animationSpec = tween(millis, easing = LinearEasing),
                         )
                     }
                 }
@@ -402,11 +423,13 @@ class NavState {
             // before the frame starts shrinking, or the card would come back drawn over the bar.
             alignCardBelowBar(entry.origin)
             val expand = entry.expand
-            val baseMillis = when {
-                expand -> ExpandExitMillis
-                entry.growsFromImage -> ImageZoomMillis
-                else -> RouteSlideMillis
-            }
+            val baseMillis = App.settings.animationSpeed.scaleDuration(
+                when {
+                    expand -> ExpandExitMillis
+                    entry.growsFromImage -> ImageZoomMillis
+                    else -> RouteSlideMillis
+                },
+            )
             val remaining = entry.progress.value.coerceIn(0f, 1f)
             val hasFlingOffset = entry.offset.value != Offset.Zero || initialVelocity != Offset.Zero
             val baseRemaining = (baseMillis * remaining).roundToInt().coerceAtLeast(1)
@@ -485,41 +508,59 @@ class NavState {
  * the bar. A whole card is composed knowing its row; a quoted block inside a card lives in the same
  * row as that card, so it borrows the card's row when it is tapped.
  */
-fun ExpandOrigin.attachToRow(listState: LazyListState?, rowKey: Any?, topBar: TopBarBounds?) {
+fun ExpandOrigin.attachToRow(
+    listState: LazyListState?,
+    rowKey: Any?,
+    topBar: TopBarBounds?,
+    bottomBar: BottomBarBounds? = null,
+) {
     this.listState = listState
     this.rowKey = rowKey
     this.topBar = topBar
+    this.bottomBar = bottomBar
 }
 
 /**
- * Scrolls the list that owns [origin] just far enough to bring the card's top edge below the bar.
+ * Scrolls the list that owns [origin] just far enough to bring the card clear of both the top bar
+ * and any floating bottom bar.
  *
  * The frame a detail page grows from and shrinks back into is drawn on the page's own layer, above
- * the bar the covered list keeps underneath it, so a card sitting half under the bar comes back
- * drawn over it. Moving the row instead of restacking the frame leaves the bar where it is: the
- * card ends up somewhere the bar cannot cover it, and nothing has to be raised or reordered.
+ * the bars the covered list keeps underneath it, so a card sitting half under the top or bottom bar
+ * comes back drawn over that bar. Moving the row instead of restacking the frame leaves both bars
+ * where they are: the card ends up clear of them and nothing has to be raised or reordered.
  *
- * Scrolling the list back down can bring the bar's collapsing title row back, which moves the line
- * the bar ends at, so the move is measured again until the two agree.
+ * Scrolling the list can bring the top bar's collapsing title row back, which moves the line the
+ * top bar ends at, so the move is measured again until the bars and card agree.
  */
 internal suspend fun alignCardBelowBar(origin: ExpandOrigin?) {
     if (origin == null) return
     val state = origin.listState ?: return
-    val bar = origin.topBar ?: return
+    val topBar = origin.topBar
+    val bottomBar = origin.bottomBar
+    if (topBar == null && bottomBar == null) return
     repeat(4) {
-        val line = bar.bottom
-        if (line <= 0f) return
+        val topLine = topBar?.bottom?.takeIf { it > 0f }?.let { it + origin.clearancePx } ?: 0f
+        val bottomLine = bottomBar?.top?.takeIf { it > 0f }?.let { it - origin.bottomClearancePx } ?: 0f
+        if (topLine <= 0f && bottomLine <= 0f) return
         // The row may have been dropped by a refresh while the page was open; a stale rect would
         // scroll the list to nowhere.
         val onScreen = origin.rowKey?.let { key ->
             state.layoutInfo.visibleItemsInfo.any { it.key == key }
         } ?: false
         if (!onScreen) return
-        val top = origin.bounds?.top ?: return
-        val delta = line + origin.clearancePx - top
-        if (delta <= 0.5f) return
-        // A list already at its start cannot move any further up; the row is as clear as it gets.
-        if (state.scrollBy(-delta) == 0f) return
+        val rect = origin.bounds ?: return
+        val scrollDelta = when {
+            topLine > 0f && rect.top < topLine - 0.5f -> -(topLine - rect.top)
+            bottomLine > 0f && rect.bottom > bottomLine + 0.5f -> {
+                val need = rect.bottom - bottomLine
+                // Never push the card's top edge back under the top bar when lifting it clear of the bottom bar.
+                val maxLift = if (topLine > 0f) (rect.top - topLine).coerceAtLeast(0f) else need
+                minOf(need, maxLift)
+            }
+            else -> 0f
+        }
+        if (kotlin.math.abs(scrollDelta) <= 0.5f) return
+        if (state.scrollBy(scrollDelta) == 0f) return
         // One frame for the list to lay out again, one for the bar to report its new edge.
         withFrameNanos { }
         withFrameNanos { }

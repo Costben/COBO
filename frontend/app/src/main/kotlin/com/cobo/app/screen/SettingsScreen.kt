@@ -63,6 +63,7 @@ import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
+import com.cobo.app.data.AnimationSpeed
 import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
@@ -389,6 +390,18 @@ private fun LazyListScope.displaySettingsItems(
                 modifier = Modifier.testTag("settings_predictive_back_entry"),
                 cardListPosition = CardListPosition.Middle,
                 onClick = { nav.push(Route.PredictiveBackSettings) },
+            )
+            OverlayDropdownPreference(
+                items = AnimationSpeed.entries.map { it.label },
+                selectedIndex = App.settings.animationSpeed.ordinal,
+                title = "动画速度",
+                summary = "调节微博展开、看图与页面切换的动画快慢",
+                modifier = Modifier.testTag("settings_animation_speed"),
+                cardListPosition = CardListPosition.Middle,
+                onSelectedIndexChange = { index ->
+                    val picked = AnimationSpeed.entries.getOrElse(index) { AnimationSpeed.Standard }
+                    App.settings.applyAnimationSpeed(picked)
+                },
             )
             SwitchPreference(
                 checked = state.blurEffects,

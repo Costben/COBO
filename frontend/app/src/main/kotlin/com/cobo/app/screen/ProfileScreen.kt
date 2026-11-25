@@ -109,6 +109,7 @@ import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pageContainerColor
 import com.cobo.app.ui.LocalImageOrigins
+import com.cobo.app.ui.LocalBottomBarBounds
 import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.rememberExpandOrigin
@@ -894,10 +895,13 @@ fun ProfileContent(
             itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
                 val origin = rememberExpandOrigin()
                 val topBar = LocalTopBarBounds.current
+                val bottomBar = LocalBottomBarBounds.current
                 SideEffect {
                     origin.listState = listState
                     origin.rowKey = status.id
+                    origin.originKey = "card:${status.id}"
                     origin.topBar = topBar
+                    origin.bottomBar = bottomBar
                 }
                 StatusCard(
                     status = status,
@@ -916,7 +920,7 @@ fun ProfileContent(
                     onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
                     onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
                     onOpenQuoted = { quoted, quotedOrigin ->
-                        quotedOrigin.attachToRow(listState, status.id, topBar)
+                        quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
                         nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
                     },
                 )

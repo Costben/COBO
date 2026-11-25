@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -273,6 +274,7 @@ fun StatusCard(
             Spacer(Modifier.height(8.dp))
             RetweetBlock(
                 status = displayStatus.retweeted,
+                parentStatusId = displayStatus.id,
                 compact = compact,
                 actionsEnabled = actionsEnabled,
                 onOpen = onOpen,
@@ -1296,7 +1298,8 @@ private fun FoldableWeiboText(
 }
 
 @Composable
-fun RetweetBlock(    status: Status,
+fun RetweetBlock(
+    status: Status,
     compact: Boolean,
     onOpen: () -> Unit,
     onUser: (User) -> Unit,
@@ -1308,12 +1311,16 @@ fun RetweetBlock(    status: Status,
     onCard: Boolean = true,
     /** 被转发的原博在信息流里是否折叠长文。 */
     foldLongText: Boolean = true,
+    parentStatusId: String = "",
 ) {
     val scheme = COUITheme.colorScheme
     remember(status) { StatusMemory.remember(status) }
     // The quoted post is a page of its own: it opens from the block it is drawn in and comes back
     // into it, so the block carries the same expand origin a whole card does.
     val quotedOrigin = rememberExpandOrigin(cornerRadius = 10.dp)
+    SideEffect {
+        quotedOrigin.originKey = "quoted:$parentStatusId:${status.id}"
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()

@@ -4,11 +4,8 @@ import android.os.Build
 import android.view.RoundedCorner
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -17,13 +14,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -37,7 +34,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -62,14 +58,12 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
@@ -108,14 +102,15 @@ import com.cobo.app.screen.WebScreen
 import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.ImageSaver
 import com.cobo.app.ui.components.LocalImageSaver
-import com.cobo.app.ui.components.SaveHud
 import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.SnackbarDuration
+import io.github.suqi8.coui.kmp.basic.SnackbarHost
+import io.github.suqi8.coui.kmp.basic.SnackbarHostState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -131,7 +126,6 @@ import io.github.suqi8.coui.kmp.utils.isPredictiveBackBlurSupported
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -330,8 +324,9 @@ fun CoboRoot() {
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
                 }
-                // 应用内悬浮提示放在 popupHost 顶层，保证在弹窗、底部输入框和软键盘之上都可见。
-                AppToastHud()
+                // 使用 COUI 组件库统一的 SnackbarHost（连续曲率圆角、系统级阴影与弹簧动效），
+                // 放在 popupHost 顶层保证在弹窗与软键盘之上可见，并在带底栏页面自动避让底栏。
+                AppSnackbarHost(nav = nav)
             },
         ) {
             BoxWithConstraints(
@@ -428,9 +423,6 @@ fun CoboRoot() {
                 )
             }
 
-            // HUD 独立于菜单，菜单收起之后它还要自己活 1.6 秒。
-            Box(Modifier.fillMaxSize().zIndex(10f)) { SaveHud(saveState) }
-
             // 保存图片菜单与点赞确认挂在根节点，弹层内容由外层根 Scaffold 的 popupHost 统一承载并采样 rootBackdrop。
             Box(
                 Modifier
@@ -457,45 +449,34 @@ fun CoboRoot() {
     }
 }
 
-/** 全局应用内 Toast 浮层，稳定显示在底栏和软键盘之上。 */
+/** 全局统一提示：直接复用 COUI 组件库的 [SnackbarHost] 与 [io.github.suqi8.coui.kmp.basic.Snackbar]。 */
 @Composable
-private fun AppToastHud() {
-    val message = App.toastMessage
-    val tick = App.toastTick
-    var lastMessage by remember { mutableStateOf("") }
-    if (message.isNotBlank()) {
-        lastMessage = message
-    }
-    LaunchedEffect(tick) {
-        if (tick > 0 && message.isNotBlank()) {
-            delay(2200)
-            App.clearToast(tick)
+private fun AppSnackbarHost(nav: NavState) {
+    val hostState = remember { SnackbarHostState() }
+    LaunchedEffect(hostState) {
+        App.toastEvents.collect { message ->
+            hostState.newestSnackbarData()?.dismiss()
+            launch {
+                hostState.showSnackbar(
+                    message = message,
+                    duration = SnackbarDuration.Custom(2200L),
+                )
+            }
         }
     }
+    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
+    val density = LocalDensity.current
+    val imeOpen = WindowInsets.ime.getBottom(density) > 0
+    val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 24.dp, vertical = 92.dp),
+            .padding(bottom = if (hasFloatingBottomBar) 64.dp else 0.dp),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        AnimatedVisibility(
-            visible = message.isNotBlank(),
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(220)),
-        ) {
-            Text(
-                text = lastMessage,
-                color = Color.White,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xD91A1A1A))
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .testTag("app_toast_hud"),
-            )
-        }
+        SnackbarHost(state = hostState)
     }
 }
 
@@ -825,7 +806,8 @@ private fun ExpandLayer(
                 val cardAlpha = if (exiting) {
                     ((0.4f - p) / 0.32f).coerceIn(0f, 1f)
                 } else {
-                    1f - (fade() / 0.25f).coerceIn(0f, 1f)
+                    // 与下方详情页内容重叠交叉淡入淡出：旧卡片完全淡出前详情页已 100% 显现，避免中间闪白屏。
+                    1f - ((fade() - 0.08f) / 0.37f).coerceIn(0f, 1f)
                 }
                 drawContent()
                 val layerSize = origin.layer.size
@@ -876,7 +858,7 @@ private fun ExpandLayer(
                     .graphicsLayer {
                         val f = fade()
                         val p = frameProgress(progress())
-                        alpha = if (exiting) 1f else ((f - 0.25f) / 0.3f).coerceIn(0f, 1f)
+                        alpha = if (exiting) 1f else (f / 0.25f).coerceIn(0f, 1f)
                         translationY = -statusBarTop * (1f - p)
                     }
             ) {

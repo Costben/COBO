@@ -170,6 +170,7 @@ import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.LocalPlatformBottomBarMaterialEnabled
 import io.github.suqi8.coui.kmp.basic.NavigationPopupMenuDefaults
 import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
+import io.github.suqi8.coui.kmp.basic.popupBottomBarrier
 import io.github.suqi8.coui.kmp.basic.SearchBarActionButton
 import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.SearchResultContainer
@@ -268,9 +269,10 @@ fun MainShell(nav: NavState) {
     val searchBackdrop = rememberLayerBackdrop()
     val blur = blurEffectsEnabled()
     val scope = rememberCoroutineScope()
-    // The bar floats over all three pages, so the line it ends at is reported once here and read
-    // by whatever has to be placed clear of it.
+    // Both bars float over the three pages, so their edges are reported here and read by
+    // anything that has to be placed clear of them (return transitions, popups, snackbars).
     val topBarBounds = remember { TopBarBounds() }
+    val bottomBarBounds = remember { BottomBarBounds() }
 
     // 纯本地模式：没有账号可读关注流，首页只剩「本地关注」和「推荐」两段，筛选菜单也收起来。
     // 登录 / 退出都会 reset 导航栈，这个值在整个 MainShell 生命周期里不会变。
@@ -646,9 +648,12 @@ fun MainShell(nav: NavState) {
     val feedPanelCovering = tab == 0 && panelMounted
 
     Box(Modifier.fillMaxSize()) {
-        // The bar floats over the page, so the line it ends at is reported from the bar itself and
-        // read by anything that has to be placed clear of it.
-        CompositionLocalProvider(LocalTopBarBounds provides topBarBounds) {
+        // Both bars float over the page, so their live edges are reported and read by
+        // anything that has to be placed clear of them.
+        CompositionLocalProvider(
+            LocalTopBarBounds provides topBarBounds,
+            LocalBottomBarBounds provides bottomBarBounds,
+        ) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -829,6 +834,7 @@ fun MainShell(nav: NavState) {
                         if (!feedPanelCovering) nav.push(Route.Settings)
                     },
                     menuEnabled = !feedPanelCovering,
+                    bottomBarBounds = bottomBarBounds,
                     onFeedTop = { if (!feedPanelCovering) App.requestFeedTop(scrollToTop = true) },
                     onPublish = {
                         if (!feedPanelCovering) {
@@ -1899,6 +1905,7 @@ private fun FloatingBottomBar(
     onBottomLeftPinSelect: (BottomLeftAction) -> Unit,
     onOpenSettings: () -> Unit,
     menuEnabled: Boolean,
+    bottomBarBounds: BottomBarBounds,
     onFeedTop: () -> Unit,
     onPublish: () -> Unit,
     profileAvatarUrl: String? = null,
@@ -1930,7 +1937,9 @@ private fun FloatingBottomBar(
         // 底栏条 56dp / 项 48dp / 圆钮 56dp 由组件自己的 token 决定。
         run {
             BottomFloatingAccessoryNavigationBar(
-                modifier = Modifier,
+                modifier = Modifier
+                    .then(if (menuEnabled) Modifier.popupBottomBarrier() else Modifier)
+                    .reportBottomBarTop(bottomBarBounds, active = menuEnabled),
                 startAccessory = {
                     Box(
                         modifier = Modifier

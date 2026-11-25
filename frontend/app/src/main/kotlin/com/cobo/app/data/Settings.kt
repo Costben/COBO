@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONArray
+import kotlin.math.roundToInt
 
 enum class FeedTabItem(val key: String, val label: String, val tag: String) {
     None("none", "隐藏", "feed_tab_none"),
@@ -132,6 +133,27 @@ enum class MeIconStyle(val key: String, val label: String) {
     companion object {
         fun fromKey(key: String?): MeIconStyle {
             return entries.firstOrNull { it.key == key } ?: Colorful
+        }
+    }
+}
+
+/** 页面切换与卡片展开/返回动画的播放速度（三档）。 */
+enum class AnimationSpeed(
+    val key: String,
+    val label: String,
+    val durationScale: Float,
+) {
+    Fast("fast", "快速", 0.75f),
+    Standard("standard", "标准", 1.0f),
+    Slow("slow", "舒缓", 1.35f),
+    ;
+
+    fun scaleDuration(baseMillis: Int): Int =
+        (baseMillis * durationScale).roundToInt().coerceAtLeast(1)
+
+    companion object {
+        fun fromKey(key: String?): AnimationSpeed {
+            return entries.firstOrNull { it.key == key } ?: Standard
         }
     }
 }
@@ -339,6 +361,12 @@ class Settings(context: Context) {
     /** 首页搜索面板的展开方式：上下扩展、淡入淡出、从搜索按钮展开。默认淡入淡出。 */
     var searchPanelAnimation by mutableStateOf(
         SearchPanelAnimation.fromKey(sp.getString("search_panel_animation", null))
+    )
+        private set
+
+    /** 页面切换、卡片展开/返回与看图动画速度，默认标准档。 */
+    var animationSpeed by mutableStateOf(
+        AnimationSpeed.fromKey(sp.getString("animation_speed", null))
     )
         private set
 
@@ -636,6 +664,11 @@ class Settings(context: Context) {
     fun applySearchPanelAnimation(value: SearchPanelAnimation) {
         searchPanelAnimation = value
         sp.edit().putString("search_panel_animation", value.key).apply()
+    }
+
+    fun applyAnimationSpeed(value: AnimationSpeed) {
+        animationSpeed = value
+        sp.edit().putString("animation_speed", value.key).apply()
     }
 
     fun applyBottomLeftAction(value: BottomLeftAction) {

@@ -221,25 +221,12 @@ object App {
         if (statusId.isNotBlank()) detailRefreshEvents.tryEmit(statusId)
     }
 
-    var toastMessage by mutableStateOf("")
-        private set
-
-    var toastTick by mutableIntStateOf(0)
-        private set
+    val toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
     fun toast(message: String) {
         val text = message.trim()
         if (text.isEmpty()) return
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            toastMessage = text
-            toastTick++
-        }
-    }
-
-    fun clearToast(expectedTick: Int) {
-        if (toastTick == expectedTick) {
-            toastMessage = ""
-        }
+        toastEvents.tryEmit(text)
     }
 
     /**
