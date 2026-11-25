@@ -334,6 +334,7 @@ fun PublishScreen(
                                             val ids = mediaItems.mapNotNull { uploadedByKey[it.key] }
                                             progress = "正在发布…"
                                             App.repo.publish(field.text.trim(), ids, visibility.code)
+                                            App.toast("发布成功")
                                             App.notifyPublished()
                                             nav.pop()
                                         }

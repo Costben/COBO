@@ -703,7 +703,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         try {
                             val picIds = images.map { App.repo.uploadImage(it) }
                             App.repo.repost(id, effectiveMid(), text, visibility.code, picIds)
-                            App.toast("已转发")
+                            App.toast("转发成功")
                             true
                         } catch (e: CancellationException) {
                             throw e

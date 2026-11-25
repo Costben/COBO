@@ -221,10 +221,24 @@ object App {
         if (statusId.isNotBlank()) detailRefreshEvents.tryEmit(statusId)
     }
 
+    var toastMessage by mutableStateOf("")
+        private set
+
+    var toastTick by mutableIntStateOf(0)
+        private set
+
     fun toast(message: String) {
-        if (!this::context.isInitialized || message.isBlank()) return
+        val text = message.trim()
+        if (text.isEmpty()) return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+            toastMessage = text
+            toastTick++
+        }
+    }
+
+    fun clearToast(expectedTick: Int) {
+        if (toastTick == expectedTick) {
+            toastMessage = ""
         }
     }
 
