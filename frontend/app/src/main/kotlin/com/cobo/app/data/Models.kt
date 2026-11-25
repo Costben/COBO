@@ -274,6 +274,10 @@ data class Pic(
     val preserveUrl: Boolean = false,
     /** 微博图片唯一 ID（`pid` / `fid`），编辑微博保留原图时直接复用。 */
     val pid: String = "",
+    /** 混排内嵌视频的稳定标识（如 `1034:...`），直链签名过期时用于换取最新播放流。 */
+    val videoFid: String = "",
+    /** 混排内嵌视频所属微博 ID，用于缺少 [videoFid] 时兜底刷新。 */
+    val videoStatusId: String = "",
 ) {
     val isLive: Boolean get() = live.isNotBlank()
     val isVideo: Boolean get() = videoUrl.isNotBlank()
@@ -401,6 +405,7 @@ private fun picOf(p: JSONObject): Pic? {
         videoTitle = videoInfo?.title.orEmpty(),
         durationSec = videoInfo?.durationSec ?: 0,
         pid = resolvedPid,
+        videoFid = videoInfo?.fid.orEmpty(),
     )
 }
 
@@ -454,6 +459,7 @@ private fun videoGridPicOf(data: JSONObject): Pic? {
         videoUrl = info.url,
         videoTitle = info.title,
         durationSec = info.durationSec,
+        videoFid = info.fid,
     )
 }
 
@@ -569,13 +575,57 @@ internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyL
         .ifBlank { page.str("content1") }
         .ifBlank { media?.str("kol_title").orEmpty() }
         .ifBlank { media?.str("next_title").orEmpty() }
+    val fid = extractPageVideoFid(page, media, fallbackPageUrl, livePage && !liveIsReplay)
     return VideoInfo(
         title = title,
         cover = videoCoverUrl(page, media, fallbackPics),
         url = resolvedUrl,
         durationSec = if (livePage && !liveIsReplay) 0 else videoDurationSec(page, media),
         isLive = livePage && !liveIsReplay,
+        fid = fid,
     )
+}
+
+private val WeiboVideoFidPattern = Regex("""^\d+:[0-9a-zA-Z_-]+$""")
+private val DigitsOnlyPattern = Regex("""^\d{6,}$""")
+
+internal fun extractPageVideoFid(
+    page: JSONObject,
+    media: JSONObject?,
+    fallbackPageUrl: String,
+    isActiveLive: Boolean,
+): String {
+    if (isActiveLive) return ""
+    val directCandidates = listOf(
+        page.str("object_id"),
+        media?.str("object_id").orEmpty(),
+        media?.str("fid").orEmpty(),
+        page.str("fid"),
+    )
+    for (raw in directCandidates) {
+        val trimmed = raw.trim()
+        if (trimmed.isNotBlank() && WeiboVideoFidPattern.matches(trimmed)) {
+            return trimmed
+        }
+    }
+    val urlCandidates = listOf(
+        fallbackPageUrl,
+        page.str("page_url"),
+        media?.str("h5_url").orEmpty(),
+        page.str("scheme"),
+        media?.str("open_scheme").orEmpty(),
+        page.optJSONObject("page_pic")?.str("scheme").orEmpty(),
+    )
+    for (candidate in urlCandidates) {
+        if (candidate.isBlank()) continue
+        com.cobo.app.screen.extractWeiboVideoFid(candidate)?.let { return it }
+    }
+    val mediaId = media?.str("media_id")?.trim().orEmpty()
+    return when {
+        WeiboVideoFidPattern.matches(mediaId) -> mediaId
+        DigitsOnlyPattern.matches(mediaId) -> "1034:$mediaId"
+        else -> ""
+    }
 }
 
 private fun videoDurationSec(page: JSONObject, media: JSONObject?): Int {
@@ -595,6 +645,10 @@ data class VideoInfo(
     val url: String,
     val durationSec: Int = 0,
     val isLive: Boolean = false,
+    /** 微博视频稳定标识（如 `1034:...`），直链签名过期时用于重新换取最新播放流。 */
+    val fid: String = "",
+    /** 所属微博 ID，缺少 [fid] 时（含旧版本地快照）兜底重拉单条微博刷新直链。 */
+    val statusId: String = "",
 )
 
 data class BigPicInfo(
@@ -841,13 +895,17 @@ data class Status(
                         cover = only.large.ifBlank { only.thumb },
                         url = only.videoUrl,
                         durationSec = only.durationSec,
+                        fid = only.videoFid,
+                        statusId = only.videoStatusId.ifBlank { id },
                     )
                     pics = emptyList()
                 }
             } else if (page != null && (page.str("type") == "video" || page.str("object_type") == "video" || isLivePageInfo(page))) {
                 // m.weibo.cn 把视频标成 type=video；weibo.com 网页版（关注分组那条流）给的是
                 // type=11 + object_type=video，只认 type 会把视频当成纯文字。
-                video = extractVideoInfo(page, pics)
+                video = extractVideoInfo(page, pics)?.let { info ->
+                    if (info.statusId.isBlank()) info.copy(statusId = id) else info
+                }
             } else if (page != null && pics.isEmpty()) {
                 val pageUrlRaw = page.str("page_url")
                     .ifBlank { page.optJSONObject("page_pic")?.str("scheme").orEmpty() }
@@ -861,6 +919,8 @@ data class Status(
                         cover = videoCoverUrl(page, page.optJSONObject("media_info"), emptyList()),
                         url = resolvedTarget,
                         isLive = isLiveTarget,
+                        fid = com.cobo.app.screen.extractWeiboVideoFid(resolvedTarget).orEmpty(),
+                        statusId = id,
                     )
                 }
             }
@@ -924,7 +984,8 @@ data class Status(
                 if (!outerOwnsMedia) {
                     if (video != null) {
                         if (retweeted.video == null && retweeted.pics.none { it.isVideo }) {
-                            retweeted = retweeted.copy(video = video)
+                            val hosted = video.copy(statusId = retweeted.id.ifBlank { video.statusId })
+                            retweeted = retweeted.copy(video = hosted)
                         }
                         video = null
                     }
@@ -963,8 +1024,13 @@ data class Status(
                     videoUrl = video.url,
                     videoTitle = video.title,
                     durationSec = video.durationSec,
+                    videoFid = video.fid,
+                    videoStatusId = video.statusId.ifBlank { id },
                 )
                 video = null
+            }
+            if (pics.any { it.isVideo && it.videoStatusId.isBlank() }) {
+                pics = pics.map { if (it.isVideo && it.videoStatusId.isBlank()) it.copy(videoStatusId = id) else it }
             }
 
             val htmlTextBase = formatContainerTextToHtml(

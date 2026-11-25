@@ -37,6 +37,7 @@ class MixMediaParseTest {
                         put("type", "video")
                         put("data", JSONObject().apply {
                             put("title", "测试视频")
+                            put("object_id", "1034:50011223344")
                             put("page_pic", JSONObject().apply {
                                 put("url", "https://img/v1_cover.jpg")
                                 put("width", 720)
@@ -65,6 +66,8 @@ class MixMediaParseTest {
         assertEquals("https://img/v1_cover.jpg", status.pics[1].thumb)
         assertEquals("https://video/v1_720.mp4", status.pics[1].videoUrl)
         assertEquals("测试视频", status.pics[1].videoTitle)
+        assertEquals("1034:50011223344", status.pics[1].videoFid)
+        assertEquals("5001", status.pics[1].videoStatusId)
         assertEquals(125, status.pics[1].durationSec)
         assertEquals("2:05", com.cobo.app.ui.components.formatVideoDuration(status.pics[1].durationSec))
         assertEquals("1:01:01", com.cobo.app.ui.components.formatVideoDuration(3661))
@@ -85,6 +88,7 @@ class MixMediaParseTest {
                                 put("url", "https://img/single_cover.jpg")
                             })
                             put("media_info", JSONObject().apply {
+                                put("media_id", "5002987654")
                                 put("stream_url", "https://video/single.mp4")
                             })
                         })
@@ -101,6 +105,8 @@ class MixMediaParseTest {
         assertEquals("https://video/single.mp4", video!!.url)
         assertEquals("https://img/single_cover.jpg", video.cover)
         assertEquals("单独视频", video.title)
+        assertEquals("1034:5002987654", video.fid)
+        assertEquals("5002", video.statusId)
     }
 
     @Test

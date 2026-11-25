@@ -215,6 +215,8 @@ private fun picToSnapshot(p: Pic): JSONObject = JSONObject().apply {
     if (p.videoUrl.isNotBlank()) put("videoUrl", p.videoUrl)
     if (p.videoTitle.isNotBlank()) put("videoTitle", p.videoTitle)
     if (p.durationSec > 0) put("durationSec", p.durationSec)
+    if (p.videoFid.isNotBlank()) put("videoFid", p.videoFid)
+    if (p.videoStatusId.isNotBlank()) put("videoStatusId", p.videoStatusId)
 }
 
 private fun picFromSnapshot(o: JSONObject): Pic = Pic(
@@ -226,6 +228,8 @@ private fun picFromSnapshot(o: JSONObject): Pic = Pic(
     videoUrl = o.str("videoUrl"),
     videoTitle = o.str("videoTitle"),
     durationSec = o.int("durationSec"),
+    videoFid = o.str("videoFid"),
+    videoStatusId = o.str("videoStatusId"),
 )
 
 private fun videoToSnapshot(v: VideoInfo): JSONObject = JSONObject().apply {
@@ -234,6 +238,8 @@ private fun videoToSnapshot(v: VideoInfo): JSONObject = JSONObject().apply {
     put("url", v.url)
     if (v.durationSec > 0) put("durationSec", v.durationSec)
     if (v.isLive) put("isLive", true)
+    if (v.fid.isNotBlank()) put("fid", v.fid)
+    if (v.statusId.isNotBlank()) put("statusId", v.statusId)
 }
 
 private fun bigPicToSnapshot(p: BigPicInfo): JSONObject = JSONObject().apply {
@@ -301,6 +307,8 @@ internal fun statusFromSnapshot(o: JSONObject?): Status? {
                 url = it.str("url"),
                 durationSec = it.int("durationSec"),
                 isLive = it.optBoolean("isLive", false),
+                fid = it.str("fid"),
+                statusId = it.str("statusId"),
             )
         },
         bigPic = o.optJSONObject("bigPic")?.let {

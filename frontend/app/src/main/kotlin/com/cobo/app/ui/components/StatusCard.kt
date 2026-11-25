@@ -726,7 +726,9 @@ fun StatusMedia(
     onVideo: (VideoInfo) -> Unit,
     onCard: Boolean = true,
 ) {
-    val video = status.video
+    val video = status.video?.let { info ->
+        if (info.statusId.isBlank() && status.id.isNotBlank()) info.copy(statusId = status.id) else info
+    }
     if (video != null && video.url.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
         VideoCard(video, compact, onVideo)
@@ -745,7 +747,16 @@ fun StatusMedia(
             resolvedInlinePics = App.repo.resolveInlineImageLinks(resolvableInlineLinks)
         }
     }
-    val effectivePics = if (status.pics.isNotEmpty()) status.pics else resolvedInlinePics
+    val rawPics = if (status.pics.isNotEmpty()) status.pics else resolvedInlinePics
+    val effectivePics = remember(status.id, rawPics) {
+        if (status.id.isNotBlank() && rawPics.any { it.isVideo && it.videoStatusId.isBlank() }) {
+            rawPics.map { pic ->
+                if (pic.isVideo && pic.videoStatusId.isBlank()) pic.copy(videoStatusId = status.id) else pic
+            }
+        } else {
+            rawPics
+        }
+    }
     if (effectivePics.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
         ImageGrid(effectivePics, compact, onImage, onVideo)
@@ -951,7 +962,16 @@ fun ImageGrid(
                 .combinedClickable(
                     onClick = {
                         if (pic.isVideo) {
-                            onVideo(VideoInfo(pic.videoTitle, pic.large.ifBlank { pic.thumb }, pic.videoUrl))
+                            onVideo(
+                                VideoInfo(
+                                    title = pic.videoTitle,
+                                    cover = pic.large.ifBlank { pic.thumb },
+                                    url = pic.videoUrl,
+                                    durationSec = pic.durationSec,
+                                    fid = pic.videoFid,
+                                    statusId = pic.videoStatusId,
+                                ),
+                            )
                         } else {
                             onImage(pics, 0)
                         }
@@ -1030,7 +1050,16 @@ fun ImageGrid(
                                 .combinedClickable(
                                     onClick = {
                                         if (pic.isVideo) {
-                                            onVideo(VideoInfo(pic.videoTitle, pic.large.ifBlank { pic.thumb }, pic.videoUrl))
+                                            onVideo(
+                                                VideoInfo(
+                                                    title = pic.videoTitle,
+                                                    cover = pic.large.ifBlank { pic.thumb },
+                                                    url = pic.videoUrl,
+                                                    durationSec = pic.durationSec,
+                                                    fid = pic.videoFid,
+                                                    statusId = pic.videoStatusId,
+                                                ),
+                                            )
                                         } else {
                                             onImage(pics, index)
                                         }

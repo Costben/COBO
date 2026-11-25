@@ -1,5 +1,9 @@
 package com.cobo.app.screen
 
+import androidx.media3.common.PlaybackException
+import com.cobo.app.data.Pic
+import com.cobo.app.data.Status
+import com.cobo.app.data.VideoInfo
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -219,5 +223,136 @@ class VideoSupportTest {
         )
         val missing = parseWeiboLiveRoomJson(notExistsJson, id) as ResolvedVideo.Unavailable
         assertEquals("该直播已结束或直播间已关闭", missing.message)
+    }
+
+    @Test
+    fun detectsExpiredSignedWeiboVideoUrls() {
+        val now = 1_760_000_000L
+        val expiredUrl = "https://f.video.weibocdn.com/o0/abc.mp4?label=mp4_720p&Expires=${now - 10}&ssig=deadbeef"
+        val almostExpiredUrl = "https://f.video.weibocdn.com/o0/abc.mp4?Expires=${now + 30}&ssig=deadbeef"
+        val freshUrl = "https://f.video.weibocdn.com/o0/abc.mp4?Expires=${now + 3600}&ssig=deadbeef"
+        val millisExpiredUrl = "https://cdn.example.com/v.mp4?deadline=${(now - 5) * 1000L}"
+        val unsignedUrl = "https://cdn.example.com/static/video.mp4"
+
+        assertEquals(now - 10, extractSignedUrlExpireEpochSec(expiredUrl))
+        assertEquals(now - 5, extractSignedUrlExpireEpochSec(millisExpiredUrl))
+        assertNull(extractSignedUrlExpireEpochSec(unsignedUrl))
+        assertNull(extractSignedUrlExpireEpochSec("file:///tmp/cached.ts"))
+
+        assertTrue(isSignedVideoUrlExpired(expiredUrl, nowEpochSec = now))
+        assertTrue(isSignedVideoUrlExpired(almostExpiredUrl, nowEpochSec = now))
+        assertFalse(isSignedVideoUrlExpired(freshUrl, nowEpochSec = now))
+        assertTrue(isSignedVideoUrlExpired(millisExpiredUrl, nowEpochSec = now))
+        assertFalse(isSignedVideoUrlExpired(unsignedUrl, nowEpochSec = now))
+
+        assertTrue(
+            shouldRefreshDirectStreamBeforePlay(
+                url = expiredUrl,
+                fid = "1034:5000123456",
+                nowEpochSec = now,
+            ),
+        )
+        assertTrue(
+            shouldRefreshDirectStreamBeforePlay(
+                url = expiredUrl,
+                statusId = "5123456789",
+                nowEpochSec = now,
+            ),
+        )
+        assertFalse(
+            shouldRefreshDirectStreamBeforePlay(
+                url = expiredUrl,
+                nowEpochSec = now,
+            ),
+        )
+        assertFalse(
+            shouldRefreshDirectStreamBeforePlay(
+                url = freshUrl,
+                fid = "1034:5000123456",
+                nowEpochSec = now,
+            ),
+        )
+    }
+
+    @Test
+    fun selectsStreamRefreshEligibleErrorsAndMatchesRefreshedVideo() {
+        assertTrue(shouldAttemptStreamRefreshOnError(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS))
+        assertTrue(shouldAttemptStreamRefreshOnError(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED))
+        assertFalse(shouldAttemptStreamRefreshOnError(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED))
+
+        val status = Status(
+            id = "51001",
+            mid = "51001",
+            textHtml = "混排视频",
+            createdAt = "",
+            source = "",
+            user = null,
+            pics = listOf(
+                Pic(
+                    thumb = "https://img/c1.jpg",
+                    large = "https://img/c1.jpg",
+                    videoUrl = "https://f.video.weibocdn.com/o0/clipA.mp4?Expires=9999999999&ssig=new1",
+                    videoTitle = "第一段",
+                    videoFid = "1034:111111",
+                    videoStatusId = "51001",
+                ),
+                Pic(
+                    thumb = "https://img/c2.jpg",
+                    large = "https://img/c2.jpg",
+                    videoUrl = "https://f.video.weibocdn.com/o0/clipB.mp4?Expires=9999999999&ssig=new2",
+                    videoTitle = "第二段",
+                    videoFid = "1034:222222",
+                    videoStatusId = "51001",
+                ),
+            ),
+        )
+
+        val byFid = pickRefreshedVideoFromStatus(
+            status = status,
+            oldUrl = "https://f.video.weibocdn.com/o0/other.mp4?Expires=1",
+            fid = "1034:222222",
+        )
+        assertEquals("https://f.video.weibocdn.com/o0/clipB.mp4?Expires=9999999999&ssig=new2", byFid?.url)
+
+        val byPath = pickRefreshedVideoFromStatus(
+            status = status,
+            oldUrl = "https://g.us.sinaimg.cn/o0/clipA.mp4?Expires=1&ssig=old",
+        )
+        assertEquals("https://f.video.weibocdn.com/o0/clipA.mp4?Expires=9999999999&ssig=new1", byPath?.url)
+
+        val ambiguous = pickRefreshedVideoFromStatus(
+            status = status,
+            oldUrl = "https://f.video.weibocdn.com/o0/unknown.mp4?Expires=1",
+        )
+        assertNull(ambiguous)
+
+        val retweetStatus = Status(
+            id = "52002",
+            mid = "52002",
+            textHtml = "转发",
+            createdAt = "",
+            source = "",
+            user = null,
+            retweeted = Status(
+                id = "52001",
+                mid = "52001",
+                textHtml = "原博",
+                createdAt = "",
+                source = "",
+                user = null,
+                video = VideoInfo(
+                    title = "原博视频",
+                    cover = "https://img/cover.jpg",
+                    url = "https://f.video.weibocdn.com/o0/origin.mp4?Expires=9999999999",
+                    fid = "1034:999999",
+                    statusId = "52001",
+                ),
+            ),
+        )
+        val matchedRetweet = pickRefreshedVideoFromStatus(
+            status = retweetStatus,
+            oldUrl = "https://f.video.weibocdn.com/o0/expired.mp4?Expires=1",
+        )
+        assertEquals("https://f.video.weibocdn.com/o0/origin.mp4?Expires=9999999999", matchedRetweet?.url)
     }
 }

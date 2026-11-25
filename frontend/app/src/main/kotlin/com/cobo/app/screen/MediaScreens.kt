@@ -680,6 +680,9 @@ fun ImageViewerScreen(
                     url = urls[page],
                     live = if (pagePic.isVideo) "" else pagePic.live,
                     videoUrl = if (pagePic.isVideo) pagePic.videoUrl else "",
+                    videoFid = if (pagePic.isVideo) pagePic.videoFid else "",
+                    videoStatusId = if (pagePic.isVideo) pagePic.videoStatusId else "",
+                    videoTitle = if (pagePic.isVideo) pagePic.videoTitle else "",
                     thumbModel = origins.modelOf(urls[page]),
                     thumbCacheKey = origins.cacheKeyOf(urls[page]),
                     original = original,
@@ -709,9 +712,11 @@ fun ImageViewerScreen(
                     onFallbackVideoRoute = {
                         nav.push(
                             Route.Video(
-                                pagePic.videoUrl,
-                                pagePic.videoTitle,
+                                url = pagePic.videoUrl,
+                                title = pagePic.videoTitle,
                                 isLive = isWeiboLiveLink(pagePic.videoUrl),
+                                fid = pagePic.videoFid,
+                                statusId = pagePic.videoStatusId,
                             ),
                         )
                     },
@@ -1077,6 +1082,9 @@ private fun ZoomableImage(
     url: String,
     live: String,
     videoUrl: String = "",
+    videoFid: String = "",
+    videoStatusId: String = "",
+    videoTitle: String = "",
     thumbModel: String?,
     thumbCacheKey: MemoryCache.Key?,
     original: Boolean,
@@ -1222,9 +1230,14 @@ private fun ZoomableImage(
     val hasInlineVideo = videoUrl.isNotBlank()
     var inlineVideoActive by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineIsLive by remember(url, videoUrl) { mutableStateOf(hasInlineVideo && isWeiboLiveLink(videoUrl)) }
-    var inlineResolved by remember(url, videoUrl) {
+    var inlineResolved by remember(url, videoUrl, videoFid, videoStatusId) {
         mutableStateOf<ResolvedVideo?>(
-            if (hasInlineVideo && !inlineIsLive && isDirectVideoStream(videoUrl)) {
+            if (
+                hasInlineVideo &&
+                !inlineIsLive &&
+                isDirectVideoStream(videoUrl) &&
+                !shouldRefreshDirectStreamBeforePlay(videoUrl, videoFid, videoStatusId, false)
+            ) {
                 ResolvedVideo.DirectStream(videoUrl, referer = defaultRefererFor(videoUrl), isLive = false)
             } else {
                 null
@@ -1239,12 +1252,22 @@ private fun ZoomableImage(
     var inlineVideoPosMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
     var inlineScrubbing by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineScrubMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
+    var inlineRefreshedOnError by remember(url, videoUrl, videoFid, videoStatusId) { mutableStateOf(false) }
+    var inlineRefreshingStream by remember(url, videoUrl, videoFid, videoStatusId) { mutableStateOf(false) }
+    var inlinePendingSeekMs by remember(url, videoUrl, videoFid, videoStatusId) { mutableLongStateOf(0L) }
     val activeInlineStream = (inlineResolved as? ResolvedVideo.DirectStream)?.url.orEmpty()
     var currentInlineStreamUrl by remember(url, activeInlineStream) { mutableStateOf(activeInlineStream) }
 
-    LaunchedEffect(hasInlineVideo, inlineVideoActive, videoUrl) {
+    LaunchedEffect(hasInlineVideo, inlineVideoActive, videoUrl, videoFid, videoStatusId) {
         if (!hasInlineVideo || !inlineVideoActive || inlineResolved != null) return@LaunchedEffect
-        val resolved = resolvePlayableVideo(videoUrl, context.cacheDir, isLiveHint = inlineIsLive)
+        val resolved = resolvePlayableVideo(
+            rawUrl = videoUrl,
+            cacheDir = context.cacheDir,
+            isLiveHint = inlineIsLive,
+            fid = videoFid,
+            statusId = videoStatusId,
+            titleHint = videoTitle,
+        )
         when (resolved) {
             is ResolvedVideo.DirectStream -> {
                 inlineIsLive = inlineIsLive || resolved.isLive
@@ -1283,6 +1306,10 @@ private fun ZoomableImage(
                     repeatMode = Player.REPEAT_MODE_OFF
                     playWhenReady = true
                     setMediaItem(MediaItem.fromUri(currentInlineStreamUrl))
+                    if (inlinePendingSeekMs > 0L && !inlineIsLive) {
+                        seekTo(inlinePendingSeekMs)
+                        inlinePendingSeekMs = 0L
+                    }
                     prepare()
                 }
         }
@@ -1318,6 +1345,41 @@ private fun ZoomableImage(
                 val fallback = inlineFallbackUrl?.takeIf { it.isNotBlank() && it != currentInlineStreamUrl }
                 if (fallback != null) {
                     currentInlineStreamUrl = fallback
+                    return
+                }
+                if (
+                    !inlineRefreshedOnError &&
+                    !inlineRefreshingStream &&
+                    shouldAttemptStreamRefreshOnError(error.errorCode) &&
+                    canRefreshVideoSource(videoUrl, videoFid, videoStatusId, inlineIsLive)
+                ) {
+                    inlineRefreshedOnError = true
+                    inlineRefreshingStream = true
+                    inlineVideoBuffering = true
+                    inlinePendingSeekMs = player.currentPosition.coerceAtLeast(0L)
+                    scope.launch {
+                        val fresh = refreshPlayableVideo(
+                            rawUrl = videoUrl,
+                            fid = videoFid,
+                            statusId = videoStatusId,
+                            titleHint = videoTitle,
+                            cacheDir = context.cacheDir,
+                            isLiveHint = inlineIsLive,
+                        )
+                        inlineRefreshingStream = false
+                        if (fresh is ResolvedVideo.DirectStream && fresh.url.isNotBlank() && fresh.url != currentInlineStreamUrl) {
+                            inlineIsLive = inlineIsLive || fresh.isLive
+                            inlineResolved = fresh
+                            currentInlineStreamUrl = fresh.url
+                        } else {
+                            inlinePendingSeekMs = 0L
+                            inlineVideoActive = false
+                            inlineVideoReady = false
+                            inlineVideoPlaying = false
+                            inlineVideoBuffering = false
+                            onFeedback("视频播放失败（${error.errorCodeName}）")
+                        }
+                    }
                     return
                 }
                 inlineVideoActive = false
@@ -3038,7 +3100,14 @@ private fun VideoSpeedPill(
 }
 
 @Composable
-fun VideoScreen(nav: NavState, url: String, title: String, isLive: Boolean = false) {
+fun VideoScreen(
+    nav: NavState,
+    url: String,
+    title: String,
+    isLive: Boolean = false,
+    fid: String = "",
+    statusId: String = "",
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val liveRequested = remember(url, isLive) { isLive || isWeiboLiveLink(url) }
@@ -3046,12 +3115,19 @@ fun VideoScreen(nav: NavState, url: String, title: String, isLive: Boolean = fal
         val unwrapped = unwrapWeiboLink(url)
         resolveWeiboLink(unwrapped) ?: unwrapped
     }
-    var resolved by remember(url, liveRequested) {
+    var resolved by remember(url, liveRequested, fid, statusId) {
         mutableStateOf<ResolvedVideo?>(
-            if (!liveRequested && isDirectVideoStream(url)) {
+            if (
+                !liveRequested &&
+                isDirectVideoStream(url) &&
+                !shouldRefreshDirectStreamBeforePlay(url, fid, statusId, false)
+            ) {
                 ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
             } else null,
         )
+    }
+    val canRefresh = remember(url, fid, statusId, liveRequested) {
+        canRefreshVideoSource(url, fid, statusId, liveRequested)
     }
     var downloading by remember { mutableStateOf(false) }
     var pendingDownloadAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -3101,22 +3177,47 @@ fun VideoScreen(nav: NavState, url: String, title: String, isLive: Boolean = fal
         runWithStoragePermission {
             scope.launch {
                 downloading = true
-                val result = downloadVideoToGallery(context, videoUrl, referer) { statusText ->
+                var downloadUrl = videoUrl
+                var downloadReferer = referer
+                if (isSignedVideoUrlExpired(downloadUrl) && canRefresh) {
+                    hud = "正在刷新视频链接…"
+                    val fresh = refreshPlayableVideo(
+                        rawUrl = url,
+                        fid = fid,
+                        statusId = statusId,
+                        titleHint = title,
+                        cacheDir = context.cacheDir,
+                        isLiveHint = liveRequested,
+                    )
+                    if (fresh is ResolvedVideo.DirectStream && fresh.url.isNotBlank()) {
+                        downloadUrl = fresh.url
+                        downloadReferer = fresh.referer
+                        resolved = fresh
+                    }
+                }
+                val result = downloadVideoToGallery(context, downloadUrl, downloadReferer) { statusText ->
                     hud = statusText
                 }
                 downloading = false
                 result.onSuccess { flash("已保存视频到相册") }
                     .onFailure {
-                        Log.e("CoboVideo", "download failed url=$videoUrl", it)
+                        Log.e("CoboVideo", "download failed url=$downloadUrl", it)
                         flash(it.message ?: "视频下载失败")
                     }
             }
         }
     }
 
-    LaunchedEffect(url, liveRequested) {
+    LaunchedEffect(url, liveRequested, fid, statusId) {
         if (resolved == null) {
-            resolved = resolvePlayableVideo(url, context.cacheDir, isLiveHint = liveRequested)
+            resolved = resolvePlayableVideo(
+                rawUrl = url,
+                cacheDir = context.cacheDir,
+                isLiveHint = liveRequested,
+                fid = fid,
+                statusId = statusId,
+                titleHint = title,
+            )
         }
     }
 
@@ -3241,6 +3342,21 @@ fun VideoScreen(nav: NavState, url: String, title: String, isLive: Boolean = fal
                 isLive = current.isLive,
                 hud = hud,
                 flash = ::flash,
+                onRefreshStream = if (canRefresh) {
+                    {
+                        val fresh = refreshPlayableVideo(
+                            rawUrl = url,
+                            fid = fid,
+                            statusId = statusId,
+                            titleHint = effectiveTitle,
+                            cacheDir = context.cacheDir,
+                            isLiveHint = liveRequested || current.isLive,
+                        )
+                        (fresh as? ResolvedVideo.DirectStream)?.also { resolved = it }
+                    }
+                } else {
+                    null
+                },
                 onDownload = { startVideoDownload(current.url, current.referer) },
                 onOpenInBrowser = { openExternalUrl(context, externalTarget) },
             )
@@ -3271,18 +3387,25 @@ private fun DirectVideoPlayer(
     isLive: Boolean,
     hud: String,
     flash: (String) -> Unit,
+    onRefreshStream: (suspend () -> ResolvedVideo.DirectStream?)? = null,
     onDownload: () -> Unit,
     onOpenInBrowser: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val activity = remember(context) { context.findActivity() }
     val audio = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
     var activeStreamUrl by remember(streamUrl) { mutableStateOf(streamUrl) }
-    val player = remember(activeStreamUrl, referer) {
-        val effectiveReferer = referer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
+    var activeReferer by remember(streamUrl, referer) { mutableStateOf(referer) }
+    var refreshingStream by remember { mutableStateOf(false) }
+    var refreshedOnError by remember { mutableStateOf(false) }
+    var pendingSeekMs by remember { mutableLongStateOf(0L) }
+    val currentOnRefreshStream by rememberUpdatedState(onRefreshStream)
+    val player = remember(activeStreamUrl, activeReferer) {
+        val effectiveReferer = activeReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             setUserAgent(Api.WEB_UA)
             setAllowCrossProtocolRedirects(true)
@@ -3304,11 +3427,38 @@ private fun DirectVideoPlayer(
                                 activeStreamUrl = fallback
                                 return
                             }
+                            val refresher = currentOnRefreshStream
+                            if (
+                                refresher != null &&
+                                !refreshedOnError &&
+                                !refreshingStream &&
+                                shouldAttemptStreamRefreshOnError(error.errorCode)
+                            ) {
+                                refreshedOnError = true
+                                refreshingStream = true
+                                pendingSeekMs = currentPosition.coerceAtLeast(0L)
+                                scope.launch {
+                                    val fresh = runCatching { refresher() }.getOrNull()
+                                    refreshingStream = false
+                                    if (fresh != null && fresh.url.isNotBlank() && fresh.url != activeStreamUrl) {
+                                        activeReferer = fresh.referer
+                                        activeStreamUrl = fresh.url
+                                    } else {
+                                        pendingSeekMs = 0L
+                                        flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
+                                    }
+                                }
+                                return
+                            }
                             flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
                         }
                     },
                 )
                 setMediaItem(MediaItem.fromUri(activeStreamUrl))
+                if (pendingSeekMs > 0L && !isLive) {
+                    seekTo(pendingSeekMs)
+                    pendingSeekMs = 0L
+                }
                 prepare()
                 playWhenReady = true
             }
@@ -3452,10 +3602,15 @@ private fun DirectVideoPlayer(
                     this.player = player
                 }
             },
+            update = { view ->
+                if (view.player !== player) {
+                    view.player = player
+                }
+            },
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (isBuffering) {
+        if (isBuffering || refreshingStream) {
             CoboRefreshSpinner(
                 modifier = Modifier.align(Alignment.Center),
                 size = 30.dp,

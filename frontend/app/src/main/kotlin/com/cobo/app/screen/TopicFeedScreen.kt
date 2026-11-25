@@ -209,7 +209,7 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                                 },
                                 onUser = { nav.push(Route.Profile(it.id)) },
                                 onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                                onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
+                                onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                                 onLike = { scope.launch { store.like(index) } },
                                 onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
                                 onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },

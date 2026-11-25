@@ -293,7 +293,7 @@ fun NotificationsScreen(
                                         },
                                         onUser = { if (it.id.isNotBlank()) nav.push(Route.Profile(it.id)) },
                                         onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
-                                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
+                                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                                         onLike = { scope.launch { state.toggleStatusLike(index) } },
                                         onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
                                         onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },

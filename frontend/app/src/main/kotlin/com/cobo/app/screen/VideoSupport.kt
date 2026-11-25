@@ -5,8 +5,11 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.media3.common.PlaybackException
 import com.cobo.app.App
 import com.cobo.app.data.Api
+import com.cobo.app.data.Status
+import com.cobo.app.data.VideoInfo
 import com.cobo.app.ui.extractWeiboLiveId
 import com.cobo.app.ui.isWeiboLiveLink
 import com.cobo.app.ui.isWeiboShortLink
@@ -392,10 +395,214 @@ private fun resolveWeiboLiveRoom(
     return unavailableFallback
 }
 
+private val SignedExpireQueryRegex = Regex(
+    """[?&](?:expires|deadline)=(\d{10,13})(?:&|#|$)""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * 提取微博/CDN 签名直链里的过期时间戳（Unix 秒）。
+ * 支持 `Expires=` / `expires=` / `deadline=`（10 位秒或 13 位毫秒）；无签名过期参数时返回 null。
+ */
+internal fun extractSignedUrlExpireEpochSec(url: String): Long? {
+    val trimmed = url.trim()
+    if (trimmed.isBlank() || trimmed.startsWith("file:", ignoreCase = true)) return null
+    fun parseFrom(candidate: String): Long? {
+        val raw = SignedExpireQueryRegex.find(candidate)?.groupValues?.getOrNull(1)?.toLongOrNull()
+            ?: return null
+        val epochSec = if (raw >= 1_000_000_000_000L) raw / 1000L else raw
+        return epochSec.takeIf { it >= 1_000_000_000L }
+    }
+    parseFrom(trimmed)?.let { return it }
+    if (trimmed.contains("%")) {
+        val decoded = runCatching { URLDecoder.decode(trimmed, "UTF-8") }.getOrNull()
+        if (!decoded.isNullOrBlank() && decoded != trimmed) {
+            return parseFrom(decoded)
+        }
+    }
+    return null
+}
+
+/**
+ * 判断带防盗链签名的视频直链是否已过期（或将在 [skewSec] 秒内过期）。
+ * 不含过期时间戳参数的普通直链返回 false，交由播放器实际请求并在出错时兜底刷新。
+ */
+internal fun isSignedVideoUrlExpired(
+    url: String,
+    nowEpochSec: Long = System.currentTimeMillis() / 1000L,
+    skewSec: Long = 60L,
+): Boolean {
+    val exp = extractSignedUrlExpireEpochSec(url) ?: return false
+    return exp <= nowEpochSec + skewSec
+}
+
+internal fun canRefreshVideoSource(
+    url: String,
+    fid: String = "",
+    statusId: String = "",
+    isLiveHint: Boolean = false,
+): Boolean = fid.isNotBlank() ||
+    statusId.isNotBlank() ||
+    extractWeiboVideoFid(url) != null ||
+    extractWeiboLiveId(url) != null ||
+    isLiveHint
+
+internal fun shouldRefreshDirectStreamBeforePlay(
+    url: String,
+    fid: String = "",
+    statusId: String = "",
+    isLiveHint: Boolean = false,
+    nowEpochSec: Long = System.currentTimeMillis() / 1000L,
+): Boolean = isDirectVideoStream(url) &&
+    isSignedVideoUrlExpired(url, nowEpochSec = nowEpochSec) &&
+    canRefreshVideoSource(url, fid, statusId, isLiveHint)
+
+/**
+ * 网络/HTTP/数据源及容器解析失败（如 CDN 返回 403 错误页 HTML）时允许尝试自动刷新一次直链；
+ * 纯本地解码器或音频输出异常不无谓重拉。
+ */
+internal fun shouldAttemptStreamRefreshOnError(errorCode: Int): Boolean =
+    errorCode == PlaybackException.ERROR_CODE_UNSPECIFIED ||
+        errorCode == PlaybackException.ERROR_CODE_REMOTE_ERROR ||
+        errorCode in 2000..3999
+
+internal fun videoStreamPathKey(url: String): String {
+    val clean = url.trim().substringBefore('?').substringBefore('#')
+    if (clean.isBlank()) return ""
+    val path = runCatching { URI(clean).path.orEmpty() }.getOrDefault("")
+    val fileName = path.substringAfterLast('/').trim().lowercase()
+    return fileName.ifBlank { path.trim('/').lowercase() }
+}
+
+/**
+ * 从最新拉取的 [Status] 中匹配对应的视频条目（支持普通单视频、转发视频及混排图集视频）。
+ */
+internal fun pickRefreshedVideoFromStatus(
+    status: Status,
+    oldUrl: String,
+    fid: String = "",
+    title: String = "",
+): VideoInfo? {
+    val candidates = buildList {
+        fun collect(s: Status) {
+            s.video?.takeIf { it.url.isNotBlank() }?.let(::add)
+            s.pics.forEach { pic ->
+                if (pic.isVideo) {
+                    add(
+                        VideoInfo(
+                            title = pic.videoTitle,
+                            cover = pic.large.ifBlank { pic.thumb },
+                            url = pic.videoUrl,
+                            durationSec = pic.durationSec,
+                            fid = pic.videoFid,
+                            statusId = pic.videoStatusId.ifBlank { s.id },
+                        ),
+                    )
+                }
+            }
+        }
+        collect(status)
+        status.retweeted?.let(::collect)
+    }
+    if (candidates.isEmpty()) return null
+    if (fid.isNotBlank()) {
+        candidates.firstOrNull { it.fid == fid }?.let { return it }
+    }
+    val oldKey = videoStreamPathKey(oldUrl)
+    if (oldKey.isNotBlank()) {
+        candidates.firstOrNull { videoStreamPathKey(it.url) == oldKey }?.let { return it }
+    }
+    if (title.isNotBlank()) {
+        candidates.firstOrNull { it.title == title }?.let { return it }
+    }
+    return if (candidates.size == 1) candidates.first() else null
+}
+
+/**
+ * 为已过期或播放报错（如 403）的视频重新换取最新签名直链：
+ * 1. 优先用稳定标识 [fid] 直接向微博视频接口换取最新高清流；
+ * 2. 缺少 [fid] 或接口未命中时，按 [statusId] 强制拉取单条微博（跳过磁盘缓存）刷新视频信息；
+ * 3. 直播链接按 `liveId` 重新解析。
+ */
+internal suspend fun refreshPlayableVideo(
+    rawUrl: String,
+    fid: String = "",
+    statusId: String = "",
+    titleHint: String = "",
+    cacheDir: File? = null,
+    isLiveHint: Boolean = false,
+): ResolvedVideo? = withContext(Dispatchers.IO) {
+    val unwrapped = unwrapWeiboLink(rawUrl)
+    val normalized = resolveWeiboLink(unwrapped) ?: unwrapped
+    val liveId = extractWeiboLiveId(normalized) ?: extractWeiboLiveId(rawUrl)
+    val isLiveTarget = isLiveHint || liveId != null || isWeiboLiveLink(normalized) || isWeiboLiveLink(rawUrl)
+
+    if (liveId != null) {
+        when (val liveRes = resolveWeiboLiveRoom(liveId, cacheDir)) {
+            is ResolvedVideo.DirectStream -> return@withContext liveRes
+            else -> Unit
+        }
+    }
+
+    val effectiveFid = fid.trim().ifBlank { extractWeiboVideoFid(normalized).orEmpty() }
+    if (effectiveFid.isNotBlank()) {
+        when (val fidRes = resolveWeiboVideoByFid(effectiveFid, cacheDir)) {
+            is ResolvedVideo.DirectStream -> return@withContext fidRes
+            else -> Unit
+        }
+    }
+
+    if (statusId.isNotBlank() && App.isRepoReady()) {
+        val freshStatus = runCatching { App.repo.detail(statusId, force = true) }.getOrNull()
+        val freshVideo = freshStatus?.let {
+            pickRefreshedVideoFromStatus(it, oldUrl = normalized, fid = effectiveFid, title = titleHint)
+        }
+        if (freshVideo != null) {
+            val freshFid = freshVideo.fid.trim()
+            if (freshFid.isNotBlank() && freshFid != effectiveFid && isSignedVideoUrlExpired(freshVideo.url)) {
+                when (val fidRes = resolveWeiboVideoByFid(freshFid, cacheDir)) {
+                    is ResolvedVideo.DirectStream -> return@withContext fidRes
+                    else -> Unit
+                }
+            }
+            if (isDirectVideoStream(freshVideo.url) && !isSignedVideoUrlExpired(freshVideo.url)) {
+                return@withContext ResolvedVideo.DirectStream(
+                    url = normalizeWeiboStreamUrl(freshVideo.url),
+                    referer = defaultRefererFor(freshVideo.url),
+                    title = freshVideo.title.takeIf { it.isNotBlank() },
+                    isLive = freshVideo.isLive,
+                )
+            }
+            if (freshVideo.url.isNotBlank() && freshVideo.url != rawUrl && freshVideo.url != normalized) {
+                val resolved = resolvePlayableVideo(
+                    rawUrl = freshVideo.url,
+                    cacheDir = cacheDir,
+                    isLiveHint = freshVideo.isLive || isLiveTarget,
+                    fid = freshFid,
+                    statusId = "",
+                    titleHint = freshVideo.title.ifBlank { titleHint },
+                )
+                if (resolved is ResolvedVideo.DirectStream) return@withContext resolved
+            }
+            if (freshFid.isNotBlank() && freshFid != effectiveFid) {
+                when (val fidRes = resolveWeiboVideoByFid(freshFid, cacheDir)) {
+                    is ResolvedVideo.DirectStream -> return@withContext fidRes
+                    else -> Unit
+                }
+            }
+        }
+    }
+
+    null
+}
+
 internal suspend fun resolvePlayableVideo(
     rawUrl: String,
     cacheDir: File? = null,
     isLiveHint: Boolean = false,
+    fid: String = "",
+    statusId: String = "",
+    titleHint: String = "",
 ): ResolvedVideo = withContext(Dispatchers.IO) {
     val unwrapped = unwrapWeiboLink(rawUrl)
     val normalized = resolveWeiboLink(unwrapped) ?: unwrapped
@@ -420,6 +627,18 @@ internal suspend fun resolvePlayableVideo(
     }
 
     if (isM3u8Stream(finalUrl)) {
+        if (!isLiveTarget && isSignedVideoUrlExpired(finalUrl) && canRefreshVideoSource(finalUrl, fid, statusId, false)) {
+            refreshPlayableVideo(
+                rawUrl = finalUrl,
+                fid = fid,
+                statusId = statusId,
+                titleHint = titleHint,
+                cacheDir = cacheDir,
+                isLiveHint = false,
+            )?.let { refreshed ->
+                if (refreshed is ResolvedVideo.DirectStream) return@withContext refreshed
+            }
+        }
         val referer = defaultRefererFor(finalUrl)
         val liveM3u8 = isLiveTarget || isLiveM3u8Playlist(finalUrl, referer)
         if (!liveM3u8 && cacheDir != null) {
@@ -435,6 +654,18 @@ internal suspend fun resolvePlayableVideo(
     }
 
     if (isDirectVideoStream(finalUrl)) {
+        if (isSignedVideoUrlExpired(finalUrl) && canRefreshVideoSource(finalUrl, fid, statusId, isLiveTarget)) {
+            refreshPlayableVideo(
+                rawUrl = finalUrl,
+                fid = fid,
+                statusId = statusId,
+                titleHint = titleHint,
+                cacheDir = cacheDir,
+                isLiveHint = isLiveTarget,
+            )?.let { refreshed ->
+                if (refreshed is ResolvedVideo.DirectStream) return@withContext refreshed
+            }
+        }
         return@withContext ResolvedVideo.DirectStream(
             url = normalizeWeiboStreamUrl(finalUrl),
             referer = defaultRefererFor(finalUrl),
@@ -442,8 +673,9 @@ internal suspend fun resolvePlayableVideo(
         )
     }
 
-    extractWeiboVideoFid(finalUrl)?.let { fid ->
-        when (val fidResult = resolveWeiboVideoByFid(fid, cacheDir)) {
+    val effectiveFid = fid.trim().ifBlank { extractWeiboVideoFid(finalUrl).orEmpty() }
+    if (effectiveFid.isNotBlank()) {
+        when (val fidResult = resolveWeiboVideoByFid(effectiveFid, cacheDir)) {
             is ResolvedVideo.DirectStream -> return@withContext fidResult
             is ResolvedVideo.Unavailable -> if (liveUnavailable == null) liveUnavailable = fidResult
             is ResolvedVideo.WebPage -> return@withContext fidResult

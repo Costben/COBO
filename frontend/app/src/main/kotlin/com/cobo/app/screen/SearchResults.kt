@@ -915,7 +915,7 @@ private fun LazyListScope.searchStatusTabItems(
                 },
                 onUser = { nav.push(Route.Profile(it.id)) },
                 onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive)) },
+                onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                 onLike = {
                     scope.launch {
                         val updated = App.toggleStatusLike(status) ?: return@launch
