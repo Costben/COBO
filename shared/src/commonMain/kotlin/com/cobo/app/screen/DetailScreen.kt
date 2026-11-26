@@ -71,10 +71,12 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -91,6 +93,7 @@ import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.CommentBadge
+import com.cobo.app.data.CommentFilterState
 import com.cobo.app.data.CommentSort
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.data.Membership
@@ -99,6 +102,8 @@ import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
+import com.cobo.app.data.commentFilterEmptyMessage
+import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.NavState
@@ -151,6 +156,7 @@ import io.github.suqi8.coui.kmp.basic.MetaBallSurface
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.basic.couiTouchMotion
@@ -202,6 +208,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     var repostComment by remember { mutableStateOf<Comment?>(null) }
     var commentDialog by remember { mutableStateOf(false) }
     var activeCommentDetail by remember(id) { mutableStateOf<Comment?>(null) }
+    var commentFilter by remember(id) { mutableStateOf(CommentFilterState()) }
     val listState = rememberLazyListState()
     BindScrollToTop(listState)
     // The bar floats over this list too, so the quoted post inside the card below has to be able to
@@ -365,14 +372,16 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     }
 
     LaunchedEffect(listState, comments.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (!switchingSort && last >= comments.size + 2 &&
-                    comments.isNotEmpty() && !commentsEnd
-                ) {
-                    loadComments(false, force = false)
-                }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (!switchingSort && total > 0 && last >= total - 2 &&
+                comments.isNotEmpty() && !commentsEnd
+            ) {
+                loadComments(false, force = false)
             }
+        }
     }
 
     val scheme = COUITheme.colorScheme
@@ -510,31 +519,44 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     }
                 }
 
+                val postAuthorUid = status?.user?.id
+                val visibleComments = filterComments(comments, commentFilter, postAuthorUid, includeReplies = true)
+
                 item {
                     Box(Modifier.fillMaxWidth()) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(
                                     start = if (keepCardFrame) 16.dp else FlatCommentInset,
                                     end = if (keepCardFrame) 16.dp else FlatCommentInset,
                                     top = 6.dp,
-                                    bottom = 2.dp,
+                                    bottom = 4.dp,
                                 ),
-                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = if (sort == CommentSort.Hot) "热门评论" else "最新评论",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = scheme.onSurface,
-                                modifier = Modifier.weight(1f),
-                            )
-                            // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
-                            // so the two orders share one compact track instead.
-                            SortSwitch(
-                                selected = sort,
-                                onSelect = ::switchSort,
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (sort == CommentSort.Hot) "热门评论" else "最新评论",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = scheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
+                                // so the two orders share one compact track instead.
+                                SortSwitch(
+                                    selected = sort,
+                                    onSelect = ::switchSort,
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            CommentFilterBar(
+                                filter = commentFilter,
+                                showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                onChange = { commentFilter = it },
                             )
                         }
                         // A hairline progress bar sits in the header's bottom padding, so a slow
@@ -553,7 +575,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     }
                 }
 
-                itemsIndexed(comments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
+                itemsIndexed(visibleComments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
                     CommentCard(
                         comment = comment,
                         statusId = id,
@@ -602,6 +624,31 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         loadingComments -> LoadingState()
                         commentError != null -> ErrorState(commentError!!) {
                             scope.launch { loadComments(true, force = true) }
+                        }
+                        commentFilter.isActive && comments.isNotEmpty() && visibleComments.isEmpty() -> Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = commentFilterEmptyMessage(commentFilter),
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceSecondary,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (!commentsEnd) {
+                                    TextButton(
+                                        text = "加载更多",
+                                        onClick = { scope.launch { loadComments(false, force = false) } },
+                                    )
+                                }
+                                TextButton(
+                                    text = "显示全部评论",
+                                    onClick = { commentFilter = CommentFilterState() },
+                                )
+                            }
                         }
                         commentsEnd -> Text(
                             "没有更多评论",
@@ -728,6 +775,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             root = activeCommentDetail,
             statusId = effectiveId(),
             mid = effectiveMid(),
+            postAuthorUid = status?.user?.id,
             readOnly = readOnly,
             keepFrame = keepCardFrame,
             onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
@@ -1604,6 +1652,74 @@ private fun SortSwitch(
         testTagOf = { if (it == CommentSort.Hot) "comment_sort_hot" else "comment_sort_time" },
         modifier = modifier,
     )
+}
+
+/** 紧凑胶囊筛选条：与 [SortSwitch] 同套圆角与字号，用于「仅看博主 / 仅看带图」快速切换。 */
+@Composable
+internal fun CommentFilterBar(
+    filter: CommentFilterState,
+    showAuthorOption: Boolean,
+    onChange: (CommentFilterState) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (showAuthorOption) {
+            CommentFilterPill(
+                label = "仅看博主",
+                selected = filter.authorOnly,
+                modifier = Modifier.testTag("comment_filter_author"),
+                onClick = { onChange(filter.copy(authorOnly = !filter.authorOnly)) },
+            )
+        }
+        CommentFilterPill(
+            label = "仅看带图",
+            selected = filter.imagesOnly,
+            modifier = Modifier.testTag("comment_filter_images"),
+            onClick = { onChange(filter.copy(imagesOnly = !filter.imagesOnly)) },
+        )
+    }
+}
+
+@Composable
+private fun CommentFilterPill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = COUITheme.colorScheme
+    val dark = scheme.background.luminance() < 0.5f
+    val haptic = LocalHapticFeedback.current
+    val bg = when {
+        selected -> scheme.primary.copy(alpha = if (dark) 0.22f else 0.13f)
+        dark -> scheme.onSurface.copy(alpha = 0.14f)
+        else -> scheme.onSurface.copy(alpha = 0.08f)
+    }
+    val fg = if (selected) scheme.primary else scheme.onSurfaceSecondary
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(bg)
+            .clickable(role = Role.Checkbox) {
+                haptic.performHapticFeedback(
+                    if (!selected) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
+                )
+                onClick()
+            }
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = fg,
+        )
+    }
 }
 
 /** 微博正文 / 楼中楼详情共用的紧凑分段排序胶囊：点击或横向拖动切换，带弹性滑块与文字渐变。 */

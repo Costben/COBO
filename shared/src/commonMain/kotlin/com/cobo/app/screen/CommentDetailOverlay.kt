@@ -51,9 +51,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.Comment
+import com.cobo.app.data.CommentFilterState
 import com.cobo.app.data.Pic
 import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
+import com.cobo.app.data.commentFilterEmptyMessage
+import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.parseWeiboTimeMillis
 import com.cobo.app.ui.AppBarSurface
@@ -83,6 +86,7 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
@@ -130,6 +134,7 @@ internal fun CommentDetailOverlay(
     root: Comment?,
     statusId: String,
     mid: String,
+    postAuthorUid: String? = null,
     readOnly: Boolean,
     keepFrame: Boolean,
     onImage: (List<Pic>, Int) -> Unit,
@@ -162,6 +167,7 @@ internal fun CommentDetailOverlay(
             initialRoot = currentRoot,
             statusId = statusId,
             mid = mid,
+            postAuthorUid = postAuthorUid,
             readOnly = readOnly,
             keepFrame = keepFrame,
             active = root != null,
@@ -180,6 +186,7 @@ private fun CommentDetailSheetContent(
     initialRoot: Comment,
     statusId: String,
     mid: String,
+    postAuthorUid: String?,
     readOnly: Boolean,
     keepFrame: Boolean,
     active: Boolean,
@@ -214,6 +221,7 @@ private fun CommentDetailSheetContent(
     var end by remember(initialRoot.id) { mutableStateOf(false) }
     var error by remember(initialRoot.id) { mutableStateOf<String?>(null) }
     var replyTarget by remember(initialRoot.id) { mutableStateOf<Comment?>(null) }
+    var subFilter by remember(initialRoot.id) { mutableStateOf(CommentFilterState()) }
 
     suspend fun fetchNextPage(force: Boolean = false): Boolean {
         if (loading || end) return false
@@ -272,17 +280,25 @@ private fun CommentDetailSheetContent(
     }
 
     LaunchedEffect(listState, rawReplies.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            info.visibleItemsInfo.lastOrNull()?.index to info.totalItemsCount
+        }
             .distinctUntilChanged()
-            .collect { lastVisible ->
-                if (lastVisible != null && rawReplies.isNotEmpty() && lastVisible >= rawReplies.size + 1) {
+            .collect { (lastVisible, total) ->
+                if (lastVisible != null && rawReplies.isNotEmpty() && total > 0 && lastVisible >= total - 2) {
                     fetchNextPage(force = false)
                 }
             }
     }
 
-    val sortedReplies = remember(rawReplies.toList(), sort) {
-        orderSubReplies(rawReplies.toList(), sort)
+    val sortedReplies = remember(rawReplies.toList(), sort, subFilter, postAuthorUid) {
+        filterComments(
+            comments = orderSubReplies(rawReplies.toList(), sort),
+            filter = subFilter,
+            authorUid = postAuthorUid,
+            includeReplies = false,
+        )
     }
 
     fun toggleRootLike() {
@@ -494,7 +510,7 @@ private fun CommentDetailSheetContent(
                     }
 
                     item(key = "detail_sub_header") {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(
@@ -503,21 +519,31 @@ private fun CommentDetailSheetContent(
                                     top = 8.dp,
                                     bottom = 4.dp,
                                 ),
-                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = "相关回复共 ${maxOf(replyTotal, sortedReplies.size)} 条",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = scheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            SubReplySortTabRow(
-                                sort = sort,
-                                onSelectSort = { sort = it },
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "相关回复共 ${maxOf(replyTotal, rawReplies.size)} 条",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = scheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                SubReplySortTabRow(
+                                    sort = sort,
+                                    onSelectSort = { sort = it },
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            CommentFilterBar(
+                                filter = subFilter,
+                                showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                onChange = { subFilter = it },
                             )
                         }
                     }
@@ -530,6 +556,35 @@ private fun CommentDetailSheetContent(
                             item(key = "sub_error") {
                                 ErrorState(error ?: "加载失败") {
                                     scope.launch { fetchNextPage(force = true) }
+                                }
+                            }
+                        }
+                        sortedReplies.isEmpty() && subFilter.isActive && rawReplies.isNotEmpty() -> {
+                            item(key = "sub_filtered_empty") {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text(
+                                        text = commentFilterEmptyMessage(subFilter),
+                                        fontSize = 13.sp,
+                                        color = scheme.onSurfaceSecondary,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        if (!end) {
+                                            TextButton(
+                                                text = "加载更多",
+                                                onClick = { scope.launch { fetchNextPage(force = false) } },
+                                            )
+                                        }
+                                        TextButton(
+                                            text = "显示全部回复",
+                                            onClick = { subFilter = CommentFilterState() },
+                                        )
+                                    }
                                 }
                             }
                         }
