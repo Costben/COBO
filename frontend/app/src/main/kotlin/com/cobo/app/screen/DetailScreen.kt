@@ -83,6 +83,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -146,6 +150,8 @@ import io.github.suqi8.coui.kmp.basic.ListPopupColumn
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.MetaBallParticle
 import io.github.suqi8.coui.kmp.basic.MetaBallSurface
+import io.github.suqi8.coui.kmp.basic.NavigationPopupMenuDefaults
+import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.SpotLightDefaults
 import io.github.suqi8.coui.kmp.basic.Text
@@ -642,7 +648,21 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             }
             PinnedBarDensity {
                 val current = status
-                val currentFavorited = current?.let { App.repo.isFavorited(it) } == true
+                val currentLocalFavorited = current?.let { App.repo.isFavorited(it) } == true
+                val currentInReadLater = current?.let { ReadLater.contains(it.id) } == true
+                var currentCloudFavorited by remember(current?.id) {
+                    mutableStateOf(current?.favorited == true)
+                }
+                LaunchedEffect(current?.id, current?.favorited) {
+                    currentCloudFavorited = current?.favorited == true
+                }
+                var favoriteMenuExpanded by remember(current?.id) { mutableStateOf(false) }
+                val anySaved = currentLocalFavorited || currentCloudFavorited || currentInReadLater
+                val favButtonIcon = when {
+                    currentLocalFavorited || currentCloudFavorited -> CoboIcons.StarFill
+                    currentInReadLater -> CoboIcons.BookmarkFill
+                    else -> CoboIcons.Star
+                }
                 var toolbarHeightPx by remember { mutableIntStateOf(0) }
                 val toolbarExtraClearancePx = with(LocalDensity.current) { 24.dp.toPx() }
                 DetailFloatingToolbar(
@@ -675,20 +695,108 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         modifier = Modifier.testTag("detail_comment"),
                         enabled = !readOnly && !detailBarHidden,
                     )
-                    DetailFloatingToolbarItem(
-                        icon = if (currentFavorited) CoboIcons.StarFill else CoboIcons.Star,
-                        count = "",
-                        contentDescription = if (currentFavorited) "已收藏" else "收藏",
-                        onClick = {
-                            val s = status ?: return@DetailFloatingToolbarItem
-                            val next = App.repo.toggleLocalFavorite(s)
-                            status = s
-                            App.toast(if (next) "已收藏" else "已取消收藏")
-                        },
-                        modifier = Modifier.testTag("detail_favorite"),
-                        active = currentFavorited,
-                        enabled = current != null && !detailBarHidden,
-                    )
+                    Box {
+                        DetailFloatingToolbarItem(
+                            icon = favButtonIcon,
+                            count = "",
+                            contentDescription = if (anySaved) "已收藏" else "收藏",
+                            onClick = { if (current != null) favoriteMenuExpanded = true },
+                            modifier = Modifier.testTag("detail_favorite"),
+                            active = anySaved,
+                            enabled = current != null && !detailBarHidden,
+                        )
+                        OverlayListPopup(
+                            show = favoriteMenuExpanded && current != null,
+                            popupPositionProvider = remember { detailFavoritePopupPositionProvider() },
+                            onDismissRequest = { favoriteMenuExpanded = false },
+                        ) {
+                            val s = current ?: return@OverlayListPopup
+                            val dismiss = LocalDismissState.current
+                            val menuScheme = COUITheme.colorScheme
+                            val showCloudFav = !readOnly && !App.repo.guest
+                            val optionSize = 2 + if (showCloudFav) 1 else 0
+                            var idx = 0
+                            ListPopupColumn {
+                                val localIcon = if (currentLocalFavorited) CoboIcons.StarFill else CoboIcons.Star
+                                val localTint = if (currentLocalFavorited) menuScheme.primary else menuScheme.onSurfaceContainer
+                                DropdownImpl(
+                                    item = DropdownItem(
+                                        text = if (currentLocalFavorited) "取消本地收藏" else "收藏到本地",
+                                        icon = { iconModifier ->
+                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                Icon(localIcon, null, Modifier.size(18.dp), tint = localTint)
+                                            }
+                                        },
+                                    ),
+                                    optionSize = optionSize,
+                                    isSelected = false,
+                                    index = idx++,
+                                    groupKey = "detail_favorite_${s.id}",
+                                    onSelectedIndexChange = {
+                                        dismiss?.invoke()
+                                        favoriteMenuExpanded = false
+                                        val next = App.repo.toggleLocalFavorite(s)
+                                        status = s
+                                        App.toast(if (next) "已收藏到本地" else "已取消本地收藏")
+                                    },
+                                )
+                                if (showCloudFav) {
+                                    val cloudIcon = if (currentCloudFavorited) CoboIcons.CloudFill else CoboIcons.Cloud
+                                    val cloudTint = if (currentCloudFavorited) menuScheme.primary else menuScheme.onSurfaceContainer
+                                    DropdownImpl(
+                                        item = DropdownItem(
+                                            text = if (currentCloudFavorited) "取消微博账号收藏" else "收藏到微博账号",
+                                            icon = { iconModifier ->
+                                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                    Icon(cloudIcon, null, Modifier.size(18.dp), tint = cloudTint)
+                                                }
+                                            },
+                                        ),
+                                        optionSize = optionSize,
+                                        isSelected = false,
+                                        index = idx++,
+                                        groupKey = "detail_favorite_${s.id}",
+                                        onSelectedIndexChange = {
+                                            dismiss?.invoke()
+                                            favoriteMenuExpanded = false
+                                            scope.launch {
+                                                runCatching { App.repo.favorite(s.id, currentCloudFavorited) }
+                                                    .onSuccess {
+                                                        val next = !currentCloudFavorited
+                                                        currentCloudFavorited = next
+                                                        status = s.copy(favorited = next)
+                                                        App.toast(if (next) "已收藏到微博账号" else "已取消微博账号收藏")
+                                                    }
+                                                    .onFailure { App.toast(it.message ?: "操作失败") }
+                                            }
+                                        },
+                                    )
+                                }
+                                val readLaterIcon = if (currentInReadLater) CoboIcons.BookmarkFill else CoboIcons.Bookmark
+                                val readLaterTint = if (currentInReadLater) menuScheme.primary else menuScheme.onSurfaceContainer
+                                DropdownImpl(
+                                    item = DropdownItem(
+                                        text = if (currentInReadLater) "移出稍后再看" else "稍后再看",
+                                        icon = { iconModifier ->
+                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                Icon(readLaterIcon, null, Modifier.size(18.dp), tint = readLaterTint)
+                                            }
+                                        },
+                                    ),
+                                    optionSize = optionSize,
+                                    isSelected = false,
+                                    index = idx,
+                                    groupKey = "detail_favorite_${s.id}",
+                                    onSelectedIndexChange = {
+                                        dismiss?.invoke()
+                                        favoriteMenuExpanded = false
+                                        val added = ReadLater.toggle(s)
+                                        App.toast(if (added) "已加入稍后再看" else "已移出稍后再看")
+                                    },
+                                )
+                            }
+                        }
+                    }
                     DetailFloatingToolbarItem(
                         icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,
                         count = fmtCount(current?.attitudes ?: 0),
@@ -1894,3 +2002,36 @@ private fun DetailFloatingToolbarItem(
         }
     }
 }
+
+private fun detailFavoritePopupPositionProvider(): PopupPositionProvider =
+    object : PopupPositionProvider {
+        private val margins = PaddingValues(
+            horizontal = NavigationPopupMenuDefaults.HorizontalMargin,
+            vertical = NavigationPopupMenuDefaults.VerticalMargin,
+        )
+
+        override fun calculatePosition(
+            anchorBounds: IntRect,
+            windowBounds: IntRect,
+            layoutDirection: LayoutDirection,
+            popupContentSize: IntSize,
+            popupMargin: IntRect,
+            alignment: PopupPositionProvider.Align,
+        ): IntOffset {
+            val minX = windowBounds.left + popupMargin.left
+            val maxX = (windowBounds.right - popupContentSize.width - popupMargin.right)
+                .coerceAtLeast(minX)
+            val desiredX = anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2
+            val minY = windowBounds.top + popupMargin.top
+            val maxY = (windowBounds.bottom - popupContentSize.height - popupMargin.bottom)
+                .coerceAtLeast(minY)
+            val offsetY = (anchorBounds.top - popupContentSize.height - popupMargin.bottom)
+                .coerceIn(minY, maxY)
+            return IntOffset(
+                x = desiredX.coerceIn(minX, maxX),
+                y = offsetY,
+            )
+        }
+
+        override fun getMargins(): PaddingValues = margins
+    }

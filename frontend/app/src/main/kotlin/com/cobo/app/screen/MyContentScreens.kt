@@ -47,6 +47,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.ReadLater
+import com.cobo.app.data.ReadLaterFilter
 import com.cobo.app.data.Status
 import com.cobo.app.data.parseWeiboTimeMillis
 import com.cobo.app.ui.AppBarSurface
@@ -58,6 +60,7 @@ import com.cobo.app.ui.TopBarBounds
 import com.cobo.app.ui.attachToRow
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.components.BackIconButton
+import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
@@ -94,6 +97,7 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Hide
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Search
@@ -105,10 +109,13 @@ import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
 /**
- * 收藏页面：已登录账号提供「微博收藏」（云端）与「本地收藏」两栏，纯本地模式直接展示本地收藏。
+ * 收藏页面：已登录账号提供「微博」「本地」「稍后再看」三栏，纯本地模式提供「本地收藏」「稍后再看」两栏。
  */
 @Composable
-fun FavoritesScreen(nav: NavState) {
+fun FavoritesScreen(
+    nav: NavState,
+    initialTab: Int = 0,
+) {
     val guest = remember { App.repo.guest }
     val localStore = remember {
         FeedStore("local_favorites") { cursor, force -> App.repo.favorites(cursor, force) }
@@ -118,25 +125,22 @@ fun FavoritesScreen(nav: NavState) {
         if (favVersion > 0) localStore.refresh()
     }
 
-    if (guest) {
-        SimpleStatusFeedScreen(
-            nav = nav,
-            title = "收藏",
-            store = localStore,
-            emptyText = "还没有收藏的微博",
-            testTag = "favorites_page",
-        )
-        return
-    }
-
     val scope = rememberCoroutineScope()
-    val cloudStore = remember {
-        FeedStore("cloud_favorites") { cursor, force -> App.repo.cloudFavorites(cursor, force) }
+    val cloudStore = remember(guest) {
+        if (guest) null else FeedStore("cloud_favorites") { cursor, force -> App.repo.cloudFavorites(cursor, force) }
     }
-    val tabs = remember { listOf("微博收藏", "本地收藏") }
-    val stores = remember(cloudStore, localStore) { listOf(cloudStore, localStore) }
-    val listStates = remember { listOf(LazyListState(), LazyListState()) }
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
+    val tabs = remember(guest) {
+        if (guest) listOf("本地收藏", "稍后再看") else listOf("微博", "本地", "稍后再看")
+    }
+    val stores = remember(guest, cloudStore, localStore) {
+        if (guest) listOf<FeedStore?>(localStore, null) else listOf(cloudStore, localStore, null)
+    }
+    val readLaterTabIndex = tabs.lastIndex
+    val listStates = remember(tabs.size) { List(tabs.size) { LazyListState() } }
+    val pagerState = rememberPagerState(
+        initialPage = initialTab.coerceIn(0, tabs.lastIndex),
+        pageCount = { tabs.size },
+    )
     val backdrop = rememberLayerBackdrop()
     val blur = blurEffectsEnabled()
     val topBarBounds = remember { TopBarBounds() }
@@ -145,6 +149,8 @@ fun FavoritesScreen(nav: NavState) {
     var menuExpanded by remember { mutableStateOf(false) }
     var sortOrder by remember { mutableStateOf(FavoritesSortOrder.NewestFirst) }
     var hideExpired by remember { mutableStateOf(false) }
+    var readLaterFilter by remember { mutableStateOf(ReadLaterFilter.All) }
+    var confirmClearReadLater by remember { mutableStateOf(false) }
     var filterOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var filterRowPx by remember { mutableIntStateOf(0) }
@@ -174,30 +180,42 @@ fun FavoritesScreen(nav: NavState) {
                         beyondViewportPageCount = 1,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
-                        val store = stores[page]
                         val listState = listStates[page]
                         BindScrollToTop(listState, enabled = page == pagerState.settledPage)
-                        StatusFeedList(
-                            nav = nav,
-                            store = store,
-                            listState = listState,
-                            topInset = topBarHeight,
-                            extraTopInset = filterInset,
-                            emptyText = if (page == 0) "微博账号里还没有收藏" else "还没有本地收藏",
-                            filteredEmptyText = when {
-                                query.isNotBlank() -> "没有匹配的收藏"
-                                hideExpired -> "当前列表均为已失效微博"
-                                else -> null
-                            },
-                            transformItems = { items ->
-                                filterAndSortFavorites(
-                                    items = items,
-                                    sortOrder = sortOrder,
-                                    hideExpired = hideExpired,
-                                    query = query,
-                                )
-                            },
-                        )
+                        if (page == readLaterTabIndex) {
+                            ReadLaterTabContent(
+                                nav = nav,
+                                listState = listState,
+                                topInset = topBarHeight,
+                                extraTopInset = filterInset,
+                                query = query,
+                                filter = readLaterFilter,
+                                onFilterChange = { readLaterFilter = it },
+                            )
+                        } else {
+                            val store = stores[page] ?: return@HorizontalPager
+                            StatusFeedList(
+                                nav = nav,
+                                store = store,
+                                listState = listState,
+                                topInset = topBarHeight,
+                                extraTopInset = filterInset,
+                                emptyText = if (!guest && page == 0) "微博账号里还没有收藏" else "还没有本地收藏",
+                                filteredEmptyText = when {
+                                    query.isNotBlank() -> "没有匹配的收藏"
+                                    hideExpired -> "当前列表均为已失效微博"
+                                    else -> null
+                                },
+                                transformItems = { items ->
+                                    filterAndSortFavorites(
+                                        items = items,
+                                        sortOrder = sortOrder,
+                                        hideExpired = hideExpired,
+                                        query = query,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -211,6 +229,7 @@ fun FavoritesScreen(nav: NavState) {
                 val barDensity = LocalDensity.current
                 val menuScheme = COUITheme.colorScheme
                 val selectedIdx = pagerState.currentPage.coerceIn(0, tabs.lastIndex)
+                val onReadLaterTab = selectedIdx == readLaterTabIndex
                 Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                     AppBarSurface(
                         modifier = Modifier.fillMaxWidth().reportTopBarBottom(topBarBounds),
@@ -239,7 +258,7 @@ fun FavoritesScreen(nav: NavState) {
                                         TabRowDefaults.opaqueTabRowColors()
                                     },
                                     height = TopAppBarDefaults.SegmentButtonHeight,
-                                    segmentPadding = 12.dp,
+                                    segmentPadding = if (guest) 12.dp else 10.dp,
                                     backdrop = LocalBackdrop.current,
                                     commitOnRelease = true,
                                     dragSelectionEnabled = true,
@@ -254,9 +273,78 @@ fun FavoritesScreen(nav: NavState) {
                                     ) {
                                         Icon(COUIIcons.More, "更多", Modifier.size(22.dp))
                                     }
-                                    OverlayCascadingListPopup(
-                                        show = menuExpanded,
-                                        entries = listOf(
+                                    val menuEntries = if (onReadLaterTab) {
+                                        val readLaterEntries = ReadLater.all()
+                                        val hasRead = readLaterEntries.any { it.read }
+                                        listOf(
+                                            DropdownEntry(
+                                                items = buildList {
+                                                    add(
+                                                        DropdownItem(
+                                                            text = "搜索",
+                                                            summary = query.trim().takeIf { it.isNotEmpty() },
+                                                            selected = filterOpen,
+                                                            icon = { iconModifier ->
+                                                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                    Icon(
+                                                                        imageVector = COUIIcons.Search,
+                                                                        contentDescription = null,
+                                                                        modifier = Modifier.size(18.dp),
+                                                                        tint = menuScheme.onSurfaceContainer,
+                                                                    )
+                                                                }
+                                                            },
+                                                            onClick = {
+                                                                filterOpen = !filterOpen
+                                                                if (!filterOpen) query = ""
+                                                            },
+                                                        ),
+                                                    )
+                                                    if (hasRead) {
+                                                        add(
+                                                            DropdownItem(
+                                                                text = "清空已读",
+                                                                icon = { iconModifier ->
+                                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                        Icon(
+                                                                            imageVector = COUIIcons.Delete,
+                                                                            contentDescription = null,
+                                                                            modifier = Modifier.size(18.dp),
+                                                                            tint = menuScheme.onSurfaceContainer,
+                                                                        )
+                                                                    }
+                                                                },
+                                                                onClick = {
+                                                                    ReadLater.clearRead()
+                                                                    App.toast("已清空已读")
+                                                                },
+                                                            ),
+                                                        )
+                                                    }
+                                                    if (readLaterEntries.isNotEmpty()) {
+                                                        add(
+                                                            DropdownItem(
+                                                                text = "清空稍后再看",
+                                                                alert = true,
+                                                                icon = { iconModifier ->
+                                                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                        Icon(
+                                                                            imageVector = COUIIcons.Delete,
+                                                                            contentDescription = null,
+                                                                            modifier = Modifier.size(18.dp),
+                                                                            tint = menuScheme.error,
+                                                                        )
+                                                                    }
+                                                                },
+                                                                onClick = { confirmClearReadLater = true },
+                                                            ),
+                                                        )
+                                                    }
+                                                },
+                                            ),
+                                        )
+                                    } else {
+                                        listOf(
                                             DropdownEntry(
                                                 items = listOf(
                                                     DropdownItem(
@@ -335,7 +423,11 @@ fun FavoritesScreen(nav: NavState) {
                                                     ),
                                                 ),
                                             ),
-                                        ),
+                                        )
+                                    }
+                                    OverlayCascadingListPopup(
+                                        show = menuExpanded,
+                                        entries = menuEntries,
                                         popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
                                         onDismissRequest = { menuExpanded = false },
                                     )
@@ -370,7 +462,7 @@ fun FavoritesScreen(nav: NavState) {
                                         expanded = filterOpen,
                                         onExpandedChange = {},
                                         modifier = Modifier.weight(1f).testTag("favorites_filter_input"),
-                                        label = "搜索收藏内容或作者",
+                                        label = if (onReadLaterTab) "搜索稍后再看正文、作者或备注" else "搜索收藏内容或作者",
                                         backdrop = LocalBackdrop.current,
                                     )
                                     Spacer(Modifier.width(10.dp))
@@ -393,6 +485,22 @@ fun FavoritesScreen(nav: NavState) {
                 }
             }
         }
+    }
+
+    if (confirmClearReadLater) {
+        ConfirmDialog(
+            title = "清空稍后再看",
+            message = "将移除本机保存的全部稍后再看离线快照。",
+            confirmText = "清空",
+            onDismiss = { confirmClearReadLater = false },
+            onConfirm = {
+                confirmClearReadLater = false
+                ReadLater.clearAll()
+                filterOpen = false
+                query = ""
+                App.toast("已清空稍后再看")
+            },
+        )
     }
 }
 

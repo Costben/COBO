@@ -1,9 +1,7 @@
 package com.cobo.app.screen
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,16 +17,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,12 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,43 +46,23 @@ import com.cobo.app.data.ReadLaterFilter
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.filterReadLaterEntries
-import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
-import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.Route
-import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.components.Avatar
-import com.cobo.app.ui.components.BackIconButton
-import com.cobo.app.ui.components.ConfirmDialog
 import com.cobo.app.ui.components.EmptyState
-import com.cobo.app.ui.components.TopBarTextButton
 import com.cobo.app.ui.components.WeiboRichText
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.glassBarContentTop
-import com.cobo.app.ui.layerBackdropIf
-import com.cobo.app.ui.pageContainerColor
-import com.cobo.app.ui.pinnedHeight
-import com.cobo.app.ui.rememberListScrollFraction
-import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.CardDefaults
-import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.InputField
-import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.NotificationSwipeBox
-import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
-import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.basic.rememberNotificationSwipeState
-import io.github.suqi8.coui.kmp.blur.LocalBackdrop
-import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.core.ExperimentalCOUIApi
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Delete
-import io.github.suqi8.coui.kmp.icon.extended.Filter
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
@@ -104,233 +78,127 @@ private fun formatReadLaterStamp(millis: Long): String {
     return SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(millis))
 }
 
-@OptIn(ExperimentalCOUIApi::class)
+/** 独立入口直接打开收藏页的「稍后再看」标签。 */
 @Composable
 fun ReadLaterScreen(nav: NavState) {
-    val allEntries = ReadLater.all()
-    var filter by remember { mutableStateOf(ReadLaterFilter.All) }
-    var filterOpen by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var filterRowPx by remember { mutableIntStateOf(0) }
-    var confirmClear by remember { mutableStateOf(false) }
-    var openId by remember { mutableStateOf<String?>(null) }
-
-    val filterRowHeight = with(LocalDensity.current) { filterRowPx.toDp() }
-    val filterInset by animateDpAsState(
-        targetValue = if (filterOpen) filterRowHeight else 0.dp,
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-        label = "readLaterFilterInset",
+    FavoritesScreen(
+        nav = nav,
+        initialTab = if (App.repo.guest) 1 else 2,
     )
+}
+
+@OptIn(ExperimentalCOUIApi::class)
+@Composable
+internal fun ReadLaterTabContent(
+    nav: NavState,
+    listState: LazyListState,
+    topInset: Dp,
+    extraTopInset: Dp,
+    query: String,
+    filter: ReadLaterFilter,
+    onFilterChange: (ReadLaterFilter) -> Unit,
+) {
+    val allEntries = ReadLater.all()
+    var openId by remember { mutableStateOf<String?>(null) }
     val shown = filterReadLaterEntries(allEntries, filter, query)
 
-    BackHandler(enabled = filterOpen) {
-        filterOpen = false
-        query = ""
-    }
-
-    val listState = rememberLazyListState()
-    BindScrollToTop(listState)
-    val pageColor = pageContainerColor()
-    val backdrop = rememberLayerBackdrop()
-    val blur = blurEffectsEnabled()
-    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-
-    Box(Modifier.fillMaxSize().background(pageColor).testTag("read_later_page")) {
-        Box(Modifier.fillMaxSize().layerBackdropIf(blur, backdrop).background(pageColor)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = glassBarContentTop(topBarHeight, 8.dp) + filterInset,
-                    end = 12.dp,
-                    bottom = 16.dp + navBottomPadding(),
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (allEntries.isNotEmpty()) {
-                    item(key = "read_later_tabs") {
-                        TabRowWithContour(
-                            tabs = ReadLaterFilter.entries.map { it.label },
-                            selectedTabIndex = filter.ordinal,
-                            onTabSelected = { idx -> filter = ReadLaterFilter.entries[idx] },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 2.dp)
-                                .testTag("read_later_tabs"),
-                            height = TabRowDefaults.TabRowWithContourTinyHeight,
-                            cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
-                            contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
-                            segmentPadding = 6.dp,
-                        )
-                    }
-                }
-
-                when {
-                    allEntries.isEmpty() -> item(key = "empty") {
-                        EmptyState("可在任意微博卡片右上角菜单加入稍后再看，离线也能查看正文与转发快照")
-                    }
-                    shown.isEmpty() -> item(key = "filtered_empty") {
-                        EmptyState(
-                            when {
-                                query.isNotBlank() -> "没有匹配的离线快照"
-                                filter == ReadLaterFilter.Unread -> "没有未读的稍后再看微博"
-                                filter == ReadLaterFilter.Read -> "还没有已读记录"
-                                else -> "暂无记录"
-                            },
-                        )
-                    }
-                    else -> {
-                        itemsIndexed(shown, key = { _, e -> e.status.id }) { index, entry ->
-                            val swipe = rememberNotificationSwipeState()
-                            val scope = rememberCoroutineScope()
-                            androidx.compose.runtime.LaunchedEffect(swipe.isRevealed) {
-                                if (swipe.isRevealed) openId = entry.status.id
-                            }
-                            androidx.compose.runtime.LaunchedEffect(openId) {
-                                if (openId != entry.status.id && swipe.isRevealed) swipe.close()
-                            }
-                            NotificationSwipeBox(
-                                onSettings = null,
-                                onDismiss = {
-                                    ReadLater.remove(entry.status.id)
-                                    App.toast("已移出稍后再看")
-                                },
-                                settingsIcon = null,
-                                dismissIcon = null,
-                                modifier = Modifier
-                                    .animateItem(
-                                        fadeInSpec = null,
-                                        placementSpec = ReadLaterPlacementSpec,
-                                        fadeOutSpec = null,
-                                    )
-                                    .testTag("read_later_row_$index"),
-                                state = swipe,
-                                minHeight = 0.dp,
-                                containerColor = CardDefaults.defaultColors().color,
-                                dismissOnFullSwipe = true,
-                                dismissDescription = "移出稍后再看",
-                            ) {
-                                ReadLaterRowBody(
-                                    entry = entry,
-                                    onOpen = {
-                                        if (swipe.isRevealed) {
-                                            scope.launch { swipe.close() }
-                                        } else {
-                                            StatusMemory.remember(entry.status)
-                                            ReadLater.setRead(entry.status.id, true)
-                                            nav.push(Route.Detail(entry.status.id, entry.status.mid))
-                                        }
-                                    },
-                                    onToggleRead = {
-                                        ReadLater.setRead(entry.status.id, !entry.read)
-                                    },
-                                    onDelete = {
-                                        ReadLater.remove(entry.status.id)
-                                        App.toast("已移出稍后再看")
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("read_later_page"),
+        contentPadding = PaddingValues(
+            start = 12.dp,
+            top = glassBarContentTop(topInset, 8.dp) + extraTopInset,
+            end = 12.dp,
+            bottom = 16.dp + navBottomPadding(),
+        ),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (allEntries.isNotEmpty()) {
+            item(key = "read_later_tabs") {
+                TabRowWithContour(
+                    tabs = ReadLaterFilter.entries.map { it.label },
+                    selectedTabIndex = filter.ordinal,
+                    onTabSelected = { idx -> onFilterChange(ReadLaterFilter.entries[idx]) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 2.dp)
+                        .testTag("read_later_tabs"),
+                    height = TabRowDefaults.TabRowWithContourTinyHeight,
+                    cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
+                    contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
+                    segmentPadding = 6.dp,
+                )
             }
         }
 
-        CompositionLocalProvider(
-            LocalBackdrop provides if (blur) backdrop else null,
-            LocalEdgeToEdge provides true,
-        ) {
-            PinnedBarDensity {
-                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                    AppBarSurface(
-                        modifier = Modifier.fillMaxWidth(),
-                        containerColor = pageColor,
-                        scrollFraction = rememberListScrollFraction(listState),
+        when {
+            allEntries.isEmpty() -> item(key = "empty") {
+                EmptyState("可在微博详情页收藏按钮或卡片右上角菜单加入稍后再看，离线也能查看正文与转发快照")
+            }
+            shown.isEmpty() -> item(key = "filtered_empty") {
+                EmptyState(
+                    when {
+                        query.isNotBlank() -> "没有匹配的离线快照"
+                        filter == ReadLaterFilter.Unread -> "没有未读的稍后再看微博"
+                        filter == ReadLaterFilter.Read -> "还没有已读记录"
+                        else -> "暂无记录"
+                    },
+                )
+            }
+            else -> {
+                itemsIndexed(shown, key = { _, e -> e.status.id }) { index, entry ->
+                    val swipe = rememberNotificationSwipeState()
+                    val scope = rememberCoroutineScope()
+                    LaunchedEffect(swipe.isRevealed) {
+                        if (swipe.isRevealed) openId = entry.status.id
+                    }
+                    LaunchedEffect(openId) {
+                        if (openId != entry.status.id && swipe.isRevealed) swipe.close()
+                    }
+                    NotificationSwipeBox(
+                        onSettings = null,
+                        onDismiss = {
+                            ReadLater.remove(entry.status.id)
+                            App.toast("已移出稍后再看")
+                        },
+                        settingsIcon = null,
+                        dismissIcon = null,
+                        modifier = Modifier
+                            .animateItem(
+                                fadeInSpec = null,
+                                placementSpec = ReadLaterPlacementSpec,
+                                fadeOutSpec = null,
+                            )
+                            .testTag("read_later_row_$index"),
+                        state = swipe,
+                        minHeight = 0.dp,
+                        containerColor = CardDefaults.defaultColors().color,
+                        dismissOnFullSwipe = true,
+                        dismissDescription = "移出稍后再看",
                     ) {
-                        SmallTopAppBar(
-                            title = "稍后再看",
-                            color = pageColor,
-                            showDivider = false,
-                            gradientGlass = false,
-                            navigationIcon = { BackIconButton { nav.pop() } },
-                            actions = {
-                                if (allEntries.isNotEmpty()) {
-                                    HighlightedIconButton(
-                                        onClick = {
-                                            filterOpen = !filterOpen
-                                            if (!filterOpen) query = ""
-                                        },
-                                        modifier = Modifier.couiTopAppBarActionItem().testTag("read_later_filter"),
-                                    ) {
-                                        Icon(COUIIcons.Filter, "筛选", Modifier.size(22.dp))
-                                    }
-                                    TopBarTextButton("清空", onClick = { confirmClear = true })
+                        ReadLaterRowBody(
+                            entry = entry,
+                            onOpen = {
+                                if (swipe.isRevealed) {
+                                    scope.launch { swipe.close() }
+                                } else {
+                                    StatusMemory.remember(entry.status)
+                                    ReadLater.setRead(entry.status.id, true)
+                                    nav.push(Route.Detail(entry.status.id, entry.status.mid))
                                 }
                             },
+                            onToggleRead = {
+                                ReadLater.setRead(entry.status.id, !entry.read)
+                            },
+                            onDelete = {
+                                ReadLater.remove(entry.status.id)
+                                App.toast("已移出稍后再看")
+                            },
                         )
-                    }
-                    if (filterOpen || filterInset > 0.dp) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(filterInset)
-                                .clipToBounds(),
-                        ) {
-                            Column(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true)) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .onSizeChanged { filterRowPx = it.height }
-                                        .padding(
-                                            start = TopAppBarDefaults.NavigationIconPadding,
-                                            end = TopAppBarDefaults.ActionIconPadding,
-                                            top = 6.dp,
-                                            bottom = 6.dp,
-                                        ),
-                                ) {
-                                    InputField(
-                                        query = query,
-                                        onQueryChange = { query = it },
-                                        onSearch = {},
-                                        expanded = filterOpen,
-                                        onExpandedChange = {},
-                                        modifier = Modifier.fillMaxWidth().testTag("read_later_filter_input"),
-                                        label = "搜索稍后再看正文、作者或备注",
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
-    }
-
-    if (confirmClear) {
-        val hasRead = allEntries.any { it.read }
-        ConfirmDialog(
-            title = if (hasRead && filter == ReadLaterFilter.Read) "清空已读快照" else "清空稍后再看",
-            message = if (hasRead && filter == ReadLaterFilter.Read) {
-                "将移除所有已读的稍后再看离线快照。"
-            } else {
-                "将移除本机保存的全部稍后再看离线快照。"
-            },
-            confirmText = "清空",
-            onDismiss = { confirmClear = false },
-            onConfirm = {
-                confirmClear = false
-                if (hasRead && filter == ReadLaterFilter.Read) {
-                    ReadLater.clearRead()
-                    App.toast("已清空已读快照")
-                } else {
-                    ReadLater.clearAll()
-                    filterOpen = false
-                    query = ""
-                    App.toast("已清空稍后再看")
-                }
-            },
-        )
     }
 }
 

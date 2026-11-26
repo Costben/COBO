@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -60,10 +61,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
@@ -106,12 +111,15 @@ import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
+import com.cobo.app.ui.components.inputCapsuleGlass
 import com.cobo.app.ui.components.rememberImageSaveState
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.SnackbarData
 import io.github.suqi8.coui.kmp.basic.SnackbarDuration
 import io.github.suqi8.coui.kmp.basic.SnackbarHost
 import io.github.suqi8.coui.kmp.basic.SnackbarHostState
+import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -340,10 +348,9 @@ fun CoboRoot(
             popupHost = {
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
+                    // 使用磨砂玻璃胶囊替换 COUI 默认大半径 dropShadow，避免在 SnackbarHost LazyColumn 底部被裁切出矩形阴影。
+                    AppSnackbarHost(nav = nav)
                 }
-                // 使用 COUI 组件库统一的 SnackbarHost（连续曲率圆角、系统级阴影与弹簧动效），
-                // 放在 popupHost 顶层保证在弹窗与软键盘之上可见，并在带底栏页面自动避让底栏。
-                AppSnackbarHost(nav = nav)
             },
         ) {
             BoxWithConstraints(
@@ -499,10 +506,40 @@ private fun AppSnackbarHost(nav: NavState) {
             .fillMaxSize()
             .navigationBarsPadding()
             .imePadding()
-            .padding(bottom = if (hasFloatingBottomBar) 64.dp else 0.dp),
+            .padding(bottom = if (hasFloatingBottomBar) 44.dp else 0.dp),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        SnackbarHost(state = hostState)
+        SnackbarHost(state = hostState) { data ->
+            GlassToastSnackbar(data = data)
+        }
+    }
+}
+
+@Composable
+private fun GlassToastSnackbar(data: SnackbarData) {
+    // 四周留足阴影余量，确保 SnackbarHost 的 LazyColumn item 不裁切磨砂胶囊柔阴影。
+    Box(modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 24.dp, bottom = 32.dp)) {
+        Box(
+            modifier = Modifier
+                .heightIn(min = 42.dp)
+                .inputCapsuleGlass(
+                    backdrop = LocalBackdrop.current,
+                    isDark = isDarkTheme(),
+                    cornerRadius = 21.dp,
+                )
+                .padding(horizontal = 18.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = data.visuals.message,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = COUITheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

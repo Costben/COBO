@@ -194,11 +194,25 @@ fun StatusCard(
     var deleting by remember(displayStatus.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(displayStatus)
-        App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
+        App.toast(if (nowFavorited) "已收藏到本地" else "已取消本地收藏")
     }
     val handleReadLater: () -> Unit = {
         val added = ReadLater.toggle(displayStatus)
-        App.toast(if (added) "已加入稍后再看（支持离线阅读）" else "已移出稍后再看")
+        App.toast(if (added) "已加入稍后再看" else "已移出稍后再看")
+    }
+    val handleCloudFavorite: (() -> Unit)? = if (isGuest) {
+        null
+    } else {
+        {
+            scope.launch {
+                runCatching { App.repo.favorite(displayStatus.id, cloudFavorited) }
+                    .onSuccess {
+                        cloudFavorited = !cloudFavorited
+                        App.toast(if (cloudFavorited) "已收藏到微博账号" else "已取消微博账号收藏")
+                    }
+                    .onFailure { App.toast(it.message ?: "操作失败") }
+            }
+        }
     }
     val handleEdit: (() -> Unit)? = if (canEdit) {
         {
@@ -245,20 +259,7 @@ fun StatusCard(
             onToggleFavorite = handleFavorite,
             onToggleReadLater = handleReadLater,
             cloudFavorited = cloudFavorited,
-            onToggleCloudFavorite = {
-                if (App.repo.guest) {
-                    App.toast("请先登录微博")
-                } else {
-                    scope.launch {
-                        runCatching { App.repo.favorite(displayStatus.id, cloudFavorited) }
-                            .onSuccess {
-                                cloudFavorited = !cloudFavorited
-                                App.toast(if (cloudFavorited) "已收藏到微博" else "已取消微博收藏")
-                            }
-                            .onFailure { App.toast(it.message ?: "操作失败") }
-                    }
-                }
-            },
+            onToggleCloudFavorite = handleCloudFavorite,
             following = effectiveFollowing,
             followLabel = followMenuLabel,
             onToggleFollow = handleFollow,
@@ -603,35 +604,12 @@ private fun StatusMoreButton(
             val dismiss = LocalDismissState.current
             ListPopupColumn {
                 var idx = 0
-                if (onToggleCloudFavorite != null) {
-                    val favIcon = if (cloudFavorited) CoboIcons.StarFill else CoboIcons.Star
-                    val favTint = if (cloudFavorited) scheme.primary else scheme.onSurfaceContainer
-                    DropdownImpl(
-                        item = DropdownItem(
-                            text = if (cloudFavorited) "取消微博收藏" else "收藏微博",
-                            icon = { iconModifier ->
-                                Box(iconModifier, contentAlignment = Alignment.Center) {
-                                    Icon(favIcon, null, Modifier.size(18.dp), tint = favTint)
-                                }
-                            },
-                        ),
-                        optionSize = optionSize,
-                        isSelected = false,
-                        index = idx++,
-                        groupKey = "status_more_$statusId",
-                        onSelectedIndexChange = {
-                            dismiss?.invoke()
-                            expanded = false
-                            onToggleCloudFavorite()
-                        },
-                    )
-                }
                 if (onToggleFavorite != null) {
                     val favIcon = if (favorited) CoboIcons.StarFill else CoboIcons.Star
                     val favTint = if (favorited) scheme.primary else scheme.onSurfaceContainer
                     DropdownImpl(
                         item = DropdownItem(
-                            text = if (favorited) "取消本地收藏" else "本地收藏",
+                            text = if (favorited) "取消本地收藏" else "收藏到本地",
                             icon = { iconModifier ->
                                 Box(iconModifier, contentAlignment = Alignment.Center) {
                                     Icon(favIcon, null, Modifier.size(18.dp), tint = favTint)
@@ -646,6 +624,29 @@ private fun StatusMoreButton(
                             dismiss?.invoke()
                             expanded = false
                             onToggleFavorite()
+                        },
+                    )
+                }
+                if (onToggleCloudFavorite != null) {
+                    val cloudIcon = if (cloudFavorited) CoboIcons.CloudFill else CoboIcons.Cloud
+                    val cloudTint = if (cloudFavorited) scheme.primary else scheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = if (cloudFavorited) "取消微博账号收藏" else "收藏到微博账号",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(cloudIcon, null, Modifier.size(18.dp), tint = cloudTint)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onToggleCloudFavorite()
                         },
                     )
                 }
