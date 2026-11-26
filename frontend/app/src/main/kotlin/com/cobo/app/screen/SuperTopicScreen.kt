@@ -54,6 +54,8 @@ import com.cobo.app.data.SuperTopicPage
 import com.cobo.app.data.SuperTopicTab
 import com.cobo.app.data.SuperTopicTabKind
 import com.cobo.app.data.defaultSuperTopicTabs
+import com.cobo.app.data.setSuperTopicFollow
+import com.cobo.app.data.superTopicFollowState
 import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
@@ -192,6 +194,17 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
     val title = headerInfo?.title ?: "超话"
     val chipTabs = remember(tabs) { tabs.toChipTabData() }
 
+    val loggedIn = !App.repo.guest && App.repo.session != null
+    var followChecked by remember(baseId) { mutableStateOf(App.repo.superTopicFollowOverrides.containsKey(baseId)) }
+    var followBusy by remember(baseId) { mutableStateOf(false) }
+    val followed = App.repo.superTopicFollowOverrides[baseId]
+
+    LaunchedEffect(baseId, loggedIn) {
+        if (!loggedIn) return@LaunchedEffect
+        runCatching { App.repo.superTopicFollowState(baseId) }
+        followChecked = true
+    }
+
     Box(Modifier.fillMaxSize().background(pageContainerColor()).testTag("supertopic_page")) {
         Box(
             Modifier
@@ -253,10 +266,13 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                 item(key = "header") {
                                     Column(Modifier.padding(8.dp)) {
                                         (store.info ?: headerInfo)?.let { info ->
-                                            Row {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
                                                 Avatar(info.avatar, 56.dp)
                                                 Spacer(Modifier.width(12.dp))
-                                                Column {
+                                                Column(modifier = Modifier.weight(1f)) {
                                                     Text(info.title, fontSize = 20.sp)
                                                     Spacer(Modifier.height(4.dp))
                                                     val counts = listOf(
@@ -265,6 +281,39 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                                         info.fanCount.takeIf { it.isNotBlank() }?.let { "粉丝 $it" },
                                                     ).filterNotNull().joinToString(" · ")
                                                     if (counts.isNotBlank()) Text(counts, fontSize = 12.sp)
+                                                }
+                                                if (loggedIn) {
+                                                    Spacer(Modifier.width(8.dp))
+                                                    val isFollowed = followed == true
+                                                    val label = when {
+                                                        followBusy -> if (isFollowed) "取关中…" else "关注中…"
+                                                        !followChecked -> "加载中"
+                                                        isFollowed -> "已关注"
+                                                        else -> "关注"
+                                                    }
+                                                    FollowCapsule(
+                                                        text = label,
+                                                        enabled = followChecked && !followBusy,
+                                                        modifier = Modifier.testTag("supertopic_follow_button"),
+                                                        onClick = {
+                                                            if (!followBusy) {
+                                                                val targetFollow = !isFollowed
+                                                                followBusy = true
+                                                                scope.launch {
+                                                                    runCatching {
+                                                                        App.repo.setSuperTopicFollow(baseId, targetFollow)
+                                                                    }.onSuccess { applied ->
+                                                                        if (applied) {
+                                                                            App.toast(if (targetFollow) "已关注超话" else "已取消关注超话")
+                                                                        }
+                                                                    }.onFailure { err ->
+                                                                        App.toast(err.message ?: "操作失败")
+                                                                    }
+                                                                    followBusy = false
+                                                                }
+                                                            }
+                                                        },
+                                                    )
                                                 }
                                             }
                                             if (info.description.isNotBlank()) {

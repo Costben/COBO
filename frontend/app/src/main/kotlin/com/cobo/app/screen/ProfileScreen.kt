@@ -1301,7 +1301,12 @@ private val CoverDivider = 0.5.dp
  * 径向填充、材质描边和按下回弹缩放，只是形状换成能放下文字的胶囊。
  */
 @Composable
-private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun FollowCapsule(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     val scheme = COUITheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
     val interactionSource = remember { MutableInteractionSource() }
@@ -1327,9 +1332,10 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
             .height(36.dp)
             .onSizeChanged { isWideCapsule = it.width > it.height }
             .graphicsLayer {
-                val scale = 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press
+                val scale = if (enabled) 1f - (1f - HighlightedIconButtonDefaults.PressedScale) * press else 1f
                 scaleX = scale
                 scaleY = scale
+                alpha = if (enabled) 1f else 0.55f
             }
             .clip(capsuleShape)
             .drawBehind {
@@ -1354,6 +1360,7 @@ private fun FollowCapsule(text: String, onClick: () -> Unit, modifier: Modifier 
                 cornerWeight = capsuleCornerWeight,
             )
             .clickable(
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,

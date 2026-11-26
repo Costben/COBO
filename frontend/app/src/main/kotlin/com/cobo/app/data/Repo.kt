@@ -338,6 +338,20 @@ class Repo(private val context: Context, private val store: Store) {
 
     private val followInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** 本次会话内查询或变更过的超话关注状态，供超话详情页与「话题 / 超话」列表即时同步。 */
+    val superTopicFollowOverrides = mutableStateMapOf<String, Boolean>()
+
+    var superTopicFollowVersion by mutableIntStateOf(0)
+        private set
+
+    internal val superTopicFollowInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    internal fun recordSuperTopicFollowState(containerId: String, followed: Boolean, bumpVersion: Boolean) {
+        if (containerId.isBlank()) return
+        superTopicFollowOverrides[containerId] = followed
+        if (bumpVersion) superTopicFollowVersion++
+    }
+
     fun isFollowInFlight(uid: String): Boolean = uid.isNotBlank() && followInFlight.contains(uid)
 
     fun isFollowingUser(uid: String, fallback: Boolean): Boolean =
@@ -694,6 +708,9 @@ class Repo(private val context: Context, private val store: Store) {
         likeVersion++
         followStateOverrides.clear()
         followInFlight.clear()
+        superTopicFollowOverrides.clear()
+        superTopicFollowInFlight.clear()
+        superTopicFollowVersion++
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -3818,6 +3835,79 @@ class Repo(private val context: Context, private val store: Store) {
             .ifBlank { active.cookie }
         if (!header.contains("SUB=")) throw ApiException(LOGIN_REQUIRED)
         return header
+    }
+
+    /**
+     * 需要登录态的桌面端只读 GET：
+     * - 客户端登录（`LOGIN_TYPE_CLIENT`）先确保会话有效；缺 `SUB` 或遇 403/418/432/`ok:-100` 时强制续签并重试一次。
+     * - 严格校验 `SUB=`，绝不回落到访客 Cookie，避免私有列表误判为空。
+     */
+    internal suspend fun desktopGetAuthenticated(url: String): JSONObject {
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, "-100")
+        if (isClientLogin()) {
+            val active = session
+            if (active != null && !active.loggedIn) {
+                refreshClientSession(force = true)
+            } else {
+                ensureClientSession()
+            }
+        }
+        suspend fun send(): JSONObject {
+            val active = session?.takeIf { hasSession() } ?: throw ApiException(LOGIN_REQUIRED, "-100")
+            val header = CookieVault.desktopAuthHeader(active.cookies, CookieVault.WEIBO_COM)
+                .ifBlank { active.cookie }
+            if (!header.contains("SUB=")) {
+                throw ApiException("当前账号没有可用的微博网页登录态", "-100")
+            }
+            return Api.getDesktop(url, header)
+        }
+        var root = try {
+            send()
+        } catch (e: ApiHttpException) {
+            if (isClientLogin() && (e.code == 403 || e.code == 418 || e.code == 432) && refreshClientSession(force = true)) {
+                send()
+            } else {
+                throw e
+            }
+        }
+        if (root.int("ok", 1) == -100 && isClientLogin() && refreshClientSession(force = true)) {
+            root = send()
+        }
+        return root
+    }
+
+    /**
+     * 需要登录态的桌面端表单 POST：
+     * 复用 [desktopPost] 的 XSRF 自动刷新，并补齐客户端登录（`LOGIN_TYPE_CLIENT`）下的会话续签与重试。
+     */
+    internal suspend fun desktopPostFormAuthenticated(path: String, form: Map<String, String>): JSONObject {
+        if (!hasSession()) throw ApiException(LOGIN_REQUIRED, "-100")
+        if (isClientLogin()) {
+            val active = session
+            if (active != null && !active.loggedIn) {
+                refreshClientSession(force = true)
+            } else {
+                ensureClientSession()
+            }
+        }
+        var root = try {
+            desktopPost(path, form = form)
+        } catch (e: ApiHttpException) {
+            if (isClientLogin() && (e.code == 403 || e.code == 418 || e.code == 432) && refreshClientSession(force = true)) {
+                refreshDesktopAuth()
+                desktopPost(path, form = form)
+            } else {
+                throw e
+            }
+        }
+        if ((root.int("code", 0) == 100003 || root.int("ok", 1) == -100) &&
+            isClientLogin() &&
+            refreshClientSession(force = true)
+        ) {
+            refreshDesktopAuth()
+            root = desktopPost(path, form = form)
+        }
+        return root
     }
 
     private fun desktopXsrf(): String? {
