@@ -6,9 +6,12 @@ import com.cobo.app.platform.LocalBackRouteIsTop
 import com.cobo.app.platform.platformScreenSizePx
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -19,8 +22,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -65,6 +71,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -72,8 +79,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
+import com.cobo.app.data.DetectedWeiboLink
 import com.cobo.app.data.Pic
+import com.cobo.app.data.ShareAction
 import com.cobo.app.data.Updater
+import com.cobo.app.data.decideShareAction
 import com.cobo.app.data.normalizeWeiboMediaUrl
 import com.cobo.app.data.superTopicId
 import com.cobo.app.screen.AboutScreen
@@ -116,16 +126,23 @@ import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.inputCapsuleGlass
 import com.cobo.app.ui.components.rememberImageSaveState
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SnackbarData
 import io.github.suqi8.coui.kmp.basic.SnackbarDuration
 import io.github.suqi8.coui.kmp.basic.SnackbarHost
 import io.github.suqi8.coui.kmp.basic.SnackbarHostState
+import io.github.suqi8.coui.kmp.basic.SnackbarResult
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Close
+import io.github.suqi8.coui.kmp.layout.DialogButtonBar
+import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.addSquircleRect
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -296,6 +313,23 @@ fun CoboRoot(
         }
     }
 
+    var pendingSharePrompt by remember { mutableStateOf<ShareAction.AskWeiboLinkOrCompose?>(null) }
+    LaunchedEffect(App.shareVersion) {
+        val share = App.consumeShare() ?: return@LaunchedEffect
+        when (val action = decideShareAction(share, App.repo.guest)) {
+            ShareAction.Empty -> Unit
+            is ShareAction.OpenWeiboLink -> linkHandler(action.link.rawUrl)
+            is ShareAction.AskWeiboLinkOrCompose -> pendingSharePrompt = action
+            is ShareAction.Compose -> {
+                if (App.repo.guest) {
+                    App.toast("纯本地模式暂不支持发微博，请先登录")
+                } else {
+                    nav.push(Route.Publish(draft = action.text, initialMediaUris = action.imageUris))
+                }
+            }
+        }
+    }
+
     // 长按缩略图弹「保存原图 / 保存实况图」的菜单挂在根节点，任何页面都不用自己搭浮层。
     var saveTargets by remember { mutableStateOf<List<SaveImageItem>?>(null) }
     var saveIndex by remember { mutableIntStateOf(0) }
@@ -352,7 +386,10 @@ fun CoboRoot(
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
                     // 使用磨砂玻璃胶囊替换 COUI 默认大半径 dropShadow，避免在 SnackbarHost LazyColumn 底部被裁切出矩形阴影。
-                    AppSnackbarHost(nav = nav)
+                    AppSnackbarHost(
+                        nav = nav,
+                        onOpenClipboardLink = { link -> linkHandler(link.rawUrl) },
+                    )
                 }
             },
         ) {
@@ -552,6 +589,23 @@ fun CoboRoot(
                     )
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
+                    // 混合分享（含文案与微博链接）在此询问是打开链接还是作为发微博草稿。
+                    pendingSharePrompt?.let { prompt ->
+                        key(prompt) {
+                            ShareChoiceDialog(
+                                prompt = prompt,
+                                onDismiss = { pendingSharePrompt = null },
+                                onOpenLink = {
+                                    pendingSharePrompt = null
+                                    linkHandler(prompt.link.rawUrl)
+                                },
+                                onCompose = {
+                                    pendingSharePrompt = null
+                                    nav.push(Route.Publish(draft = prompt.text))
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -562,10 +616,14 @@ fun CoboRoot(
     }
 }
 
-/** 全局统一提示：直接复用 COUI 组件库的 [SnackbarHost] 与 [io.github.suqi8.coui.kmp.basic.Snackbar]。 */
+/** 全局统一提示与剪贴板识别：复用磨砂玻璃胶囊 [GlassToastSnackbar] / [GlassActionSnackbar]。 */
 @Composable
-private fun AppSnackbarHost(nav: NavState) {
+private fun AppSnackbarHost(
+    nav: NavState,
+    onOpenClipboardLink: (DetectedWeiboLink) -> Unit,
+) {
     val hostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var activeCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(hostState) {
         App.toastEvents.collect { message ->
@@ -583,9 +641,41 @@ private fun AppSnackbarHost(nav: NavState) {
             }
         }
     }
+
+    val detected = App.pendingClipboardLink
+    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
+    val suppressed = topRoute is Route.Login ||
+        topRoute is Route.SmsLogin ||
+        topRoute is Route.Images ||
+        topRoute is Route.Video ||
+        topRoute is Route.Publish ||
+        topRoute is Route.EditStatus
+
+    LaunchedEffect(detected) {
+        val link = detected ?: return@LaunchedEffect
+        App.dismissClipboardLink()
+        if (suppressed) return@LaunchedEffect
+        activeCount++
+        scope.launch {
+            try {
+                hostState.newestSnackbarData()?.dismiss()
+                val result = hostState.showSnackbar(
+                    message = "剪贴板发现${link.kind.label}",
+                    actionLabel = "打开",
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Custom(6_000L),
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    onOpenClipboardLink(link)
+                }
+            } finally {
+                activeCount = (activeCount - 1).coerceAtLeast(0)
+            }
+        }
+    }
+
     // 无提示展示时不订阅 WindowInsets.ime，避免搜索栏弹出/收起键盘时每帧触发根部全屏重组与重排。
     if (activeCount == 0) return
-    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
     val density = LocalDensity.current
     val imeOpen = WindowInsets.ime.getBottom(density) > 0
     val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
@@ -598,8 +688,125 @@ private fun AppSnackbarHost(nav: NavState) {
         contentAlignment = Alignment.BottomCenter,
     ) {
         SnackbarHost(state = hostState) { data ->
-            GlassToastSnackbar(data = data)
+            if (data.visuals.actionLabel != null) {
+                GlassActionSnackbar(data = data)
+            } else {
+                GlassToastSnackbar(data = data)
+            }
         }
+    }
+}
+
+@Composable
+private fun GlassActionSnackbar(data: SnackbarData) {
+    val scheme = COUITheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val backdrop = LocalBackdrop.current
+    val dark = isDarkTheme()
+    val actionLabel = data.visuals.actionLabel
+
+    Box(modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 32.dp)) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 46.dp)
+                .inputCapsuleGlass(
+                    backdrop = backdrop,
+                    isDark = dark,
+                    cornerRadius = 23.dp,
+                )
+                .clickable { scope.launch { data.performAction() } }
+                .padding(start = 18.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = data.visuals.message,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = scheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (!actionLabel.isNullOrBlank()) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = actionLabel,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { scope.launch { data.performAction() } }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            if (data.visuals.withDismissAction) {
+                Spacer(Modifier.width(2.dp))
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .clickable { scope.launch { data.dismiss() } },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = COUIIcons.Close,
+                        contentDescription = "关闭",
+                        tint = scheme.onSurfaceSecondary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareChoiceDialog(
+    prompt: ShareAction.AskWeiboLinkOrCompose,
+    onDismiss: () -> Unit,
+    onOpenLink: () -> Unit,
+    onCompose: () -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    var choice by remember { mutableStateOf<Int?>(null) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+
+    OverlayDialog(
+        show = show,
+        title = "识别到${prompt.link.kind.label}",
+        summary = "分享内容中包含微博链接（${prompt.link.displayText}），请选择处理方式。",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                when (choice) {
+                    1 -> onOpenLink()
+                    2 -> onCompose()
+                    else -> onDismiss()
+                }
+            }
+        },
+    ) {
+        DialogButtonBar(
+            negative = DialogButtonBarAction(
+                text = "作为发微博草稿",
+                onClick = {
+                    choice = 2
+                    show = false
+                },
+            ),
+            positive = DialogButtonBarAction(
+                text = "打开链接",
+                recommended = true,
+                onClick = {
+                    choice = 1
+                    show = false
+                },
+            ),
+        )
     }
 }
 
@@ -930,7 +1137,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
-        is Route.Publish -> PublishScreen(nav, route.draft)
+        is Route.Publish -> PublishScreen(nav, route.draft, initialMediaUris = route.initialMediaUris)
         is Route.EditStatus -> PublishScreen(nav, draft = "", editStatusId = route.id, editStatusMid = route.mid)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
         is Route.Notifications -> NotificationsScreen(nav, route.initialTab)

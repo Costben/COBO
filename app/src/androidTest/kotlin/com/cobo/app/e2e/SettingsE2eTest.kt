@@ -46,6 +46,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_video_auto_close_on_complete",
             "settings_video_center_swipe_actions",
             "settings_in_app_browser",
+            "settings_clipboard_link_detect",
             "settings_confirm_like",
             "settings_accounts",
             "settings_drafts",

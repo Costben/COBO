@@ -228,7 +228,7 @@ sealed interface Route {
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
     data class Relations(val uid: String, val kind: RelationKind) : Route
-    data class Publish(val draft: String = "") : Route
+    data class Publish(val draft: String = "", val initialMediaUris: List<String> = emptyList()) : Route
     data class EditStatus(val id: String, val mid: String = "") : Route
     data class Chat(val uid: String = "", val name: String, val gid: String = "") : Route
     data class Notifications(val initialTab: NotificationTab = NotificationTab.AtWeibo) : Route

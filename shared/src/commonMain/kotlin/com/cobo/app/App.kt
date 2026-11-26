@@ -9,8 +9,10 @@ import androidx.compose.runtime.setValue
 import com.cobo.app.data.Api
 import com.cobo.app.data.CacheStore
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetectedWeiboLink
 import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
+import com.cobo.app.data.IncomingShare
 import com.cobo.app.data.ReadLater
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
@@ -118,6 +120,39 @@ object App {
         val target = pendingDeepLink
         pendingDeepLink = null
         return target
+    }
+
+    /** 待处理的系统分享内容（文字/链接/图片），由根节点消费后清空。 */
+    var pendingShare by mutableStateOf<IncomingShare?>(null)
+        private set
+    var shareVersion by mutableIntStateOf(0)
+        private set
+
+    fun enqueueShare(share: IncomingShare) {
+        if (share.text.isBlank() && share.imageUris.isEmpty()) return
+        pendingShare = share
+        shareVersion++
+    }
+
+    fun consumeShare(): IncomingShare? {
+        val target = pendingShare
+        pendingShare = null
+        return target
+    }
+
+    /** 从剪贴板识别到的微博链接提示；同一次剪贴内容只提示一次。 */
+    var pendingClipboardLink by mutableStateOf<DetectedWeiboLink?>(null)
+        private set
+    private var lastHandledClipboardSignature: String? = null
+
+    fun offerClipboardLink(signature: String, link: DetectedWeiboLink) {
+        if (signature.isBlank() || signature == lastHandledClipboardSignature) return
+        lastHandledClipboardSignature = signature
+        pendingClipboardLink = link
+    }
+
+    fun dismissClipboardLink() {
+        pendingClipboardLink = null
     }
 
     var checkingUpdate by mutableStateOf(false)

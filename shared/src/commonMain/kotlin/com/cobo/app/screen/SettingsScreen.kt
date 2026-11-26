@@ -184,6 +184,7 @@ private class SettingsUiState(context: PlatformContext) {
     var searchPanelAnimation by mutableStateOf(App.settings.searchPanelAnimation)
     var confirmLike by mutableStateOf(App.settings.confirmLike)
     var inAppBrowser by mutableStateOf(App.settings.inAppBrowser)
+    var clipboardLinkDetect by mutableStateOf(App.settings.clipboardLinkDetect)
     var quickSwitchAccount by mutableStateOf(App.settings.quickSwitchAccount)
     var profileTabAvatar by mutableStateOf(App.settings.profileTabAvatar)
     var profileShowStatuses by mutableStateOf(App.settings.profileShowStatuses)
@@ -1029,6 +1030,25 @@ private fun displayGeneralInteractionEntries(
             title = "使用内置浏览器打开外部网页",
             summary = "关闭后点击外部链接将直接调用系统浏览器打开",
             modifier = Modifier.testTag("settings_in_app_browser"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "clipboard_link_detect",
+        title = "识别剪贴板微博链接",
+        summary = "切回应用时检测剪贴板中的微博链接并提示打开",
+        keywords = "剪贴板 链接 自动识别 跳转 复制 clipboard",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.clipboardLinkDetect,
+            onCheckedChange = {
+                state.clipboardLinkDetect = it
+                App.settings.applyClipboardLinkDetect(it)
+                if (!it) App.dismissClipboardLink()
+            },
+            title = "识别剪贴板微博链接",
+            summary = "切回应用时检测剪贴板中的微博链接并提示打开",
+            modifier = Modifier.testTag("settings_clipboard_link_detect"),
             cardListPosition = pos,
         )
     },
