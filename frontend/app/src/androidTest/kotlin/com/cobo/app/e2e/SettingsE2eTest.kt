@@ -49,6 +49,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_accounts",
             "settings_drafts",
             "settings_history",
+            "settings_read_later",
             "settings_favorites",
             "settings_topic",
             "settings_nearby",

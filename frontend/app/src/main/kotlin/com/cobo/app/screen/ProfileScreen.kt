@@ -92,10 +92,12 @@ import com.cobo.app.data.Pic
 import com.cobo.app.data.ProfileDetail
 import com.cobo.app.data.ProfileGroupSelection
 import com.cobo.app.data.ProfileRenameRecord
+import com.cobo.app.data.ReadLater
 import com.cobo.app.data.RelationKind
 import com.cobo.app.data.Status
 import com.cobo.app.data.Updater
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.computeProfileRenameStatus
 import com.cobo.app.ui.MeIconTint
@@ -184,12 +186,15 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.basic.FullPageRefreshState
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButtonDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import androidx.compose.ui.layout.onSizeChanged
+import io.github.suqi8.coui.kmp.basic.TextField
+import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.MaterialShadowEdgeDefaults
 import io.github.suqi8.coui.kmp.basic.materialShadowEdge
@@ -202,6 +207,9 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Ok
 import io.github.suqi8.coui.kmp.icon.extended.Undo
+import io.github.suqi8.coui.kmp.layout.DialogButtonBar
+import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import java.net.URLEncoder
 import kotlin.math.roundToInt
 
@@ -439,11 +447,15 @@ private fun ProfileMoreAction(
     var qrOpen by remember(uid) { mutableStateOf(false) }
     var blockOpen by remember(uid) { mutableStateOf(false) }
     var editOpen by remember(uid) { mutableStateOf(false) }
+    var remarkDialogOpen by remember(uid) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val guest = App.repo.guest
     val self = uid.isNotBlank() && uid == App.repo.session?.uid
     val canManage = uid.isNotBlank() && !self && !guest
+    val targetUid = user?.id?.takeIf { it.isNotBlank() } ?: uid
+    val canRemark = targetUid.isNotBlank() && targetUid != App.repo.session?.uid
+    val currentRemark = UserRemarks[targetUid]
     val profileUrl = "https://weibo.com/u/$uid"
 
     fun copyLink() {
@@ -539,6 +551,15 @@ private fun ProfileMoreAction(
                                 )
                             }
                             add(DropdownItem(text = "基本资料", onClick = { infoOpen = true }))
+                            if (canRemark) {
+                                add(
+                                    DropdownItem(
+                                        text = if (currentRemark != null) "修改本地备注" else "设置本地备注",
+                                        summary = currentRemark,
+                                        onClick = { remarkDialogOpen = true },
+                                    ),
+                                )
+                            }
                             add(DropdownItem(text = "复制链接", onClick = { copyLink() }))
                             add(DropdownItem(text = "二维码", onClick = { qrOpen = true }))
                         },
@@ -643,6 +664,74 @@ private fun ProfileMoreAction(
                 }
             },
         )
+    }
+
+    if (remarkDialogOpen && targetUid.isNotBlank()) {
+        UserRemarkDialog(
+            originalName = user?.name.orEmpty(),
+            initialRemark = currentRemark.orEmpty(),
+            onDismiss = { remarkDialogOpen = false },
+            onConfirm = { newRemark ->
+                remarkDialogOpen = false
+                UserRemarks.set(targetUid, newRemark)
+                App.toast(if (newRemark.isBlank()) "已清除本地备注" else "已保存本地备注")
+            },
+        )
+    }
+}
+
+@Composable
+private fun UserRemarkDialog(
+    originalName: String,
+    initialRemark: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf(initialRemark) }
+    var show by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+
+    OverlayDialog(
+        show = show,
+        title = "设置本地备注",
+        summary = originalName.takeIf { it.isNotBlank() }?.let { "原昵称：$it（最多 24 字，留空可清除）" }
+            ?: "最多 24 字，留空可清除备注",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                val pending = result
+                if (pending != null) onConfirm(pending) else onDismiss()
+            }
+        },
+    ) {
+        Column {
+            TextField(
+                value = text,
+                onValueChange = { if (it.length <= 24) text = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 4.dp),
+                label = "输入本地备注名",
+                backgroundMode = TextFieldMode.Rectangle,
+                singleLine = true,
+            )
+            DialogButtonBar(
+                negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
+                positive = DialogButtonBarAction(
+                    text = if (text.isBlank() && initialRemark.isNotBlank()) "清除" else "保存",
+                    onClick = {
+                        result = text.trim()
+                        show = false
+                    },
+                ),
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
     }
 }
 
@@ -1172,6 +1261,21 @@ fun ProfileHubContent(
                         modifier = Modifier.testTag("hub_history"),
                         onClick = { nav.push(Route.History) },
                     )
+                    val readLaterCount = ReadLater.all().size
+                    val readLaterUnread = ReadLater.unreadCount()
+                    ArrowPreference(
+                        title = "稍后再看",
+                        summary = when {
+                            readLaterUnread > 0 -> "$readLaterUnread 条未读"
+                            readLaterCount > 0 -> "$readLaterCount 条离线快照"
+                            else -> null
+                        },
+                        startAction = { HubRowIcon(MeIcons.ReadLater, MeIconTint.Blue) },
+                        centerStartAction = true,
+                        cardListPosition = CardListPosition.Middle,
+                        modifier = Modifier.testTag("hub_read_later"),
+                        onClick = { nav.push(Route.ReadLater) },
+                    )
                     ArrowPreference(
                         title = "话题 / 超话",
                         startAction = { HubRowIcon(MeIcons.Topic, MeIconTint.Yellow) },
@@ -1672,8 +1776,10 @@ private fun ProfileHeader(
                             )
                         } else {
                             val canInlineRename = editableProfile && user != null && onRename != null
+                            val activeRemark = if (!editableProfile) UserRemarks[user?.id] else null
+                            val shownProfileName = activeRemark ?: user?.name ?: "加载中…"
                             Text(
-                                text = if (editProgress > 0.01f) nameDraft.text else (user?.name ?: "加载中…"),
+                                text = if (editProgress > 0.01f) nameDraft.text else shownProfileName,
                                 color = onCoverColor,
                                 fontSize = nameFontSize,
                                 fontWeight = FontWeight.SemiBold,
@@ -1794,6 +1900,16 @@ private fun ProfileHeader(
                             modifier = Modifier
                                 .padding(top = 4.dp)
                                 .testTag("profile_name_hint"),
+                        )
+                    }
+                    val headerRemark = if (!editableProfile) UserRemarks[user?.id] else null
+                    if (headerRemark != null && user != null && headerRemark != user.name && user.name.isNotBlank()) {
+                        Text(
+                            text = "原昵称：${user.name}",
+                            fontSize = 11.sp,
+                            color = onCoverColor.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     if (user?.verified == true) {

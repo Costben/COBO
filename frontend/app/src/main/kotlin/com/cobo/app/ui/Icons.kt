@@ -901,4 +901,44 @@ object CoboIcons {
             lineTo(10.6f, 13.4f)
         }
     }
+
+    /** 稍后再看：书签轮廓。 */
+    val Bookmark: ImageVector by lazy {
+        outline("Bookmark") {
+            moveTo(6.4f, 4.2f)
+            horizontalLineTo(17.6f)
+            curveTo(18.5f, 4.2f, 19.1f, 4.8f, 19.1f, 5.7f)
+            verticalLineTo(19.8f)
+            lineTo(12.0f, 15.6f)
+            lineTo(4.9f, 19.8f)
+            verticalLineTo(5.7f)
+            curveTo(4.9f, 4.8f, 5.5f, 4.2f, 6.4f, 4.2f)
+            close()
+        }
+    }
+
+    /** 已加入稍后再看：实心书签。 */
+    val BookmarkFill: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "BookmarkFill",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6.2f, 3.6f)
+                horizontalLineTo(17.8f)
+                curveTo(18.9f, 3.6f, 19.6f, 4.3f, 19.6f, 5.4f)
+                verticalLineTo(20.1f)
+                curveTo(19.6f, 20.6f, 19.0f, 20.9f, 18.6f, 20.6f)
+                lineTo(12.0f, 16.7f)
+                lineTo(5.4f, 20.6f)
+                curveTo(5.0f, 20.9f, 4.4f, 20.6f, 4.4f, 20.1f)
+                verticalLineTo(5.4f)
+                curveTo(4.4f, 4.3f, 5.1f, 3.6f, 6.2f, 3.6f)
+                close()
+            }
+        }.build()
+    }
 }

@@ -89,6 +89,7 @@ import com.cobo.app.screen.NotificationsScreen
 import com.cobo.app.screen.PredictiveBackSettingsScreen
 import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
+import com.cobo.app.screen.ReadLaterScreen
 import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SettingsGroupScreen
 import com.cobo.app.screen.SettingsScreen
@@ -916,6 +917,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.SuperTopic -> SuperTopicScreen(nav, route.containerId, route.fallbackUrl)
         Route.Drafts -> DraftsScreen(nav)
         Route.History -> HistoryScreen(nav)
+        Route.ReadLater -> ReadLaterScreen(nav)
         Route.Accounts -> AccountsScreen(nav)
         Route.Favorites -> FavoritesScreen(nav)
         Route.MyLikes -> MyLikesScreen(nav)

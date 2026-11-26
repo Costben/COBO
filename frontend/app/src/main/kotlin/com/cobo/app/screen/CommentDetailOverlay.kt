@@ -53,6 +53,7 @@ import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.Pic
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.parseWeiboTimeMillis
@@ -392,7 +393,7 @@ private fun CommentDetailSheetContent(
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Text(
-                                                text = rootComment.user?.name.orEmpty(),
+                                                text = UserRemarks.displayName(rootComment.user?.id, rootComment.user?.name.orEmpty()),
                                                 fontSize = 15.sp,
                                                 color = scheme.onSurfaceSecondary,
                                                 fontWeight = FontWeight.SemiBold,
@@ -432,7 +433,7 @@ private fun CommentDetailSheetContent(
                                                 .padding(8.dp),
                                         ) {
                                             Text(
-                                                "@${quoted.user?.name.orEmpty()}：",
+                                                "@${UserRemarks.displayName(quoted.user?.id, quoted.user?.name.orEmpty())}：",
                                                 fontSize = 12.sp,
                                                 color = scheme.primary,
                                                 modifier = Modifier.clickable(

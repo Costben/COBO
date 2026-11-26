@@ -67,6 +67,7 @@ import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.AnimationSpeed
 import com.cobo.app.data.MeIconStyle
+import com.cobo.app.data.ReadLater
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
@@ -1212,6 +1213,13 @@ private fun accountSettingsEntries(
         if (includeLibraryShortcuts) {
             val draftsSummary = "${App.store.drafts().size} 条草稿"
             val historySummary = "${App.store.history().size} 条记录"
+            val readLaterEntries = ReadLater.all()
+            val readLaterUnread = readLaterEntries.count { !it.read }
+            val readLaterSummary = if (readLaterUnread > 0) {
+                "${readLaterEntries.size} 条（${readLaterUnread} 未读）"
+            } else {
+                "${readLaterEntries.size} 条快照"
+            }
             val favoritesSummary = "${App.repo.localFavoriteIds.size} 条收藏"
             add(
                 SettingsEntry(
@@ -1242,6 +1250,22 @@ private fun accountSettingsEntries(
                         summary = historySummary,
                         cardListPosition = pos,
                         onClick = { nav.push(Route.History) },
+                    )
+                },
+            )
+            add(
+                SettingsEntry(
+                    id = "read_later",
+                    title = "稍后再看",
+                    summary = readLaterSummary,
+                    keywords = "稍后再看 离线 快照 书签 阅读 read later",
+                ) { pos ->
+                    SettingsArrowRow(
+                        title = "稍后再看",
+                        modifier = Modifier.testTag("settings_read_later"),
+                        summary = readLaterSummary,
+                        cardListPosition = pos,
+                        onClick = { nav.push(Route.ReadLater) },
                     )
                 },
             )

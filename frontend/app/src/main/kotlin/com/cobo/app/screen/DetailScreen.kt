@@ -93,9 +93,11 @@ import com.cobo.app.data.CommentSort
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.data.Membership
 import com.cobo.app.data.Pic
+import com.cobo.app.data.ReadLater
 import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.stripHtml
@@ -180,8 +182,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = false) {
     val scope = rememberCoroutineScope()
-    // 列表里点进来的那条先顶上：正文、图片、互动数都已经有了，先画出来，接口回来再换。
-    var status by remember(id) { mutableStateOf(StatusMemory.find(id)) }
+    // 列表里点进来的或稍后再看离线快照先顶上：正文、图片、互动数都已经有了，先画出来，接口回来再换。
+    var status by remember(id) { mutableStateOf(StatusMemory.find(id) ?: ReadLater.find(id, mid)?.status) }
     var detailError by remember(id) { mutableStateOf<String?>(null) }
     val comments = remember(id) { mutableStateListOf<Comment>() }
     var maxId by remember(id) { mutableStateOf<String?>(null) }
@@ -304,7 +306,9 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                 seeded,
             )
         } catch (t: Throwable) {
-            detailError = t.message ?: "正文加载失败"
+            if (status == null) {
+                detailError = t.message ?: "正文加载失败"
+            }
         }
         status?.let { s ->
             App.store.addHistory(
@@ -1230,7 +1234,7 @@ private fun CommentCard(    comment: Comment,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            comment.user?.name.orEmpty(),
+                            UserRemarks.displayName(comment.user?.id, comment.user?.name.orEmpty()),
                             fontSize = 15.sp,
                             // 跟楼中楼的 ID 同一档灰：评论正文才是主内容，ID 往后退一格。
                             color = scheme.onSurfaceSecondary,
@@ -1444,7 +1448,7 @@ internal fun ReplyRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        reply.user?.name.orEmpty(),
+                        UserRemarks.displayName(reply.user?.id, reply.user?.name.orEmpty()),
                         fontSize = nameSize,
                         color = scheme.onSurfaceSecondary,
                         fontWeight = nameWeight,

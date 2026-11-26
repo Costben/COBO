@@ -64,10 +64,12 @@ import com.cobo.app.data.FollowTag
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
+import com.cobo.app.data.ReadLater
 import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.StatusVisibility
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
@@ -166,6 +168,7 @@ fun StatusCard(
     val linkHandler = LocalLinkHandler.current
     val statusEditor = LocalStatusEditor.current
     val effectiveFavorited = App.repo.isFavorited(displayStatus.id)
+    val inReadLater = ReadLater.contains(displayStatus.id)
     var cloudFavorited by remember(displayStatus.id) { mutableStateOf(displayStatus.favorited) }
     val author = displayStatus.user
     val authorId = author?.id.orEmpty()
@@ -192,6 +195,10 @@ fun StatusCard(
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(displayStatus)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
+    }
+    val handleReadLater: () -> Unit = {
+        val added = ReadLater.toggle(displayStatus)
+        App.toast(if (added) "已加入稍后再看（支持离线阅读）" else "已移出稍后再看")
     }
     val handleEdit: (() -> Unit)? = if (canEdit) {
         {
@@ -234,7 +241,9 @@ fun StatusCard(
             onUser = onUser,
             compact = compact,
             favorited = effectiveFavorited,
+            inReadLater = inReadLater,
             onToggleFavorite = handleFavorite,
+            onToggleReadLater = handleReadLater,
             cloudFavorited = cloudFavorited,
             onToggleCloudFavorite = {
                 if (App.repo.guest) {
@@ -398,9 +407,11 @@ fun StatusHeader(
     onUser: (User) -> Unit,
     compact: Boolean,
     favorited: Boolean = App.repo.isFavorited(status.id),
+    inReadLater: Boolean = false,
     cloudFavorited: Boolean = status.favorited,
     showMore: Boolean = true,
     onToggleFavorite: (() -> Unit)? = null,
+    onToggleReadLater: (() -> Unit)? = null,
     onToggleCloudFavorite: (() -> Unit)? = null,
     following: Boolean = false,
     followLabel: String = if (following) "取消关注" else "关注",
@@ -429,7 +440,7 @@ fun StatusHeader(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = user?.name.orEmpty(),
+                        text = UserRemarks.displayName(user?.id, user?.name.orEmpty()),
                         fontSize = 15.sp,
                         lineHeight = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -452,13 +463,15 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onEdit != null || onDelete != null)) {
+                if (showMore && (onToggleFavorite != null || onToggleReadLater != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onEdit != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
                         favorited = favorited,
+                        inReadLater = inReadLater,
                         cloudFavorited = cloudFavorited,
                         onToggleFavorite = onToggleFavorite,
+                        onToggleReadLater = onToggleReadLater,
                         onToggleCloudFavorite = onToggleCloudFavorite,
                         following = following,
                         followLabel = followLabel,
@@ -535,8 +548,10 @@ internal fun statusReportUrl(mid: String): String {
 private fun StatusMoreButton(
     statusId: String,
     favorited: Boolean,
+    inReadLater: Boolean,
     cloudFavorited: Boolean,
     onToggleFavorite: (() -> Unit)?,
+    onToggleReadLater: (() -> Unit)?,
     onToggleCloudFavorite: (() -> Unit)?,
     following: Boolean,
     followLabel: String,
@@ -550,6 +565,7 @@ private fun StatusMoreButton(
     val optionSize =
         (if (onToggleCloudFavorite != null) 1 else 0) +
             (if (onToggleFavorite != null) 1 else 0) +
+            (if (onToggleReadLater != null) 1 else 0) +
             (if (onToggleFollow != null) 1 else 0) +
             (if (onReport != null) 1 else 0) +
             (if (onEdit != null) 1 else 0) +
@@ -630,6 +646,29 @@ private fun StatusMoreButton(
                             dismiss?.invoke()
                             expanded = false
                             onToggleFavorite()
+                        },
+                    )
+                }
+                if (onToggleReadLater != null) {
+                    val markIcon = if (inReadLater) CoboIcons.BookmarkFill else CoboIcons.Bookmark
+                    val markTint = if (inReadLater) scheme.primary else scheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = if (inReadLater) "移出稍后再看" else "稍后再看",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(markIcon, null, Modifier.size(18.dp), tint = markTint)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onToggleReadLater()
                         },
                     )
                 }
@@ -1396,7 +1435,7 @@ fun RetweetBlock(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "@${status.user?.name.orEmpty()}：",
+                text = "@${UserRemarks.displayName(status.user?.id, status.user?.name.orEmpty())}：",
                 color = scheme.primary,
                 fontSize = 13.sp,
                 maxLines = 1,

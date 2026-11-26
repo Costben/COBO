@@ -500,6 +500,20 @@ class Store(private val context: Context) {
         )
         write("profile-rename.json", map)
     }
+
+    fun userRemarks(): Map<String, String> =
+        decodeUserRemarks(readObject("user-remarks.json"))
+
+    fun saveUserRemarks(remarks: Map<String, String>) {
+        write("user-remarks.json", encodeUserRemarks(remarks))
+    }
+
+    fun readLaterEntries(): List<ReadLaterEntry> =
+        decodeReadLaterEntries(readArray("read-later.json"))
+
+    fun saveReadLaterEntries(entries: List<ReadLaterEntry>) {
+        write("read-later.json", encodeReadLaterEntries(entries))
+    }
 }
 
 data class ProfileRenameRecord(
