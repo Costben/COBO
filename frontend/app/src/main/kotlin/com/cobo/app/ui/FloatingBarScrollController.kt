@@ -144,6 +144,7 @@ class FloatingBarScrollController internal constructor(
     val hideProgress: State<Float> get() = _hideProgress
 
     private var settleJob: Job? = null
+    private var settlingTarget: Float? = null
 
     internal var enabled: Boolean = false
     internal var forceShow: Boolean = false
@@ -159,14 +160,23 @@ class FloatingBarScrollController internal constructor(
                 if (_hideProgress.floatValue > 0f) show()
                 return Offset.Zero
             }
+            if (isNearTop()) {
+                if (_hideProgress.floatValue > 0f) {
+                    show()
+                } else {
+                    tracker.reset(0f)
+                }
+                return Offset.Zero
+            }
             if (abs(consumed.y) < 0.5f || abs(consumed.x) > abs(consumed.y)) {
                 return Offset.Zero
             }
             settleJob?.cancel()
             settleJob = null
+            settlingTarget = null
             val next = tracker.onScrollDelta(
                 deltaY = consumed.y,
-                isNearTop = isNearTop(),
+                isNearTop = false,
                 enabled = true,
             )
             _hideProgress.floatValue = next
@@ -207,6 +217,7 @@ class FloatingBarScrollController internal constructor(
         if (!animate) {
             settleJob?.cancel()
             settleJob = null
+            settlingTarget = null
             tracker.reset(0f)
             _hideProgress.floatValue = 0f
             return
@@ -214,6 +225,7 @@ class FloatingBarScrollController internal constructor(
         if (_hideProgress.floatValue <= 0.001f) {
             settleJob?.cancel()
             settleJob = null
+            settlingTarget = null
             tracker.reset(0f)
             _hideProgress.floatValue = 0f
             return
@@ -222,22 +234,28 @@ class FloatingBarScrollController internal constructor(
     }
 
     private fun animateTo(target: Float) {
+        if (settleJob?.isActive == true && settlingTarget == target) return
         settleJob?.cancel()
+        settlingTarget = target
         val start = _hideProgress.floatValue.coerceIn(0f, 1f)
         settleJob = scope.launch {
-            val anim = Animatable(start)
-            anim.animateTo(
-                targetValue = target,
-                animationSpec = tween(
-                    durationMillis = FloatingBarSettleDurationMillis,
-                    easing = if (target > 0.5f) COUIOutEase else COUIInEase,
-                ),
-            ) {
-                _hideProgress.floatValue = value
-                tracker.syncProgress(value)
+            try {
+                val anim = Animatable(start)
+                anim.animateTo(
+                    targetValue = target,
+                    animationSpec = tween(
+                        durationMillis = FloatingBarSettleDurationMillis,
+                        easing = if (target > 0.5f) COUIOutEase else COUIInEase,
+                    ),
+                ) {
+                    _hideProgress.floatValue = value
+                    tracker.syncProgress(value)
+                }
+                tracker.reset(target)
+                _hideProgress.floatValue = target
+            } finally {
+                if (settlingTarget == target) settlingTarget = null
             }
-            tracker.reset(target)
-            _hideProgress.floatValue = target
         }
     }
 }

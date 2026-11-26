@@ -752,7 +752,7 @@ fun TimelineScreen(
         App.feedRefreshEvents.collect { currentFollowStore.refresh() }
     }
     var topActionJob by remember { mutableStateOf<Job?>(null) }
-    var programmaticScrollActive by remember { mutableStateOf(false) }
+    var programmaticScrollDepth by remember { mutableIntStateOf(0) }
     LaunchedEffect(pagerState, listStates, pageMemory) {
         snapshotFlow {
             val current = pagerState.currentPage
@@ -767,12 +767,20 @@ fun TimelineScreen(
                 )
             }
         }.collect { (current, scrolling, atTop) ->
-            if (scrolling && !programmaticScrollActive && !atTop) {
+            if (scrolling && programmaticScrollDepth == 0 && !atTop) {
                 pageMemory.getOrNull(current)?.returnAnchor = null
             }
         }
     }
     LaunchedEffect(Unit) {
+        suspend fun runProgrammaticScroll(block: suspend () -> Unit) {
+            programmaticScrollDepth++
+            try {
+                block()
+            } finally {
+                programmaticScrollDepth = (programmaticScrollDepth - 1).coerceAtLeast(0)
+            }
+        }
         App.feedTopEvents.collect { action ->
             val running = topActionJob?.isActive == true
             if (running && (action == FeedTopAction.ToggleTopOrReturn || action == FeedTopAction.LegacyDoubleTap)) {
@@ -781,7 +789,6 @@ fun TimelineScreen(
             }
             if (running) {
                 topActionJob?.cancel()
-                programmaticScrollActive = false
             }
             val page = pagerState.currentPage
             val store = currentStores.getOrNull(page) ?: return@collect
@@ -801,12 +808,7 @@ fun TimelineScreen(
                 when (effect) {
                     FeedTopEffect.NoOp -> Unit
                     FeedTopEffect.GlideToTopOnly -> {
-                        programmaticScrollActive = true
-                        try {
-                            listState?.glideToTop()
-                        } finally {
-                            programmaticScrollActive = false
-                        }
+                        runProgrammaticScroll { listState?.glideToTop() }
                     }
                     FeedTopEffect.GlideToTopAndSaveAnchor -> {
                         if (listState != null && memory != null) {
@@ -815,23 +817,15 @@ fun TimelineScreen(
                                 offset = listState.firstVisibleItemScrollOffset,
                             )
                         }
-                        programmaticScrollActive = true
-                        try {
-                            listState?.glideToTop()
-                        } finally {
-                            programmaticScrollActive = false
-                        }
+                        runProgrammaticScroll { listState?.glideToTop() }
                     }
                     FeedTopEffect.ReturnToSavedAnchor -> {
                         val target = memory?.returnAnchor
                         memory?.returnAnchor = null
                         if (target != null && listState != null && store.entryCount() > 0) {
                             val clampedIndex = target.index.coerceIn(0, store.entryCount() - 1)
-                            programmaticScrollActive = true
-                            try {
+                            runProgrammaticScroll {
                                 listState.animateScrollToItem(clampedIndex, target.offset.coerceAtLeast(0))
-                            } finally {
-                                programmaticScrollActive = false
                             }
                         }
                     }
@@ -848,12 +842,7 @@ fun TimelineScreen(
                     }
                     FeedTopEffect.GlideToTopThenRefresh -> {
                         memory?.returnAnchor = null
-                        programmaticScrollActive = true
-                        try {
-                            listState?.glideToTop()
-                        } finally {
-                            programmaticScrollActive = false
-                        }
+                        runProgrammaticScroll { listState?.glideToTop() }
                         if (!store.refreshing) {
                             val pull = pullStates.getOrNull(page)
                             if (pull != null) {

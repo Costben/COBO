@@ -1,6 +1,11 @@
 package com.cobo.app.ui
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FloatingBarScrollControllerTest {
@@ -89,5 +94,50 @@ class FloatingBarScrollControllerTest {
 
         assertEquals(0f, tracker.onScrollDelta(deltaY = -100f, isNearTop = false, enabled = false), 1e-4f)
         assertEquals(0f, tracker.progress, 1e-4f)
+    }
+
+    @Test
+    fun nearTopInPostScrollAnimatesRevealWithoutHardSnapOrRestart() {
+        val parentJob = Job()
+        val scope = CoroutineScope(parentJob)
+        val controller = FloatingBarScrollController(
+            scope = scope,
+            hideDeadzonePx = 10f,
+            hideRangePx = 100f,
+            showDeadzonePx = 20f,
+            showRangePx = 100f,
+        )
+        var nearTop = false
+        controller.enabled = true
+        controller.forceShow = false
+        controller.isNearTop = { nearTop }
+
+        controller.connection.onPostScroll(
+            consumed = Offset(0f, -120f),
+            available = Offset.Zero,
+            source = NestedScrollSource.UserInput,
+        )
+        assertEquals(1f, controller.hideProgress.value, 1e-4f)
+
+        // 进入顶部安全区时应启动平滑展开动画，而不是在 onPostScroll 里同步硬切回 0f
+        nearTop = true
+        controller.connection.onPostScroll(
+            consumed = Offset(0f, 30f),
+            available = Offset.Zero,
+            source = NestedScrollSource.SideEffect,
+        )
+        assertTrue(controller.hideProgress.value > 0.5f)
+        val firstJob = parentJob.children.single()
+        assertTrue(firstJob.isActive)
+
+        // 连续惯性滚动帧不应取消并重启同一目标的展开动画
+        controller.connection.onPostScroll(
+            consumed = Offset(0f, 20f),
+            available = Offset.Zero,
+            source = NestedScrollSource.SideEffect,
+        )
+        assertTrue(firstJob.isActive)
+        assertEquals(firstJob, parentJob.children.single())
+        parentJob.cancel()
     }
 }
