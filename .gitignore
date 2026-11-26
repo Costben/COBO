@@ -2,22 +2,30 @@
 apk/
 work/
 
-# Gradle
+# Gradle & Kotlin
 .gradle/
 build/
+shared/build/
+app/build/
+dist/
 local.properties
 .kotlin/
 
-# IDE
+# Xcode / iOS
+iosApp/iosApp.xcodeproj/xcuserdata/
+iosApp/iosApp.xcodeproj/project.xcworkspace/xcuserdata/
+
+# IDE & OS
 .idea/
 *.iml
 .DS_Store
 
-# native 签名库（不随仓库分发）
+# native 签名库（旧路径）
 client/app/src/main/jniLibs/
 
 # 构建产物
 *.apk
+*.ipa
 
 # 图标调研产物（候选 SVG / 生成脚本 / 预览页，不随仓库分发）
 icon-lab/
