@@ -85,6 +85,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -531,7 +533,10 @@ private fun MediaMaterialPill(
 }
 
 /** 全屏看图页无操作后自动隐藏顶部与实况控件的等待时长。 */
-internal const val ImageViewerChromeAutoHideDelayMillis = 2_500L
+internal const val ImageViewerChromeAutoHideDelayMillis = 3_000L
+
+private val ViewerChromeEnterEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+private val ViewerChromeExitEasing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
 
 /**
  * 判断全屏看图页是否应当启动自动隐藏倒计时：仅当控件可见且当前没有弹层、保存/上传或拖拽退出时触发。
@@ -804,8 +809,8 @@ fun ImageViewerScreen(
         val chromeAlphaState = animateFloatAsState(
             targetValue = if (chrome) 1f else 0f,
             animationSpec = tween(
-                durationMillis = if (chrome) 180 else 260,
-                easing = FastOutSlowInEasing,
+                durationMillis = if (chrome) 300 else 500,
+                easing = if (chrome) ViewerChromeEnterEasing else ViewerChromeExitEasing,
             ),
             label = "imageViewerChromeAlpha",
         )
@@ -832,7 +837,10 @@ fun ImageViewerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .graphicsLayer { alpha = chromeFade() }
+                        .graphicsLayer {
+                            alpha = chromeFade()
+                            translationY = -12.dp.toPx() * (1f - chromeAlphaState.value)
+                        }
                         .align(Alignment.TopCenter)
                         // Drawn before the insets and the bar's own padding, so the ramp starts at
                         // the very top of the screen and runs [ScrimTail] past the controls.
@@ -1008,7 +1016,10 @@ fun ImageViewerScreen(
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
-                            .graphicsLayer { alpha = chromeFade() }
+                            .graphicsLayer {
+                                alpha = chromeFade()
+                                translationY = 10.dp.toPx() * (1f - chromeAlphaState.value)
+                            }
                             .navigationBarsPadding()
                             .padding(start = 12.dp, bottom = 12.dp)
                             .then(if (!chrome) Modifier.clearAndSetSemantics {} else Modifier),
@@ -1018,7 +1029,10 @@ fun ImageViewerScreen(
                     Box(
                         Modifier
                             .align(Alignment.BottomEnd)
-                            .graphicsLayer { alpha = chromeFade() }
+                            .graphicsLayer {
+                                alpha = chromeFade()
+                                translationY = 10.dp.toPx() * (1f - chromeAlphaState.value)
+                            }
                             .navigationBarsPadding()
                             .padding(end = 12.dp, bottom = 12.dp)
                             .then(if (!chrome) Modifier.clearAndSetSemantics {} else Modifier),
@@ -2013,15 +2027,19 @@ private fun ZoomableImage(
                 else -> ""
             }
         }
-        if (liveStatus.isNotEmpty() && chromeVisible) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 12.dp)
-                    .height(MediaControlHeight),
-                contentAlignment = Alignment.Center,
-            ) {
+        AnimatedVisibility(
+            visible = liveStatus.isNotEmpty() && chromeVisible,
+            enter = fadeIn(tween(300, easing = ViewerChromeEnterEasing)) +
+                slideInVertically(tween(340, easing = ViewerChromeEnterEasing)) { it / 3 },
+            exit = fadeOut(tween(480, easing = ViewerChromeExitEasing)) +
+                slideOutVertically(tween(500, easing = ViewerChromeExitEasing)) { it / 3 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 12.dp)
+                .height(MediaControlHeight),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
                 Text(
                     text = liveStatus,
                     color = Color.White,
@@ -2179,7 +2197,16 @@ private fun ZoomableImage(
                 },
         )
 
-        if (hasInlineVideo && inlineVideoActive && inlinePlayer != null && chromeVisible && !frame.dismiss.dragging && !frame.dismiss.exiting) {
+        AnimatedVisibility(
+            visible = hasInlineVideo && inlineVideoActive && inlinePlayer != null && chromeVisible && !frame.dismiss.dragging && !frame.dismiss.exiting,
+            enter = fadeIn(tween(300, easing = ViewerChromeEnterEasing)) +
+                slideInVertically(tween(340, easing = ViewerChromeEnterEasing)) { it / 4 },
+            exit = fadeOut(tween(480, easing = ViewerChromeExitEasing)) +
+                slideOutVertically(tween(500, easing = ViewerChromeExitEasing)) { it / 5 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+        ) {
             val effectiveDur = inlineVideoDurationMs.coerceAtLeast(1L)
             val displayPos = if (inlineScrubbing) inlineScrubMs else inlineVideoPosMs
             val intentState = when {
@@ -2190,7 +2217,6 @@ private fun ZoomableImage(
             }
             Row(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -2224,7 +2250,7 @@ private fun ZoomableImage(
                             inlineScrubMs = next.roundToLong()
                         },
                         onValueChangeFinished = {
-                            inlinePlayer.seekTo(inlineScrubMs)
+                            inlinePlayer?.seekTo(inlineScrubMs)
                             inlineVideoPosMs = inlineScrubMs
                             inlineScrubbing = false
                             onInlineScrubbingChange(false)
