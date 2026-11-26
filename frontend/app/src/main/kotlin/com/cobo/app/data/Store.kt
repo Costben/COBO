@@ -500,6 +500,13 @@ class Store(private val context: Context) {
         )
         write("profile-rename.json", map)
     }
+
+    fun contentFilterRules(): ContentFilterRules =
+        decodeContentFilterRules(readObject("content-filters.json"))
+
+    fun saveContentFilterRules(rules: ContentFilterRules) {
+        write("content-filters.json", encodeContentFilterRules(rules))
+    }
 }
 
 data class ProfileRenameRecord(

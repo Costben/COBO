@@ -54,13 +54,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.BigPicInfo
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FollowTag
+import com.cobo.app.data.MuteUserMode
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
@@ -71,6 +74,7 @@ import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
+import com.cobo.app.data.extractTopics
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.foldWeiboHtml
 import com.cobo.app.data.isServerTruncatedHtml
@@ -118,6 +122,9 @@ import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
 import io.github.suqi8.coui.kmp.icon.extended.Play
 import io.github.suqi8.coui.kmp.icon.extended.Report
+import io.github.suqi8.coui.kmp.layout.DialogButtonBar
+import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
@@ -174,6 +181,7 @@ fun StatusCard(
     val canEdit = isSelf
     val canDelete = isSelf
     val canFollow = author != null && authorId.isNotBlank() && !isSelf
+    val canLocalMute = authorId.isNotBlank() && authorId != App.repo.session?.uid
     val reportMid = displayStatus.mid.ifBlank { displayStatus.id }
     val canReport = !isGuest && !isSelf && reportMid.isNotBlank()
     val effectiveFollowing = when {
@@ -189,6 +197,7 @@ fun StatusCard(
     }
     var confirmDelete by remember(displayStatus.id) { mutableStateOf(false) }
     var deleting by remember(displayStatus.id) { mutableStateOf(false) }
+    var showMuteDialog by remember(displayStatus.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(displayStatus)
         App.toast(if (nowFavorited) "已收藏" else "已取消收藏")
@@ -253,6 +262,7 @@ fun StatusCard(
             following = effectiveFollowing,
             followLabel = followMenuLabel,
             onToggleFollow = handleFollow,
+            onLocalMute = if (canLocalMute) { { showMuteDialog = true } } else null,
             onReport = if (canReport) { { linkHandler(statusReportUrl(reportMid)) } } else null,
             onEdit = handleEdit,
             onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
@@ -390,6 +400,12 @@ fun StatusCard(
             },
         )
     }
+    if (showMuteDialog) {
+        QuickMuteDialog(
+            status = displayStatus,
+            onDismiss = { showMuteDialog = false },
+        )
+    }
 }
 
 @Composable
@@ -405,6 +421,7 @@ fun StatusHeader(
     following: Boolean = false,
     followLabel: String = if (following) "取消关注" else "关注",
     onToggleFollow: (() -> Unit)? = null,
+    onLocalMute: (() -> Unit)? = null,
     onReport: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
@@ -452,7 +469,7 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onReport != null || onEdit != null || onDelete != null)) {
+                if (showMore && (onToggleFavorite != null || onToggleCloudFavorite != null || onToggleFollow != null || onLocalMute != null || onReport != null || onEdit != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
@@ -463,6 +480,7 @@ fun StatusHeader(
                         following = following,
                         followLabel = followLabel,
                         onToggleFollow = onToggleFollow,
+                        onLocalMute = onLocalMute,
                         onReport = onReport,
                         onEdit = onEdit,
                         onDelete = onDelete,
@@ -541,6 +559,7 @@ private fun StatusMoreButton(
     following: Boolean,
     followLabel: String,
     onToggleFollow: (() -> Unit)?,
+    onLocalMute: (() -> Unit)?,
     onReport: (() -> Unit)?,
     onEdit: (() -> Unit)?,
     onDelete: (() -> Unit)?,
@@ -551,6 +570,7 @@ private fun StatusMoreButton(
         (if (onToggleCloudFavorite != null) 1 else 0) +
             (if (onToggleFavorite != null) 1 else 0) +
             (if (onToggleFollow != null) 1 else 0) +
+            (if (onLocalMute != null) 1 else 0) +
             (if (onReport != null) 1 else 0) +
             (if (onEdit != null) 1 else 0) +
             (if (onDelete != null) 1 else 0)
@@ -656,6 +676,27 @@ private fun StatusMoreButton(
                         },
                     )
                 }
+                if (onLocalMute != null) {
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "本地屏蔽",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(CoboIcons.Block, null, Modifier.size(18.dp), tint = scheme.onSurfaceContainer)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onLocalMute()
+                        },
+                    )
+                }
                 if (onReport != null) {
                     DropdownImpl(
                         item = DropdownItem(
@@ -721,6 +762,164 @@ private fun StatusMoreButton(
                     )
                 }
             }
+        }
+    }
+}
+
+private data class QuickMuteOption(
+    val key: String,
+    val title: String,
+    val summary: String? = null,
+    val selected: Boolean = false,
+    val action: () -> Unit,
+)
+
+/**
+ * 卡片三点菜单里的快捷本地屏蔽面板。
+ * 选中项在弹窗收起动画完成后（`onDismissFinished`）执行，避免列表中被屏蔽卡片立刻销毁引发残影。
+ */
+@Composable
+private fun QuickMuteDialog(
+    status: Status,
+    onDismiss: () -> Unit,
+) {
+    val rules = ContentFilters.rules
+    val author = status.user
+    val authorId = author?.id.orEmpty()
+    val authorName = author?.name?.ifBlank { "该用户" } ?: "该用户"
+    val currentMode = ContentFilters.muteMode(authorId)
+    val selfUid = App.repo.session?.uid
+    val quotedUser = status.retweeted?.user?.takeIf {
+        it.id.isNotBlank() && it.id != authorId && it.id != selfUid
+    }
+    val topics = remember(status.id, status.textHtml, status.retweeted?.textHtml) {
+        extractTopics(status).take(3)
+    }
+
+    val options = remember(authorId, authorName, currentMode, quotedUser, topics, rules) {
+        buildList {
+            if (authorId.isNotBlank()) {
+                val allMuted = currentMode == MuteUserMode.All
+                add(
+                    QuickMuteOption(
+                        key = "author_all_$authorId",
+                        title = if (allMuted) "取消静音「$authorName」" else "静音「$authorName」",
+                        summary = "隐藏其全部原创与转发微博",
+                        selected = allMuted,
+                        action = {
+                            ContentFilters.setMutedUser(
+                                uid = authorId,
+                                name = author?.name.orEmpty(),
+                                mode = if (allMuted) null else MuteUserMode.All,
+                            )
+                            App.toast(if (allMuted) "已取消静音" else "已静音「$authorName」")
+                        },
+                    ),
+                )
+                val repostsMuted = currentMode == MuteUserMode.RepostsOnly
+                add(
+                    QuickMuteOption(
+                        key = "author_repost_$authorId",
+                        title = if (repostsMuted) "取消屏蔽「$authorName」的转发" else "仅屏蔽「$authorName」的转发",
+                        summary = "保留其原创微博",
+                        selected = repostsMuted,
+                        action = {
+                            ContentFilters.setMutedUser(
+                                uid = authorId,
+                                name = author?.name.orEmpty(),
+                                mode = if (repostsMuted) null else MuteUserMode.RepostsOnly,
+                            )
+                            App.toast(if (repostsMuted) "已恢复显示其转发" else "已屏蔽「$authorName」的转发")
+                        },
+                    ),
+                )
+            }
+            if (quotedUser != null) {
+                val qName = quotedUser.name.ifBlank { "原博作者" }
+                val qMuted = ContentFilters.muteMode(quotedUser.id) == MuteUserMode.All
+                add(
+                    QuickMuteOption(
+                        key = "quoted_all_${quotedUser.id}",
+                        title = if (qMuted) "取消静音原博作者「$qName」" else "静音原博作者「$qName」",
+                        summary = "隐藏引用或转发该用户的微博",
+                        selected = qMuted,
+                        action = {
+                            ContentFilters.setMutedUser(
+                                uid = quotedUser.id,
+                                name = quotedUser.name,
+                                mode = if (qMuted) null else MuteUserMode.All,
+                            )
+                            App.toast(if (qMuted) "已取消静音" else "已静音「$qName」")
+                        },
+                    ),
+                )
+            }
+            topics.forEach { topic ->
+                val muted = ContentFilters.hasTopic(topic)
+                add(
+                    QuickMuteOption(
+                        key = "topic_$topic",
+                        title = if (muted) "取消屏蔽话题 #$topic#" else "屏蔽话题 #$topic#",
+                        selected = muted,
+                        action = {
+                            if (muted) {
+                                ContentFilters.removeTopic(topic)
+                                App.toast("已取消屏蔽话题 #$topic#")
+                            } else {
+                                val err = ContentFilters.addTopic(topic)
+                                App.toast(err ?: "已屏蔽话题 #$topic#")
+                            }
+                        },
+                    ),
+                )
+            }
+        }
+    }
+
+    var show by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+
+    OverlayDialog(
+        show = show,
+        title = "本地屏蔽",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                val act = pendingAction
+                onDismiss()
+                act?.invoke()
+            }
+        },
+    ) {
+        Column {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                propagateMinConstraints = true,
+            ) {
+                ListPopupColumn {
+                    options.forEachIndexed { index, opt ->
+                        DropdownImpl(
+                            item = DropdownItem(text = opt.title, summary = opt.summary),
+                            optionSize = options.size,
+                            isSelected = opt.selected,
+                            index = index,
+                            groupKey = "quick_mute_${status.id}",
+                            onSelectedIndexChange = {
+                                pendingAction = options[it].action
+                                show = false
+                            },
+                        )
+                    }
+                }
+            }
+            DialogButtonBar(
+                negative = DialogButtonBarAction(text = "取消", onClick = { show = false }),
+                positive = null,
+            )
         }
     }
 }

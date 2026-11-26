@@ -36,6 +36,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_feed_center_tab",
             "settings_feed_right_tab",
             "settings_collapse_follow_groups",
+            "settings_content_filter",
             "settings_show_vip_level",
             "settings_show_fan_level",
             "settings_show_verified_badge",

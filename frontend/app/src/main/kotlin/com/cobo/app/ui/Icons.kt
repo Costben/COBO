@@ -901,4 +901,18 @@ object CoboIcons {
             lineTo(10.6f, 13.4f)
         }
     }
+
+    /** 本地屏蔽：圆圈加斜杠。 */
+    val Block: ImageVector by lazy {
+        outline("Block") {
+            moveTo(12.0f, 3.8f)
+            curveTo(16.53f, 3.8f, 20.2f, 7.47f, 20.2f, 12.0f)
+            curveTo(20.2f, 16.53f, 16.53f, 20.2f, 12.0f, 20.2f)
+            curveTo(7.47f, 20.2f, 3.8f, 16.53f, 3.8f, 12.0f)
+            curveTo(3.8f, 7.47f, 7.47f, 3.8f, 12.0f, 3.8f)
+            close()
+            moveTo(6.3f, 6.3f)
+            lineTo(17.7f, 17.7f)
+        }
+    }
 }

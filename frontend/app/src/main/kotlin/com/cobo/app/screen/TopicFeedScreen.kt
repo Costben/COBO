@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -46,7 +47,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.TopicChannel
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
@@ -156,12 +160,14 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                     if (!store.loaded) store.loadInitial()
                 }
                 LaunchedEffect(listState, store) {
-                    snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-                        .collect { last ->
-                            if (last >= store.items.size - 2 && store.items.isNotEmpty() && store.error == null) {
-                                store.loadMore()
-                            }
+                    snapshotFlow {
+                        val info = listState.layoutInfo
+                        (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+                    }.collect { (last, total) ->
+                        if (total > 0 && last >= total - 2 && store.items.isNotEmpty() && store.error == null) {
+                            store.loadMore()
                         }
+                    }
                 }
 
                 FullPagePullToRefresh(
@@ -185,6 +191,11 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                         ),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        val filterRules = ContentFilters.rules
+                        val selfUid = App.repo.session?.uid
+                        val visibleIndexed = store.items.withIndex().filterNot {
+                            shouldFilterStatus(it.value, filterRules, FilterSurface.SearchAndHot, selfUid)
+                        }
                         if (store.items.isEmpty()) {
                             item(key = "state") {
                                 when {
@@ -197,8 +208,10 @@ fun TopicFeedScreen(nav: NavState, topic: String) {
                                     else -> EmptyState("没有找到相关微博")
                                 }
                             }
+                        } else if (visibleIndexed.isEmpty()) {
+                            item(key = "filtered_empty") { EmptyState("当前内容均已被屏蔽规则隐藏") }
                         }
-                        itemsIndexed(store.items, key = { _, s -> "${channel.type}_${s.id}" }) { index, status ->
+                        items(visibleIndexed, key = { "${channel.type}_${it.value.id}" }) { (index, status) ->
                             val origin = rememberExpandOrigin()
                             StatusCard(
                                 status = status,

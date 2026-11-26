@@ -76,6 +76,7 @@ import com.cobo.app.screen.AccountsScreen
 import com.cobo.app.screen.ChangelogScreen
 import com.cobo.app.screen.ChatScreen
 import com.cobo.app.screen.ContainerScreen
+import com.cobo.app.screen.ContentFilterSettingsScreen
 import com.cobo.app.screen.DetailScreen
 import com.cobo.app.screen.DraftsScreen
 import com.cobo.app.screen.EditHistoryScreen
@@ -922,6 +923,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.Settings -> SettingsScreen(nav)
         is Route.SettingsDetail -> SettingsGroupScreen(nav, route.group)
         Route.PredictiveBackSettings -> PredictiveBackSettingsScreen(nav)
+        Route.ContentFilterSettings -> ContentFilterSettingsScreen(nav)
         Route.About -> AboutScreen(nav)
         Route.Changelog -> ChangelogScreen(nav)
         Route.Nearby -> NearbyScreen(nav)

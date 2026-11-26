@@ -90,14 +90,17 @@ import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.CommentBadge
 import com.cobo.app.data.CommentSort
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.data.Membership
+import com.cobo.app.data.MuteUserMode
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Status
 import com.cobo.app.data.StatusMemory
 import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
+import com.cobo.app.data.shouldFilterComment
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
@@ -347,14 +350,16 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     }
 
     LaunchedEffect(listState, comments.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (!switchingSort && last >= comments.size + 2 &&
-                    comments.isNotEmpty() && !commentsEnd
-                ) {
-                    loadComments(false, force = false)
-                }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (!switchingSort && total > 0 && last >= total - 2 &&
+                comments.isNotEmpty() && !commentsEnd
+            ) {
+                loadComments(false, force = false)
             }
+        }
     }
 
     val scheme = COUITheme.colorScheme
@@ -532,7 +537,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     }
                 }
 
-                itemsIndexed(comments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
+                val filterRules = ContentFilters.rules
+                val selfUid = App.repo.session?.uid
+                val visibleComments = comments.filterNot {
+                    shouldFilterComment(it, filterRules, selfUid)
+                }
+                itemsIndexed(visibleComments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
                     CommentCard(
                         comment = comment,
                         statusId = id,
@@ -583,7 +593,13 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             scope.launch { loadComments(true, force = true) }
                         }
                         commentsEnd -> Text(
-                            "没有更多评论",
+                            if (comments.isNotEmpty() && visibleComments.isEmpty()) "当前评论已被屏蔽规则隐藏" else "没有更多评论",
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        )
+                        comments.isNotEmpty() && visibleComments.isEmpty() -> Text(
+                            "当前评论已被屏蔽规则隐藏",
                             fontSize = 12.sp,
                             color = scheme.onSurfaceSecondary,
                             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1005,12 +1021,22 @@ internal fun CommentMoreButton(
         App.toast("已复制")
     }
 
-    val entries = listOf(
-        CommentMenuEntry("复制", COUIIcons.Copy, true, ::copyText),
-        CommentMenuEntry("转发", COUIIcons.Forward, !readOnly, onRepost),
-        CommentMenuEntry("投诉", COUIIcons.Report, true, onReport),
-        CommentMenuEntry("回复", COUIIcons.Reply, !readOnly, onReply),
-    )
+    val author = comment.user
+    val canMuteAuthor = author != null && author.id.isNotBlank() && author.id != App.repo.session?.uid
+    val entries = buildList {
+        add(CommentMenuEntry("复制", COUIIcons.Copy, true, ::copyText))
+        add(CommentMenuEntry("转发", COUIIcons.Forward, !readOnly, onRepost))
+        add(CommentMenuEntry("投诉", COUIIcons.Report, true, onReport))
+        add(CommentMenuEntry("回复", COUIIcons.Reply, !readOnly, onReply))
+        if (canMuteAuthor) {
+            add(
+                CommentMenuEntry("静音该用户", CoboIcons.Block, true) {
+                    ContentFilters.setMutedUser(author.id, author.name, MuteUserMode.All)
+                    App.toast("已静音「${author.name.ifBlank { author.id }}」")
+                },
+            )
+        }
+    }
     val buttonSize = if (compact) 18.dp else 20.dp
     val iconSize = if (compact) 16.dp else 18.dp
     val squircleEnabled = isSquircleEnabled()
@@ -1293,8 +1319,14 @@ private fun CommentCard(    comment: Comment,
                     Spacer(Modifier.height(4.dp))
                     actions()
                 }
+                val replyFilterRules = ContentFilters.rules
+                val replySelfUid = App.repo.session?.uid
+                val visibleRepliesAll = replies.filterNot {
+                    shouldFilterComment(it, replyFilterRules, replySelfUid)
+                }
                 val total = maxOf(replyTotal, replies.size)
-                if (total > 0) {
+                val visible = if (expanded) visibleRepliesAll else visibleRepliesAll.take(PreviewReplies)
+                if (visible.isNotEmpty() || loadingReplies || (expanded && !repliesDone && replies.size < total)) {
                     Spacer(Modifier.height(6.dp))
                     Column(
                         modifier = Modifier
@@ -1303,7 +1335,6 @@ private fun CommentCard(    comment: Comment,
                             .background(nestedTone)
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                     ) {
-                        val visible = if (expanded) replies else replies.take(PreviewReplies)
                         visible.forEach { reply ->
                             ReplyRow(
                                 reply = reply,

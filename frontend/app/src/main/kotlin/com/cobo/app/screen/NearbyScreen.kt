@@ -44,8 +44,11 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.NearbyPlace
 import com.cobo.app.data.deviceCoords
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
@@ -169,10 +172,12 @@ fun NearbyScreen(nav: NavState) {
 
     LaunchedEffect(listState, store) {
         val current = store ?: return@LaunchedEffect
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (last >= current.items.size - 2 && current.items.isNotEmpty()) current.loadMore()
-            }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 2 && current.items.isNotEmpty()) current.loadMore()
+        }
     }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
@@ -205,6 +210,11 @@ fun NearbyScreen(nav: NavState) {
                         }
                     }
                 } else {
+                    val filterRules = ContentFilters.rules
+                    val selfUid = App.repo.session?.uid
+                    val visibleIndexed = feed.items.withIndex().filterNot {
+                        shouldFilterStatus(it.value, filterRules, FilterSurface.Feed, selfUid)
+                    }
                     if (feed.items.isEmpty()) {
                         item {
                             when {
@@ -215,8 +225,10 @@ fun NearbyScreen(nav: NavState) {
                                 else -> EmptyState("附近暂时没有内容")
                             }
                         }
+                    } else if (visibleIndexed.isEmpty()) {
+                        item(key = "filtered_empty") { EmptyState("附近微博均已被屏蔽规则隐藏") }
                     }
-                    itemsIndexed(feed.items, key = { _, s -> s.id }) { index, status ->
+                    items(visibleIndexed, key = { it.value.id }) { (index, status) ->
                         val origin = rememberExpandOrigin()
                         StatusCard(
                             status = status,

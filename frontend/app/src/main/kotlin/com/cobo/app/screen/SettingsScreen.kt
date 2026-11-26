@@ -61,6 +61,7 @@ import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.BottomLeftAction
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
@@ -70,6 +71,7 @@ import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.feedTabOptions
+import com.cobo.app.data.formatContentFilterSummary
 import com.cobo.app.ui.AccentHueCycle
 import com.cobo.app.ui.AccentPresets
 import com.cobo.app.ui.AppBarSurface
@@ -269,7 +271,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
             SettingsGroupSection(
                 key = "feed",
                 title = group.title,
-                entries = feedSettingsEntries(state = state),
+                entries = feedSettingsEntries(nav = nav, state = state),
                 group = group,
             ),
         )
@@ -349,7 +351,7 @@ private fun buildAllSettingsGroups(
     SettingsGroupSection(
         key = "feed",
         title = SettingsGroup.Feed.title,
-        entries = feedSettingsEntries(state = state),
+        entries = feedSettingsEntries(nav = nav, state = state),
         group = SettingsGroup.Feed,
     ),
     SettingsGroupSection(
@@ -862,8 +864,10 @@ private fun displaySettingsEntries(
 
 @Composable
 private fun feedSettingsEntries(
+    nav: NavState,
     state: SettingsUiState,
 ): List<SettingsEntry> {
+    val filterSummary = formatContentFilterSummary(ContentFilters.rules)
     val hotBoardsSummary = App.settings.hotBoards.let { picked ->
         when {
             picked.isEmpty() -> "已隐藏"
@@ -977,6 +981,20 @@ private fun feedSettingsEntries(
                 summary = "刷新不回顶，从当前位置往上补看新微博",
                 modifier = Modifier.testTag("settings_reverse_browse"),
                 cardListPosition = pos,
+            )
+        },
+        SettingsEntry(
+            id = "content_filter",
+            title = "内容屏蔽",
+            summary = filterSummary,
+            keywords = "屏蔽 过滤 关键词 正则 话题 静音 拉黑 filter mute",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "内容屏蔽",
+                modifier = Modifier.testTag("settings_content_filter"),
+                summary = filterSummary,
+                cardListPosition = pos,
+                onClick = { nav.push(Route.ContentFilterSettings) },
             )
         },
         SettingsEntry(

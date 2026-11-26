@@ -225,6 +225,7 @@ sealed interface Route {
     data object Settings : Route
     data class SettingsDetail(val group: SettingsGroup) : Route
     data object PredictiveBackSettings : Route
+    data object ContentFilterSettings : Route
     data object About : Route
     data object Changelog : Route
     data object Nearby : Route

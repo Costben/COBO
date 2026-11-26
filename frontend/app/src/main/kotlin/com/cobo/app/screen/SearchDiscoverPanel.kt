@@ -75,12 +75,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilterRules
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.HotItem
 import com.cobo.app.data.Membership
 import com.cobo.app.data.SearchSuggestEntry
 import com.cobo.app.data.User
 import com.cobo.app.data.buildSearchSuggestEntries
+import com.cobo.app.data.shouldFilterHotItem
 import com.cobo.app.ui.components.Avatar
 import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.ErrorState
@@ -225,6 +228,7 @@ fun LazyListScope.searchDiscoverItems(
     onSelectKeyword: (String) -> Unit,
     onRetryHot: () -> Unit,
     onSelectUser: (User) -> Unit = { onSelectKeyword(it.name) },
+    filterRules: ContentFilterRules = ContentFilters.rules,
 ) {
     if (suggesting) {
         itemsIndexed(
@@ -286,10 +290,20 @@ fun LazyListScope.searchDiscoverItems(
             }
         }
     } else {
-        items(state.hot, key = { state.hotBoard?.name + it.rank.toString() + it.title }) { item ->
-            HotSearchRow(item) {
-                state.clearEditing()
-                onSelectKeyword(item.title)
+        val visibleHot = state.hot.filterNot { shouldFilterHotItem(it, filterRules) }
+        if (visibleHot.isEmpty()) {
+            item(key = "hot_search_filtered_empty") {
+                val horizontalPadding = searchHorizontalPadding()
+                Box(Modifier.padding(horizontal = horizontalPadding)) {
+                    EmptyState("当前热搜均已被屏蔽规则隐藏")
+                }
+            }
+        } else {
+            items(visibleHot, key = { state.hotBoard?.name + it.rank.toString() + it.title }) { item ->
+                HotSearchRow(item) {
+                    state.clearEditing()
+                    onSelectKeyword(item.title)
+                }
             }
         }
     }

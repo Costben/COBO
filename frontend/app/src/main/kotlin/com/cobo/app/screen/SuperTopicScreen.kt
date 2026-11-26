@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -48,8 +49,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.ApiException
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedPage
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.SuperTopicInfo
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.data.SuperTopicPage
 import com.cobo.app.data.SuperTopicTab
 import com.cobo.app.data.SuperTopicTabKind
@@ -230,12 +234,14 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                         if (!feed.loaded) feed.loadInitial()
                     }
                     LaunchedEffect(listState, feed, feed.items.size) {
-                        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-                            .collect { last ->
-                                if (feed.items.isNotEmpty() && last >= feed.items.size - 1 && feed.error == null) {
-                                    feed.loadMore()
-                                }
+                        snapshotFlow {
+                            val info = listState.layoutInfo
+                            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+                        }.collect { (last, total) ->
+                            if (feed.items.isNotEmpty() && total > 0 && last >= total - 2 && feed.error == null) {
+                                feed.loadMore()
                             }
+                        }
                     }
                     LaunchedEffect(feed.generation) {
                         if (feed.loaded) listState.scrollToItem(0)
@@ -332,6 +338,11 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                     }
                                 }
                             }
+                            val filterRules = ContentFilters.rules
+                            val selfUid = App.repo.session?.uid
+                            val visibleIndexed = feed.items.withIndex().filterNot {
+                                shouldFilterStatus(it.value, filterRules, FilterSurface.Feed, selfUid)
+                            }
                             if (feed.items.isEmpty()) {
                                 item(key = "state") {
                                     when {
@@ -347,8 +358,10 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                         else -> EmptyState("这个分类暂时没有内容")
                                     }
                                 }
+                            } else if (visibleIndexed.isEmpty()) {
+                                item(key = "filtered_empty") { EmptyState("当前内容均已被屏蔽规则隐藏") }
                             }
-                            itemsIndexed(feed.items, key = { _, status -> "${tab.containerId}-${status.id}" }) { index, status ->
+                            items(visibleIndexed, key = { "${tab.containerId}-${it.value.id}" }) { (index, status) ->
                                 val origin = rememberExpandOrigin()
                                 StatusCard(
                                     status = status,

@@ -44,7 +44,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilterRules
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedPage
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
 import com.cobo.app.data.SearchFeaturedUser
@@ -52,6 +55,7 @@ import com.cobo.app.data.SearchSort
 import com.cobo.app.data.Status
 import com.cobo.app.data.TopicItem
 import com.cobo.app.data.User
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.LocalLinkHandler
 import com.cobo.app.ui.NavState
@@ -683,6 +687,8 @@ fun LazyListScope.searchResultsItems(
     horizontalPadding: Dp,
     scope: CoroutineScope,
     onSelectKeyword: (String) -> Unit,
+    filterRules: ContentFilterRules = ContentFilters.rules,
+    selfUid: String? = App.repo.session?.uid,
 ) {
     if (state.loading) return
 
@@ -739,6 +745,8 @@ fun LazyListScope.searchResultsItems(
                 horizontalPadding = horizontalPadding,
                 nav = nav,
                 scope = scope,
+                filterRules = filterRules,
+                selfUid = selfUid,
                 onRetry = { scope.launch { state.load(SearchTab.Weibo, reset = true, force = true) } },
             )
         }
@@ -752,6 +760,8 @@ fun LazyListScope.searchResultsItems(
             horizontalPadding = horizontalPadding,
             nav = nav,
             scope = scope,
+            filterRules = filterRules,
+            selfUid = selfUid,
             onRetry = { scope.launch { state.load(SearchTab.Pictures, reset = true, force = true) } },
         )
 
@@ -764,6 +774,8 @@ fun LazyListScope.searchResultsItems(
             horizontalPadding = horizontalPadding,
             nav = nav,
             scope = scope,
+            filterRules = filterRules,
+            selfUid = selfUid,
             onRetry = { scope.launch { state.load(SearchTab.Videos, reset = true, force = true) } },
         )
 
@@ -776,6 +788,8 @@ fun LazyListScope.searchResultsItems(
             horizontalPadding = horizontalPadding,
             nav = nav,
             scope = scope,
+            filterRules = filterRules,
+            selfUid = selfUid,
             onRetry = { scope.launch { state.load(SearchTab.Following, reset = true, force = true) } },
         )
 
@@ -879,6 +893,8 @@ private fun LazyListScope.searchStatusTabItems(
     horizontalPadding: Dp,
     nav: NavState,
     scope: CoroutineScope,
+    filterRules: ContentFilterRules,
+    selfUid: String?,
     onRetry: () -> Unit,
 ) {
     if (items.isEmpty()) {
@@ -896,10 +912,21 @@ private fun LazyListScope.searchStatusTabItems(
         }
         return
     }
-    itemsIndexed(items, key = { _, s -> "${tabKey}_${s.id}" }) { idx, status ->
+    val visibleItems = items.filterNot {
+        shouldFilterStatus(it, filterRules, FilterSurface.SearchAndHot, selfUid)
+    }
+    if (visibleItems.isEmpty()) {
+        item(key = "search_${tabKey}_filtered_empty") {
+            Box(Modifier.padding(horizontal = horizontalPadding)) {
+                EmptyState("当前结果均已被屏蔽规则隐藏")
+            }
+        }
+        return
+    }
+    itemsIndexed(visibleItems, key = { _, s -> "${tabKey}_${s.id}" }) { idx, status ->
         val origin = rememberExpandOrigin()
         val feedCardFrame = App.settings.feedCardFrame
-        val showDivider = !feedCardFrame && items.drop(idx + 1).any { !App.repo.isDeleted(it.id) }
+        val showDivider = !feedCardFrame && visibleItems.drop(idx + 1).any { !App.repo.isDeleted(it.id) }
         Box(Modifier.padding(horizontal = 12.dp)) {
             StatusCard(
                 status = status,

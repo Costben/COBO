@@ -83,10 +83,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.Membership
+import com.cobo.app.data.MuteUserMode
 import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.ProfileDetail
@@ -444,6 +446,10 @@ private fun ProfileMoreAction(
     val guest = App.repo.guest
     val self = uid.isNotBlank() && uid == App.repo.session?.uid
     val canManage = uid.isNotBlank() && !self && !guest
+    val targetUid = user?.id?.takeIf { it.isNotBlank() } ?: uid
+    val isSelfTarget = targetUid.isNotBlank() && targetUid == App.repo.session?.uid
+    val canLocalMute = targetUid.isNotBlank() && !isSelfTarget
+    val muteMode = ContentFilters.muteMode(targetUid)
     val profileUrl = "https://weibo.com/u/$uid"
 
     fun copyLink() {
@@ -544,6 +550,32 @@ private fun ProfileMoreAction(
                         },
                     )
                 )
+                if (canLocalMute) {
+                    add(
+                        DropdownEntry(
+                            items = listOf(
+                                DropdownItem(
+                                    text = "本地静音",
+                                    selected = muteMode == MuteUserMode.All,
+                                    onClick = {
+                                        val next = if (muteMode == MuteUserMode.All) null else MuteUserMode.All
+                                        ContentFilters.setMutedUser(targetUid, user?.name.orEmpty(), next)
+                                        App.toast(if (next == null) "已取消静音" else "已静音该用户")
+                                    },
+                                ),
+                                DropdownItem(
+                                    text = "屏蔽其转发",
+                                    selected = muteMode == MuteUserMode.RepostsOnly,
+                                    onClick = {
+                                        val next = if (muteMode == MuteUserMode.RepostsOnly) null else MuteUserMode.RepostsOnly
+                                        ContentFilters.setMutedUser(targetUid, user?.name.orEmpty(), next)
+                                        App.toast(if (next == null) "已恢复显示其转发" else "已屏蔽该用户的转发")
+                                    },
+                                ),
+                            ),
+                        )
+                    )
+                }
                 if (canManage) {
                     add(
                         DropdownEntry(
@@ -880,6 +912,51 @@ fun ProfileContent(
                         }
                     },
                 )
+            }
+            val mutedUid = tabState.user?.id ?: tabState.resolvedUid ?: uid.orEmpty()
+            val isProfileSelf = !App.repo.guest && mutedUid.isNotBlank() && mutedUid == App.repo.session?.uid
+            val activeMuteMode = if (!isProfileSelf) ContentFilters.muteMode(mutedUid) else null
+            if (activeMuteMode != null) {
+                item(key = "profile_mute_banner") {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (activeMuteMode == MuteUserMode.All) {
+                                    "已本地静音该用户（主页内容仍可见）"
+                                } else {
+                                    "已屏蔽该用户的转发（主页内容仍可见）"
+                                },
+                                fontSize = 13.sp,
+                                color = COUITheme.colorScheme.onSurfaceSecondary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "解除",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = COUITheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        ContentFilters.setMutedUser(mutedUid, "", null)
+                                        App.toast("已取消本地屏蔽")
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
             }
             if (tabState.items.isEmpty()) {
                 item {

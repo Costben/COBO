@@ -51,11 +51,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.Comment
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.Pic
 import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.parseWeiboTimeMillis
+import com.cobo.app.data.shouldFilterComment
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandEasing
@@ -271,18 +273,26 @@ private fun CommentDetailSheetContent(
         }
     }
 
+    val filterRules = ContentFilters.rules
+    val selfUid = App.repo.session?.uid
+
     LaunchedEffect(listState, rawReplies.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            info.visibleItemsInfo.lastOrNull()?.index to info.totalItemsCount
+        }
             .distinctUntilChanged()
-            .collect { lastVisible ->
-                if (lastVisible != null && rawReplies.isNotEmpty() && lastVisible >= rawReplies.size + 1) {
+            .collect { (lastVisible, total) ->
+                if (lastVisible != null && rawReplies.isNotEmpty() && total > 0 && lastVisible >= total - 2) {
                     fetchNextPage(force = false)
                 }
             }
     }
 
-    val sortedReplies = remember(rawReplies.toList(), sort) {
-        orderSubReplies(rawReplies.toList(), sort)
+    val sortedReplies = remember(rawReplies.toList(), sort, filterRules, selfUid) {
+        orderSubReplies(rawReplies.toList(), sort).filterNot {
+            shouldFilterComment(it, filterRules, selfUid)
+        }
     }
 
     fun toggleRootLike() {
