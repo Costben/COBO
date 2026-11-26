@@ -128,6 +128,7 @@ import io.github.suqi8.coui.kmp.layout.DialogDefaults
 import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -151,7 +152,6 @@ enum class SettingsSubPage(val title: String, val group: SettingsGroup) {
     BarsAndNavigation("栏位与导航", SettingsGroup.Display),
     GesturesAndMotion("手势与动效", SettingsGroup.Display),
     MediaPlayback("图片与视频", SettingsGroup.Display),
-    FeedTabs("主页分栏与分组", SettingsGroup.Feed),
     FeedCardStyle("卡片与正文样式", SettingsGroup.Feed),
     UserBadges("用户标识显示", SettingsGroup.Feed),
     AccountBehavior("账号切换与展示", SettingsGroup.AccountAndContent),
@@ -285,14 +285,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
 
     val groups = when (group) {
         SettingsGroup.Display -> displayOverviewSections(nav = nav, state = state)
-        SettingsGroup.Feed -> listOf(
-            SettingsGroupSection(
-                key = "feed",
-                title = group.title,
-                entries = feedOverviewEntries(nav = nav, state = state),
-                group = group,
-            ),
-        )
+        SettingsGroup.Feed -> feedOverviewSections(nav = nav, state = state)
         SettingsGroup.AccountAndContent -> listOf(
             SettingsGroupSection(
                 key = "account",
@@ -395,10 +388,9 @@ fun SettingsSubPageScreen(nav: NavState, page: SettingsSubPage) {
 
     val entries = when (page) {
         SettingsSubPage.AppearanceLayout -> displayAppearanceSubEntries(state = state)
-        SettingsSubPage.BarsAndNavigation -> displayBarsSubEntries(nav = nav, state = state)
+        SettingsSubPage.BarsAndNavigation -> displayBarsSubEntries(state = state)
         SettingsSubPage.GesturesAndMotion -> displayGesturesSubEntries(nav = nav, state = state)
-        SettingsSubPage.MediaPlayback -> displayMediaSubEntries(state = state)
-        SettingsSubPage.FeedTabs -> feedTabsSubEntries(state = state)
+        SettingsSubPage.MediaPlayback -> displayMediaSubEntries(nav = nav, state = state)
         SettingsSubPage.FeedCardStyle -> feedCardStyleSubEntries(state = state)
         SettingsSubPage.UserBadges -> feedUserBadgesSubEntries(state = state)
         SettingsSubPage.AccountBehavior -> accountBehaviorSubEntries(state = state)
@@ -433,14 +425,7 @@ private fun buildAllSettingsGroups(
     includeLibraryShortcuts: Boolean,
 ): List<SettingsGroupSection> = buildList {
     addAll(displayOverviewSections(nav = nav, state = state))
-    add(
-        SettingsGroupSection(
-            key = "feed",
-            title = SettingsGroup.Feed.title,
-            entries = feedOverviewEntries(nav = nav, state = state),
-            group = SettingsGroup.Feed,
-        ),
-    )
+    addAll(feedOverviewSections(nav = nav, state = state))
     add(
         SettingsGroupSection(
             key = "account",
@@ -580,7 +565,8 @@ private fun SettingsScaffold(
                     modifier = Modifier
                         .fillMaxSize()
                         .topAppBarSearchContent(searchTransition)
-                        .scrollEndHaptic(),
+                        .scrollEndHaptic()
+                        .overScrollVertical(),
                     // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
                     // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
                     contentPadding = PaddingValues(
@@ -797,23 +783,8 @@ private fun displayAppearanceSubEntries(
 
 @Composable
 private fun displayBarsSubEntries(
-    nav: NavState,
     state: SettingsUiState,
 ): List<SettingsEntry> = listOf(
-    SettingsEntry(
-        id = "media_top_bar",
-        title = "顶栏",
-        summary = "自定义视频播放与看图页顶栏按钮显示与排序",
-        keywords = "顶栏 按钮 排序 视频 看图 原图 保存 分享 小窗 画中画 倍速 浏览器 topbar",
-    ) { pos ->
-        SettingsArrowRow(
-            title = "顶栏",
-            modifier = Modifier.testTag("settings_media_top_bar"),
-            summary = "视频 ${App.settings.videoTopBarButtons.size} 项 · 看图 ${App.settings.imageTopBarButtons.size} 项",
-            cardListPosition = pos,
-            onClick = { nav.push(Route.MediaTopBarSettings) },
-        )
-    },
     SettingsEntry(
         id = "bottom_left_action",
         title = "底栏左下角按钮",
@@ -925,16 +896,31 @@ private fun displayGesturesSubEntries(
 
 @Composable
 private fun displayMediaSubEntries(
+    nav: NavState,
     state: SettingsUiState,
 ): List<SettingsEntry> = listOf(
     SettingsEntry(
-        id = "image_browse_quality",
-        title = "浏览图片",
-        summary = App.settings.imageBrowseQuality.label,
-        keywords = "画质 原图 高清 缩略图 流量 省流 看图 image quality",
+        id = "media_top_bar",
+        title = "媒体顶栏",
+        summary = "自定义视频播放与看图页顶栏按钮显示与排序",
+        keywords = "媒体顶栏 视频顶栏 顶栏 按钮 排序 视频 看图 原图 保存 分享 小窗 画中画 倍速 浏览器 topbar",
     ) { pos ->
         SettingsArrowRow(
-            title = "浏览图片",
+            title = "媒体顶栏",
+            modifier = Modifier.testTag("settings_media_top_bar"),
+            summary = "视频 ${App.settings.videoTopBarButtons.size} 项 · 看图 ${App.settings.imageTopBarButtons.size} 项",
+            cardListPosition = pos,
+            onClick = { nav.push(Route.MediaTopBarSettings) },
+        )
+    },
+    SettingsEntry(
+        id = "image_browse_quality",
+        title = "浏览图片画质选择",
+        summary = App.settings.imageBrowseQuality.label,
+        keywords = "浏览图片 画质 原图 高清 缩略图 流量 省流 看图 image quality",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "浏览图片画质选择",
             modifier = Modifier.testTag("settings_image_browse_quality"),
             summary = App.settings.imageBrowseQuality.label,
             cardListPosition = pos,
@@ -1004,14 +990,14 @@ private fun displayMediaSubEntries(
     SettingsEntry(
         id = "video_center_swipe_actions",
         title = "视频中区滑动手势",
-        summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
+        summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「媒体顶栏」中自定义",
         keywords = "小窗 画中画 上滑 下滑 手势 video pip gesture",
     ) { pos ->
         SettingsSwitchRow(
             checked = App.settings.videoCenterSwipeActions,
             onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
             title = "视频中区滑动手势",
-            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
+            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「媒体顶栏」中自定义",
             modifier = Modifier.testTag("settings_video_center_swipe_actions"),
             cardListPosition = pos,
         )
@@ -1081,12 +1067,12 @@ private fun displayOverviewSections(
         SettingsEntry(
             id = "sub_bars_navigation",
             title = SettingsSubPage.BarsAndNavigation.title,
-            summary = "顶栏、底栏按钮、自动隐藏浮动栏与单击回顶",
-            keywords = "顶栏 底栏 导航 浮动栏 回顶",
+            summary = "底栏按钮、自动隐藏浮动栏与单击回顶",
+            keywords = "底栏 导航 浮动栏 回顶",
         ) { pos ->
             SettingsArrowRow(
                 title = SettingsSubPage.BarsAndNavigation.title,
-                summary = "顶栏、底栏按钮、自动隐藏浮动栏与单击回顶",
+                summary = "底栏按钮、自动隐藏浮动栏与单击回顶",
                 modifier = Modifier.testTag("settings_sub_bars_navigation"),
                 cardListPosition = pos,
                 onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.BarsAndNavigation)) },
@@ -1109,12 +1095,12 @@ private fun displayOverviewSections(
         SettingsEntry(
             id = "sub_media_playback",
             title = SettingsSubPage.MediaPlayback.title,
-            summary = "图片画质、实况图与视频播放交互",
-            keywords = "图片 原图 实况 视频 小窗 画中画",
+            summary = "媒体顶栏、图片画质、实况图与视频播放交互",
+            keywords = "媒体顶栏 图片 画质 原图 实况 视频 小窗 画中画",
         ) { pos ->
             SettingsArrowRow(
                 title = SettingsSubPage.MediaPlayback.title,
-                summary = "图片画质、实况图与视频播放交互",
+                summary = "媒体顶栏、图片画质、实况图与视频播放交互",
                 modifier = Modifier.testTag("settings_sub_media_playback"),
                 cardListPosition = pos,
                 onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.MediaPlayback)) },
@@ -1147,9 +1133,9 @@ private fun displayAllSearchableEntries(
 ): List<SettingsEntry> =
     displayCoreEntries(state) +
         displayAppearanceSubEntries(state) +
-        displayBarsSubEntries(nav, state) +
+        displayBarsSubEntries(state) +
         displayGesturesSubEntries(nav, state) +
-        displayMediaSubEntries(state) +
+        displayMediaSubEntries(nav, state) +
         displayGeneralInteractionEntries(state)
 
 @Composable
@@ -1403,31 +1389,16 @@ private fun feedGeneralEntries(
 }
 
 @Composable
-private fun feedOverviewEntries(
+private fun feedOverviewSections(
     nav: NavState,
     state: SettingsUiState,
-): List<SettingsEntry> {
-    val tabsSummary = "${App.settings.feedLeftTab.label} · ${App.settings.feedCenterTab.label} · ${App.settings.feedRightTab.label}"
+): List<SettingsGroupSection> {
     val badgeCount = listOf(
         App.settings.showVipLevel,
         App.settings.showFanLevel,
         App.settings.showVerifiedBadge,
     ).count { it }
-    return listOf(
-        SettingsEntry(
-            id = "sub_feed_tabs",
-            title = SettingsSubPage.FeedTabs.title,
-            summary = tabsSummary,
-            keywords = "分栏 左侧 中间 右侧 关注分组 tab",
-        ) { pos ->
-            SettingsArrowRow(
-                title = SettingsSubPage.FeedTabs.title,
-                summary = tabsSummary,
-                modifier = Modifier.testTag("settings_sub_feed_tabs"),
-                cardListPosition = pos,
-                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.FeedTabs)) },
-            )
-        },
+    val otherEntries = listOf(
         SettingsEntry(
             id = "sub_feed_card_style",
             title = SettingsSubPage.FeedCardStyle.title,
@@ -1457,6 +1428,23 @@ private fun feedOverviewEntries(
             )
         },
     ) + feedGeneralEntries(state)
+
+    return listOf(
+        SettingsGroupSection(
+            key = "feed_tabs",
+            title = SettingsGroup.Feed.title,
+            entries = feedTabsSubEntries(state),
+            headerGroupKey = "feed",
+            group = SettingsGroup.Feed,
+        ),
+        SettingsGroupSection(
+            key = "feed_other",
+            title = SettingsGroup.Feed.title,
+            entries = otherEntries,
+            headerGroupKey = "feed",
+            group = SettingsGroup.Feed,
+        ),
+    )
 }
 
 @Composable
@@ -2054,7 +2042,7 @@ private fun SettingsDialogs(
 
     if (state.pickImageBrowseQuality) {
         OptionPicker(
-            title = "浏览图片",
+            title = "浏览图片画质选择",
             options = ImageBrowseQuality.entries.map { it.key to it.label },
             selectedKey = App.settings.imageBrowseQuality.key,
             tagPrefix = "image_browse_quality",
@@ -2696,7 +2684,7 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 10.dp),
@@ -2828,7 +2816,7 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     top = glassBarContentTop(topBarHeight, 10.dp),
@@ -2903,7 +2891,7 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
                     scrollFraction = rememberListScrollFraction(listState),
                 ) {
                     SmallTopAppBar(
-                        title = "顶栏",
+                        title = "媒体顶栏",
                         color = Color.Transparent,
                         showDivider = false,
                         gradientGlass = false,

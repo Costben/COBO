@@ -65,6 +65,7 @@ import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.OverlayDropdownPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 
 /** 一条支持搜索过滤的设置项，渲染时按过滤后的实际位置动态分配 [CardListPosition]。 */
@@ -274,6 +275,7 @@ internal fun SettingsSearchResultsLayer(
                 modifier = Modifier
                     .fillMaxSize()
                     .scrollEndHaptic()
+                    .overScrollVertical()
                     .testTag("settings_search_results_list"),
                 contentPadding = PaddingValues(
                     start = 12.dp,
