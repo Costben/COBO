@@ -66,7 +66,7 @@ class WeiboNativeParityTest {
             val actual = WeiboNativePure.cumFrom(unsigned)
             assertEquals("cumFrom($unsigned) mismatch", expected, actual)
             if (unsigned.length >= 4) {
-                val h1 = com.cobo.app.platform.sha256Bytes(unsigned.encodeToByteArray())
+                val h1 = WeiboNativePure.sha256ZeroIv(unsigned.encodeToByteArray())
                 seenOffsets += (8 - (h1[0].toInt() and 0x7))
             }
         }
