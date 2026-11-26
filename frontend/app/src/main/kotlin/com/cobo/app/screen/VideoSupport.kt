@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import com.cobo.app.App
 import com.cobo.app.data.Api
 import com.cobo.app.data.Status
@@ -465,6 +466,20 @@ internal fun shouldAttemptStreamRefreshOnError(errorCode: Int): Boolean =
     errorCode == PlaybackException.ERROR_CODE_UNSPECIFIED ||
         errorCode == PlaybackException.ERROR_CODE_REMOTE_ERROR ||
         errorCode in 2000..3999
+
+/**
+ * 判断视频播放期间是否应保持屏幕常亮：
+ * 正在播放、正在自动刷新失效流，或处于 `playWhenReady` 的缓冲/就绪态时保持常亮；
+ * 暂停、播完或报错停止后释放常亮，恢复系统正常息屏。
+ */
+internal fun shouldKeepVideoScreenOn(
+    isPlaying: Boolean,
+    playWhenReady: Boolean,
+    playbackState: Int,
+    refreshingStream: Boolean = false,
+): Boolean = isPlaying ||
+    refreshingStream ||
+    (playWhenReady && (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY))
 
 internal fun videoStreamPathKey(url: String): String {
     val clean = url.trim().substringBefore('?').substringBefore('#')

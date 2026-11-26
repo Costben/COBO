@@ -1246,6 +1246,8 @@ private fun ZoomableImage(
     }
     var inlineVideoPlaying by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineVideoBuffering by remember(url, videoUrl) { mutableStateOf(false) }
+    var inlinePlaybackState by remember(url, videoUrl) { mutableIntStateOf(Player.STATE_IDLE) }
+    var inlinePlayWhenReady by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineVideoReady by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineVideoMuted by remember(url, videoUrl) { mutableStateOf(false) }
     var inlineVideoDurationMs by remember(url, videoUrl) { mutableLongStateOf(0L) }
@@ -1318,7 +1320,13 @@ private fun ZoomableImage(
         inlinePlayer?.volume = if (inlineVideoMuted) 0f else 1f
     }
     DisposableEffect(inlinePlayer, inlineFallbackUrl) {
-        val player = inlinePlayer ?: return@DisposableEffect onDispose {}
+        val player = inlinePlayer ?: run {
+            inlinePlaybackState = Player.STATE_IDLE
+            inlinePlayWhenReady = false
+            inlineVideoPlaying = false
+            inlineVideoBuffering = false
+            return@DisposableEffect onDispose {}
+        }
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 inlineVideoReady = true
@@ -1326,9 +1334,19 @@ private fun ZoomableImage(
 
             override fun onIsPlayingChanged(playingNow: Boolean) {
                 inlineVideoPlaying = playingNow
+                inlinePlayWhenReady = player.playWhenReady
+                inlinePlaybackState = player.playbackState
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
+                inlinePlayWhenReady = playWhenReadyNow
+                inlinePlaybackState = player.playbackState
+                inlineVideoPlaying = player.isPlaying
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                inlinePlaybackState = playbackState
+                inlinePlayWhenReady = player.playWhenReady
                 inlineVideoBuffering = playbackState == Player.STATE_BUFFERING
                 inlineVideoPlaying = player.isPlaying
                 inlineVideoDurationMs = player.duration.coerceAtLeast(0L)
@@ -1336,6 +1354,7 @@ private fun ZoomableImage(
                 if (playbackState == Player.STATE_ENDED) {
                     player.pause()
                     player.seekTo(0L)
+                    inlinePlayWhenReady = false
                     inlineVideoPlaying = false
                     inlineVideoPosMs = 0L
                 }
@@ -1375,6 +1394,8 @@ private fun ZoomableImage(
                             inlinePendingSeekMs = 0L
                             inlineVideoActive = false
                             inlineVideoReady = false
+                            inlinePlaybackState = Player.STATE_IDLE
+                            inlinePlayWhenReady = false
                             inlineVideoPlaying = false
                             inlineVideoBuffering = false
                             onFeedback("视频播放失败（${error.errorCodeName}）")
@@ -1384,12 +1405,18 @@ private fun ZoomableImage(
                 }
                 inlineVideoActive = false
                 inlineVideoReady = false
+                inlinePlaybackState = Player.STATE_IDLE
+                inlinePlayWhenReady = false
                 inlineVideoPlaying = false
                 inlineVideoBuffering = false
                 onFeedback("视频播放失败（${error.errorCodeName}）")
             }
         }
         player.addListener(listener)
+        inlinePlaybackState = player.playbackState
+        inlinePlayWhenReady = player.playWhenReady
+        inlineVideoPlaying = player.isPlaying
+        inlineVideoBuffering = player.playbackState == Player.STATE_BUFFERING
         onDispose {
             player.removeListener(listener)
             player.release()
@@ -1398,6 +1425,8 @@ private fun ZoomableImage(
     LaunchedEffect(inlinePlayer, inlineVideoActive) {
         val player = inlinePlayer ?: return@LaunchedEffect
         while (inlineVideoActive) {
+            inlinePlaybackState = player.playbackState
+            inlinePlayWhenReady = player.playWhenReady
             inlineVideoPlaying = player.isPlaying
             inlineVideoBuffering = player.playbackState == Player.STATE_BUFFERING
             inlineVideoDurationMs = player.duration.coerceAtLeast(0L)
@@ -1861,6 +1890,7 @@ private fun ZoomableImage(
                     box = box,
                     scale = scale,
                     offset = offset,
+                    keepScreenOn = playing,
                 )
             }
 
@@ -1870,6 +1900,15 @@ private fun ZoomableImage(
                     animationSpec = tween(LiveFadeMillis),
                     label = "inlineVideo",
                 )
+                val inlineKeepScreenOn = isCurrent &&
+                    inlineVideoActive &&
+                    !dismissingNow &&
+                    shouldKeepVideoScreenOn(
+                        isPlaying = inlineVideoPlaying,
+                        playWhenReady = inlinePlayWhenReady,
+                        playbackState = inlinePlaybackState,
+                        refreshingStream = inlineRefreshingStream,
+                    )
                 FittedVideoTextureOverlay(
                     player = inlinePlayer,
                     alpha = videoAlpha,
@@ -1877,6 +1916,7 @@ private fun ZoomableImage(
                     box = box,
                     scale = scale,
                     offset = offset,
+                    keepScreenOn = inlineKeepScreenOn,
                 )
             }
 
@@ -2164,6 +2204,7 @@ private fun BoxScope.FittedVideoTextureOverlay(
     box: IntSize,
     scale: Float,
     offset: Offset,
+    keepScreenOn: Boolean = false,
 ) {
     val density = LocalDensity.current
     val fitted = if (rest.width > 0f && rest.height > 0f && box != IntSize.Zero) {
@@ -2188,11 +2229,15 @@ private fun BoxScope.FittedVideoTextureOverlay(
         factory = { ctx ->
             playerView(ctx, player, controls = false).apply {
                 resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.keepScreenOn = keepScreenOn
             }
         },
         modifier = fitted,
         update = { view ->
             view.player = player
+            if (view.keepScreenOn != keepScreenOn) {
+                view.keepScreenOn = keepScreenOn
+            }
             val format = player.videoFormat
             if (format != null && format.height > 0) {
                 val turned = format.rotationDegrees % 180 != 0
@@ -2203,6 +2248,10 @@ private fun BoxScope.FittedVideoTextureOverlay(
                     else format.width.toFloat() / format.height,
                 )
             }
+        },
+        onRelease = { view ->
+            view.keepScreenOn = false
+            view.player = null
         },
     )
 }
@@ -3467,6 +3516,8 @@ private fun DirectVideoPlayer(
     var controlsVisible by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+    var playbackState by remember { mutableIntStateOf(Player.STATE_BUFFERING) }
+    var playWhenReady by remember { mutableStateOf(true) }
     var playerIsLive by remember(activeStreamUrl) { mutableStateOf(false) }
     val liveMode = isLive || playerIsLive
     val currentLiveMode by rememberUpdatedState(liveMode)
@@ -3505,8 +3556,10 @@ private fun DirectVideoPlayer(
     }
 
     fun syncPlayerState() {
+        playbackState = player.playbackState
+        playWhenReady = player.playWhenReady
         isPlaying = player.isPlaying
-        isBuffering = player.playbackState == Player.STATE_BUFFERING
+        isBuffering = playbackState == Player.STATE_BUFFERING
         if (player.isCurrentMediaItemLive) {
             playerIsLive = true
         }
@@ -3546,6 +3599,14 @@ private fun DirectVideoPlayer(
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                playWhenReady = player.playWhenReady
+                playbackState = player.playbackState
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
+                playWhenReady = playWhenReadyNow
+                playbackState = player.playbackState
+                isPlaying = player.isPlaying
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -3590,6 +3651,13 @@ private fun DirectVideoPlayer(
         window.attributes = params
     }
 
+    val keepScreenOn = shouldKeepVideoScreenOn(
+        isPlaying = isPlaying,
+        playWhenReady = playWhenReady,
+        playbackState = playbackState,
+        refreshingStream = refreshingStream,
+    )
+
     CoboPredictiveBackHandler(nav)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -3599,6 +3667,7 @@ private fun DirectVideoPlayer(
                     useController = false
                     controllerAutoShow = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                    this.keepScreenOn = keepScreenOn
                     this.player = player
                 }
             },
@@ -3606,6 +3675,13 @@ private fun DirectVideoPlayer(
                 if (view.player !== player) {
                     view.player = player
                 }
+                if (view.keepScreenOn != keepScreenOn) {
+                    view.keepScreenOn = keepScreenOn
+                }
+            },
+            onRelease = { view ->
+                view.keepScreenOn = false
+                view.player = null
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -4088,12 +4164,34 @@ private const val VideoSnifferJs = """
       try { CoboVideoSniffer.onMediaUrl(u); } catch (e) {}
     }
   }
+  var lastPlaying = null;
+  function reportPlayback() {
+    var playing = false;
+    var vids = document.querySelectorAll('video');
+    for (var i = 0; i < vids.length; i++) {
+      var v = vids[i];
+      if (!v.paused && !v.ended && v.readyState > 0) {
+        playing = true;
+        break;
+      }
+    }
+    if (playing !== lastPlaying) {
+      lastPlaying = playing;
+      try { CoboVideoSniffer.onPlaybackState(playing); } catch (e) {}
+    }
+  }
   function scanVideos() {
     var vids = document.querySelectorAll('video, source');
     for (var i = 0; i < vids.length; i++) {
       report(vids[i].currentSrc || vids[i].src || vids[i].getAttribute('src'));
     }
+    reportPlayback();
   }
+  document.addEventListener('play', reportPlayback, true);
+  document.addEventListener('playing', reportPlayback, true);
+  document.addEventListener('pause', reportPlayback, true);
+  document.addEventListener('ended', reportPlayback, true);
+  document.addEventListener('emptied', reportPlayback, true);
   var origFetch = window.fetch;
   if (origFetch) {
     window.fetch = function(input) {
@@ -4129,6 +4227,8 @@ private fun WebVideoPlayer(
     var pageTitle by remember(pageUrl) { mutableStateOf(title) }
     var customView by remember { mutableStateOf<View?>(null) }
     var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+    var webVideoPlaying by remember(pageUrl) { mutableStateOf(false) }
+    val keepScreenOn = webVideoPlaying || customView != null
 
     fun recordMedia(candidate: String) {
         if (!isSniffableMediaUrl(candidate)) return
@@ -4232,6 +4332,11 @@ private fun WebVideoPlayer(
                                 fun onMediaUrl(url: String) {
                                     post { recordMedia(url) }
                                 }
+
+                                @JavascriptInterface
+                                fun onPlaybackState(playing: Boolean) {
+                                    post { webVideoPlaying = playing }
+                                }
                             },
                             "CoboVideoSniffer",
                         )
@@ -4287,17 +4392,29 @@ private fun WebVideoPlayer(
                                 return super.shouldInterceptRequest(view, request)
                             }
 
+                            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                                webVideoPlaying = false
+                                super.onPageStarted(view, url, favicon)
+                            }
+
                             override fun onPageFinished(view: WebView, url: String?) {
                                 canGoBack = view.canGoBack()
                                 view.evaluateJavascript(VideoSnifferJs, null)
                             }
                         }
+                        this.keepScreenOn = keepScreenOn
                         loadUrl(pageUrl)
                         webView = this
                     }
                 },
                 modifier = Modifier.fillMaxSize().weight(1f),
+                update = { view ->
+                    if (view.keepScreenOn != keepScreenOn) {
+                        view.keepScreenOn = keepScreenOn
+                    }
+                },
                 onRelease = { view ->
+                    view.keepScreenOn = false
                     view.stopLoading()
                     view.destroy()
                 },
@@ -4306,7 +4423,15 @@ private fun WebVideoPlayer(
 
         customView?.let { fsView ->
             AndroidView(
-                factory = { fsView },
+                factory = { fsView.apply { this.keepScreenOn = true } },
+                update = { view ->
+                    if (!view.keepScreenOn) {
+                        view.keepScreenOn = true
+                    }
+                },
+                onRelease = { view ->
+                    view.keepScreenOn = false
+                },
                 modifier = Modifier.fillMaxSize().background(Color.Black),
             )
         }

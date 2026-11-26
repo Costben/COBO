@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import com.cobo.app.data.Pic
 import com.cobo.app.data.Status
 import com.cobo.app.data.VideoInfo
@@ -354,5 +355,52 @@ class VideoSupportTest {
             oldUrl = "https://f.video.weibocdn.com/o0/expired.mp4?Expires=1",
         )
         assertEquals("https://f.video.weibocdn.com/o0/origin.mp4?Expires=9999999999", matchedRetweet?.url)
+    }
+
+    @Test
+    fun keepsScreenOnOnlyWhileVideoIsActivelyPlayingOrLoadingToPlay() {
+        assertTrue(
+            shouldKeepVideoScreenOn(
+                isPlaying = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertTrue(
+            shouldKeepVideoScreenOn(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_BUFFERING,
+            ),
+        )
+        assertTrue(
+            shouldKeepVideoScreenOn(
+                isPlaying = false,
+                playWhenReady = false,
+                playbackState = Player.STATE_IDLE,
+                refreshingStream = true,
+            ),
+        )
+        assertFalse(
+            shouldKeepVideoScreenOn(
+                isPlaying = false,
+                playWhenReady = false,
+                playbackState = Player.STATE_READY,
+            ),
+        )
+        assertFalse(
+            shouldKeepVideoScreenOn(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_ENDED,
+            ),
+        )
+        assertFalse(
+            shouldKeepVideoScreenOn(
+                isPlaying = false,
+                playWhenReady = true,
+                playbackState = Player.STATE_IDLE,
+            ),
+        )
     }
 }
