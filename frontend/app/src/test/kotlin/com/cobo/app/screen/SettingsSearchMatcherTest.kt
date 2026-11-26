@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import io.github.suqi8.coui.kmp.basic.CardListPosition
+import io.github.suqi8.coui.kmp.basic.SearchTextMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -175,47 +176,47 @@ class SettingsSearchMatcherTest {
     fun highlightsMatchedRangesAcrossChinesePinyinInitialsSubsequenceAndTypo() {
         assertEquals(
             listOf(0..3),
-            SettingsSearchMatcher.findHighlightRanges("深色模式", listOf("ssms")),
+            SearchTextMatcher.findHighlightRanges("深色模式", listOf("ssms")),
         )
         assertEquals(
             listOf(0..1),
-            SettingsSearchMatcher.findHighlightRanges("深色模式", listOf("shense")),
+            SearchTextMatcher.findHighlightRanges("深色模式", listOf("shense")),
         )
         assertEquals(
             listOf(0..2),
-            SettingsSearchMatcher.findHighlightRanges("深色模式", listOf("shensm")),
+            SearchTextMatcher.findHighlightRanges("深色模式", listOf("shensm")),
         )
         assertEquals(
             listOf(0..3),
-            SettingsSearchMatcher.findHighlightRanges("深色模式", listOf("shensms")),
+            SearchTextMatcher.findHighlightRanges("深色模式", listOf("shensms")),
         )
         assertEquals(
             listOf(0..0, 2..2),
-            SettingsSearchMatcher.findHighlightRanges("深色模式", listOf("深模")),
+            SearchTextMatcher.findHighlightRanges("深色模式", listOf("深模")),
         )
         assertEquals(
             listOf(0..1, 3..5),
-            SettingsSearchMatcher.findHighlightRanges("显示 VIP 等级", listOf("xsvip")),
+            SearchTextMatcher.findHighlightRanges("显示 VIP 等级", listOf("xsvip")),
         )
         assertEquals(
             listOf(4..6, 8..8),
-            SettingsSearchMatcher.findHighlightRanges("滑动自动隐藏浮动栏", listOf("ycfl")),
+            SearchTextMatcher.findHighlightRanges("滑动自动隐藏浮动栏", listOf("ycfl")),
         )
         assertEquals(
             listOf(2..3),
-            SettingsSearchMatcher.findHighlightRanges("清理缓存", listOf("快取")),
+            SearchTextMatcher.findHighlightRanges("清理缓存", listOf("快取")),
         )
         assertEquals(
             listOf(0..1, 5..6),
-            SettingsSearchMatcher.findHighlightRanges("视频播放时返回自动悬浮", listOf("sp", "fh")),
+            SearchTextMatcher.findHighlightRanges("视频播放时返回自动悬浮", listOf("sp", "fh")),
         )
         assertEquals(
             listOf(0..1),
-            SettingsSearchMatcher.findHighlightRanges("实况图自动播放", listOf("shikuagn")),
+            SearchTextMatcher.findHighlightRanges("实况图自动播放", listOf("shikuagn")),
         )
         assertEquals(
             listOf(1..1, 3..3),
-            SettingsSearchMatcher.findHighlightRanges("「我」页图标样式", listOf("我页")),
+            SearchTextMatcher.findHighlightRanges("「我」页图标样式", listOf("我页")),
         )
     }
 }
