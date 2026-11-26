@@ -40,6 +40,8 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_live_photo_auto_play",
             "settings_live_photo_sound",
             "settings_video_auto_float_on_back",
+            "settings_video_auto_close_on_complete",
+            "settings_video_center_swipe_actions",
             "settings_in_app_browser",
             "settings_confirm_like",
             "settings_accounts",

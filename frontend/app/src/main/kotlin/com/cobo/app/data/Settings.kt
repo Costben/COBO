@@ -397,6 +397,14 @@ class Settings(context: Context) {
     var videoAutoFloatOnBack by mutableStateOf(sp.getBoolean("video_auto_float_on_back", false))
         private set
 
+    /** 视频播完自动返回：非直播视频播放结束后自动关闭并返回上一页，默认开。 */
+    var videoAutoCloseOnComplete by mutableStateOf(sp.getBoolean("video_auto_close_on_complete", true))
+        private set
+
+    /** 视频中区上下滑手势：开启后播放视频时在屏幕中间区域上滑可呼出应用内小窗与系统画中画，下滑可关闭视频；关闭后恢复左半调亮度、右半调音量。默认开。 */
+    var videoCenterSwipeActions by mutableStateOf(sp.getBoolean("video_center_swipe_actions", true))
+        private set
+
     /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
@@ -701,6 +709,16 @@ class Settings(context: Context) {
     fun applyVideoAutoFloatOnBack(value: Boolean) {
         videoAutoFloatOnBack = value
         sp.edit().putBoolean("video_auto_float_on_back", value).apply()
+    }
+
+    fun applyVideoAutoCloseOnComplete(value: Boolean) {
+        videoAutoCloseOnComplete = value
+        sp.edit().putBoolean("video_auto_close_on_complete", value).apply()
+    }
+
+    fun applyVideoCenterSwipeActions(value: Boolean) {
+        videoCenterSwipeActions = value
+        sp.edit().putBoolean("video_center_swipe_actions", value).apply()
     }
 
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */

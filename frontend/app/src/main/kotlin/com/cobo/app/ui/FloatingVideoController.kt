@@ -3,6 +3,7 @@ package com.cobo.app.ui
 import android.view.LayoutInflater
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -51,6 +52,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.cobo.app.App
 import com.cobo.app.R
 import com.cobo.app.screen.ResolvedVideo
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
@@ -68,7 +70,119 @@ import kotlin.math.roundToInt
 internal const val MinPipAspectRatio = 0.42f
 internal const val MaxPipAspectRatio = 2.38f
 
-private const val FloatingMiniAutoHideMillis = 2_500L
+private const val FloatingMiniAutoHideMillis = 3_000L
+
+internal const val VideoGestureLeftZoneFraction = 0.30f
+internal const val VideoGestureRightZoneFraction = 0.70f
+internal const val VideoCenterGestureAutoDismissMillis = 500L
+
+internal enum class VideoVerticalZone { Brightness, CenterActions, Volume }
+
+internal enum class VideoCenterGestureDirection { None, Up, Down }
+
+internal enum class VideoCenterGestureAction { None, InAppFloating, SystemPip, Close }
+
+internal data class VideoCenterGestureSnapshot(
+    val direction: VideoCenterGestureDirection = VideoCenterGestureDirection.None,
+    val inAppReveal: Float = 0f,
+    val pipReveal: Float = 0f,
+    val closeReveal: Float = 0f,
+    val armedAction: VideoCenterGestureAction = VideoCenterGestureAction.None,
+)
+
+/**
+ * 划分全屏视频纵向滑动区域：开启中区手势时按横向 30% / 40% / 30% 分为亮度、中区快捷动作与音量，
+ * 关闭后恢复左半调亮度、右半调音量。
+ */
+internal fun classifyVideoVerticalZone(
+    xPx: Float,
+    containerWidthPx: Float,
+    centerSwipeEnabled: Boolean = true,
+): VideoVerticalZone {
+    if (!centerSwipeEnabled) {
+        return if (containerWidthPx <= 0f || xPx < containerWidthPx / 2f) {
+            VideoVerticalZone.Brightness
+        } else {
+            VideoVerticalZone.Volume
+        }
+    }
+    if (containerWidthPx <= 0f) return VideoVerticalZone.CenterActions
+    val ratio = xPx / containerWidthPx
+    return when {
+        ratio < VideoGestureLeftZoneFraction -> VideoVerticalZone.Brightness
+        ratio > VideoGestureRightZoneFraction -> VideoVerticalZone.Volume
+        else -> VideoVerticalZone.CenterActions
+    }
+}
+
+/** 根据中区纵向位移计算按钮依次浮现进度与当前命中动作：上滑依次浮现应用内小窗、系统画中画，下滑浮现关闭。 */
+internal fun evaluateVideoCenterGesture(draggedYPx: Float, density: Float): VideoCenterGestureSnapshot {
+    val safeDensity = density.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val draggedDp = draggedYPx / safeDensity
+    val deadzoneDp = 18f
+    return when {
+        draggedDp < -deadzoneDp -> {
+            val upDp = -draggedDp
+            val inAppReveal = ((upDp - 18f) / 62f).coerceIn(0f, 1f)
+            val pipReveal = ((upDp - 80f) / 72f).coerceIn(0f, 1f)
+            val armed = when {
+                upDp >= 188f -> VideoCenterGestureAction.SystemPip
+                upDp >= 96f -> VideoCenterGestureAction.InAppFloating
+                else -> VideoCenterGestureAction.None
+            }
+            VideoCenterGestureSnapshot(
+                direction = VideoCenterGestureDirection.Up,
+                inAppReveal = inAppReveal,
+                pipReveal = pipReveal,
+                closeReveal = 0f,
+                armedAction = armed,
+            )
+        }
+        draggedDp > deadzoneDp -> {
+            val downDp = draggedDp
+            val closeReveal = ((downDp - 18f) / 68f).coerceIn(0f, 1f)
+            val armed = if (downDp >= 108f) VideoCenterGestureAction.Close else VideoCenterGestureAction.None
+            VideoCenterGestureSnapshot(
+                direction = VideoCenterGestureDirection.Down,
+                inAppReveal = 0f,
+                pipReveal = 0f,
+                closeReveal = closeReveal,
+                armedAction = armed,
+            )
+        }
+        else -> VideoCenterGestureSnapshot()
+    }
+}
+
+internal fun videoCenterGestureHintText(
+    direction: VideoCenterGestureDirection,
+    armedAction: VideoCenterGestureAction,
+): String = when (direction) {
+    VideoCenterGestureDirection.Up -> when (armedAction) {
+        VideoCenterGestureAction.InAppFloating -> "松手进入应用内小窗"
+        VideoCenterGestureAction.SystemPip -> "松手进入系统画中画"
+        else -> "继续上滑选择小窗或画中画"
+    }
+    VideoCenterGestureDirection.Down -> when (armedAction) {
+        VideoCenterGestureAction.Close -> "松手关闭视频"
+        else -> "继续下滑关闭视频"
+    }
+    VideoCenterGestureDirection.None -> ""
+}
+
+internal fun shouldAutoCloseVideoOnComplete(
+    autoCloseEnabled: Boolean,
+    playbackState: Int,
+    hasStartedPlaying: Boolean,
+    isLive: Boolean,
+    isScrubbing: Boolean,
+    handedOffToFloating: Boolean,
+): Boolean = autoCloseEnabled &&
+    hasStartedPlaying &&
+    playbackState == Player.STATE_ENDED &&
+    !isLive &&
+    !isScrubbing &&
+    !handedOffToFloating
 
 internal fun clampPipAspectRatio(aspectRatio: Float): Float {
     if (!aspectRatio.isFinite() || aspectRatio <= 0f) return 16f / 9f
@@ -223,14 +337,31 @@ fun FloatingVideoOverlay(
 
     DisposableEffect(session.player) {
         val player = session.player
+        var hasPlayed = player.isPlaying || player.playbackState == Player.STATE_READY
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 session.isPlaying = isPlaying
+                if (isPlaying) hasPlayed = true
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 session.isPlaying = player.isPlaying
                 session.isBuffering = playbackState == Player.STATE_BUFFERING
+                if (playbackState == Player.STATE_READY) {
+                    hasPlayed = true
+                }
+                if (
+                    shouldAutoCloseVideoOnComplete(
+                        autoCloseEnabled = App.settings.videoAutoCloseOnComplete,
+                        playbackState = playbackState,
+                        hasStartedPlaying = hasPlayed,
+                        isLive = session.request.isLive,
+                        isScrubbing = false,
+                        handedOffToFloating = false,
+                    )
+                ) {
+                    controller.dismissFloating()
+                }
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -364,8 +495,8 @@ fun FloatingVideoOverlay(
 
             AnimatedVisibility(
                 visible = controlsShown,
-                enter = fadeIn(tween(150)),
-                exit = fadeOut(tween(180)),
+                enter = fadeIn(tween(260, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f))),
+                exit = fadeOut(tween(460, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 Box(
