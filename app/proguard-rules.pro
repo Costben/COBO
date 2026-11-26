@@ -16,6 +16,3 @@
 
 # Media3 播放器的可选组件按需反射加载
 -dontwarn androidx.media3.**
-
-# libwbutil.so 在 JNI_OnLoad 与签名计算中按固定类名/方法签名查找 com.sina.weibo.**
--keep class com.sina.weibo.** { *; }

@@ -2,7 +2,7 @@ name: Build Android & iOS
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
     paths-ignore:
       - "README.md"
       - "AGENTS.md"
