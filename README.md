@@ -4,13 +4,14 @@
 
 # Cobo
 
-**第三方微博客户端** · Kotlin + Jetpack Compose · UI 基于 COUI（ColorOS 17 设计语言）
+**第三方微博多端客户端（Android & iOS）** · Kotlin Multiplatform + Compose Multiplatform · UI 基于 COUI 17（ColorOS 17 设计语言）
 
 [![Release](https://img.shields.io/github/v/release/Costben/COBO?label=release&color=1f6feb)](https://github.com/Costben/COBO/releases/latest)
 ![Android](https://img.shields.io/badge/Android-26%2B-3DDC84?logo=android&logoColor=white)
+![iOS](https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)
-![Compose](https://img.shields.io/badge/Compose-1.11-4285F4?logo=jetpackcompose&logoColor=white)
-![COUI](https://img.shields.io/badge/UI-COUI%20%C2%B7%20ColorOS%2017-111111)
+![Compose](https://img.shields.io/badge/Compose%20MP-1.12-4285F4?logo=jetpackcompose&logoColor=white)
+![COUI](https://img.shields.io/badge/UI-COUI%2017-111111)
 
 </div>
 
@@ -27,76 +28,94 @@
 
 ## 特性
 
-- **信息流**：推荐（`containerid=102803`）、关注（`feed/friends`）、好友圈（`feed/circle`），`since_id` / `max_id` 分页，下拉刷新
-- **微博卡片**：正文富文本（@ / 话题 / 链接 / 表情）、九宫格图片、视频、转发块、来源与时间
-- **详情页**：正文、评论（热度 / 时间双排序）、点赞、评论、转发
-- **发布**：文字 + 多图上传、@ / 话题 / 表情工具条、草稿箱、编辑历史
-- **图片**：查看器、原图加载、长按玻璃菜单保存（菜单从按下点展开、收回按下点）
-- **主页与关系**：个人主页、用户微博、关注 / 粉丝
-- **搜索**：热搜、关键词搜索、话题页
-- **消息**：私信列表、通知
-- **本地数据**：浏览历史、草稿、多账号、设置（深色模式 / 字号）
-- **登录**：全屏官方网页登录，自动抓取并保存 Cookie
+- **信息流**：推荐、关注、好友圈、自定义分组与本地关注列表，支持续看快照、倒序浏览与下拉刷新
+- **微博卡片**：正文富文本（@ / 话题 / 链接 / 表情）、九宫格与实况图、视频、转发块、来源与时间
+- **详情页**：正文、评论（热度 / 时间双排序）、点赞、评论、转发、编辑历史
+- **发布**：文字 + 多图 / 实况图上传、@ / 话题 / 表情工具条、草稿箱
+- **媒体**：看图页（拖拽关闭联动、超长图分块解码、实况图播放与保存）、视频页（画中画、应用内小窗、手势播控、下载）
+- **主页与关系**：个人主页、用户微博、关注 / 粉丝、超话
+- **搜索与消息**：热搜、关键词搜索、话题页、私信列表、通知
+- **本地数据与设置**：浏览历史、草稿、多账号、深色模式 / 强调色 / 字体缩放 / 顶栏与底栏自定义
 
 ## 技术栈
 
-| 层 | 选型 |
-| :--- | :--- |
-| 语言 / UI | Kotlin 2.4 · Jetpack Compose 1.11 |
-| 设计系统 | [COUI 17](https://github.com/Costben/coui17) · [COUI Kit](https://github.com/ItosEO/COUI-Kit) |
-| 构建 | AGP 9.3.1 · Gradle 9.8.2 · JDK 17 |
-| 网络 | OkHttp 4.12 |
-| 图片 | Coil 3.6 |
-| 视频 | Media3 ExoPlayer 1.11 |
-| 数据层 | `m.weibo.cn` Web API（Cookie 复用） |
+| 层 | Android | iOS |
+| :--- | :--- | :--- |
+| 语言 / UI | Kotlin 2.4.10 · Compose Multiplatform 1.12.2 | Kotlin 2.4.10 · Compose Multiplatform 1.12.2 |
+| 设计系统 | [COUI 17](https://github.com/Costben/coui17) (`1.2.0-SNAPSHOT`) | [COUI 17](https://github.com/Costben/coui17) (`1.2.0-SNAPSHOT`) |
+| 构建 | AGP 9.3.2 · Gradle 9.8.2 · JDK 21 | Xcode 16+ (iOS 17+) · Gradle 9.8.2 · JDK 21 |
+| 网络 / 图片 | OkHttp 4.12 · Coil 3.6.3 | Ktor Client 3.5.1 (Darwin) · Coil 3.6.3 |
+| 视频 / 实况 | Media3 ExoPlayer 1.11 · MotionPhoto 重封装 | `AVPlayer` + `AVPlayerLayer` · `PHPhotoLibrary` |
+| 网页与存储 | `WebView` · `AndroidKeyStore` AES-GCM | `WKWebView` · iOS Keychain |
 
-## 工程信息
+## 目录结构
 
-| 项 | 值 |
-| :--- | :--- |
-| applicationId | `com.cobo.app` |
-| 应用名 | Cobo |
-| 版本 | 1.0.0（versionCode 10000） |
-| minSdk / targetSdk | 26 / 37 |
-| 工程 | `frontend/`（独立 Gradle 工程） |
-
-## 目录
-
-```
+```text
 Cobo COUI/
-├── frontend/                     # Android 应用（com.cobo.app）
-│   ├── app/                      # 应用模块
-│   │   └── src/main/kotlin/com/cobo/app/
-│   │       ├── data/             # API、模型、缓存、设置
-│   │       ├── screen/           # 页面
-│   │       └── ui/               # 导航、主题、组件
-│   ├── scripts/publish-coui.sh   # 可选：有兼容源码 fork 时发布本地 COUI
-│   ├── scripts/e2e.sh            # 真机端到端测试
-│   └── gradlew                   # Gradle 9.8.2
+├── shared/                       # KMP 共享模块（com.cobo.app.shared）
+│   └── src/
+│       ├── commonMain/           # 跨端共享的数据层、页面、组件、JSON 与平台抽象
+│       ├── androidMain/          # Android 平台实现（OkHttp、Media3、MotionPhoto、WebView、长图分块、应用内更新）
+│       ├── iosMain/              # iOS 平台实现（Ktor、WKWebView、AVPlayer、Keychain、Photos、CoreLocation）
+│       └── androidHostTest/      # JVM 单元测试套件
+├── app/                          # Android 应用宿主（com.cobo.app）与真机 E2E 测试
+├── iosApp/                       # iOS Xcode 宿主工程（AppDelegate / SceneDelegate / 旋转与状态栏桥接）
+├── scripts/                      # 构建与调试脚本（e2e.sh / publish-coui.sh / sign-install.sh）
 ├── docs/                         # 设计文档与截图
-└── README.md
+└── .github/workflows/build.yml   # Android + iOS 双端 CI
 ```
 
-## 构建
+## 构建与运行
+
+### 环境要求
+
+- JDK 21、Gradle 9.8.2（仓库自带 `./gradlew`）
+- Android：API 37 + Build Tools 37.0.0，在 `local.properties` 设置 `sdk.dir`
+- iOS：macOS + Xcode 16+ (iOS 17.0+)
+- COUI 17 依赖 `io.github.suqi8.coui.kmp:*:1.2.0-SNAPSHOT`，上级目录存在 `../coui/build/repository/local` 时优先读取本地产物，外部环境自动回退到 [Costben/coui17 `maven-repo`](https://github.com/Costben/coui17/tree/maven-repo) 分支
+
+### Android
 
 ```bash
-cd frontend
-./gradlew :app:assembleDebug       # 产物：app/build/outputs/apk/debug/app-debug.apk
+# 单元测试
+./gradlew :shared:testAndroidHostTest
+
+# 编译 Debug / Release APK（或使用 winbuild :app:assembleRelease）
+./gradlew :app:assembleDebug
+./gradlew :app:assembleRelease
+
+# 覆盖安装
+adb install -r --no-incremental app/build/outputs/apk/release/app-release.apk
+
+# 真机端到端测试（需已登录）
+./scripts/e2e.sh
 ```
 
-需要 JDK 17 和安装了 API 37、Build Tools 37.0.0 的 Android SDK。在 `frontend/local.properties` 设置 `sdk.dir`。COUI 依赖 `io.github.suqi8.coui.kmp:*:1.2.0-SNAPSHOT`，默认在本地存在 `../coui/build/repository/local` 时优先读取本地产物，外部环境自动回退到 [Costben/coui17 `maven-repo`](https://github.com/Costben/coui17/tree/maven-repo) 分支，常规构建无需额外配置。
-
-## 安装
+### iOS
 
 ```bash
-adb install -r --no-incremental app/build/outputs/apk/debug/app-debug.apk
-```
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 
-## 测试
+# 编译模拟器框架
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
 
-```bash
-cd frontend
-./scripts/e2e.sh                   # 真机端到端测试（需已登录）
+# 编译真机 Release App（无签名）
+xcodebuild \
+  -project iosApp/iosApp.xcodeproj \
+  -scheme iosApp \
+  -configuration Release \
+  -sdk iphoneos \
+  -arch arm64 \
+  -derivedDataPath build/ios-derived \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY="" \
+  DEVELOPMENT_TEAM="" \
+  PROVISIONING_PROFILE_SPECIFIER="" \
+  build
+
+# 本地签名并安装到已连接 iPhone
+./scripts/sign-install.sh build/ios-derived/Build/Products/Release-iphoneos/Cobo.app --launch
 ```
 
 ## 文档

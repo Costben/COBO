@@ -1,0 +1,215 @@
+name: Build Android & iOS
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "AGENTS.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COUI_REPO: Costben/coui17
+  COUI_REF: main
+
+jobs:
+  android:
+    name: Android APK & Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout COBO
+        uses: actions/checkout@v7
+        with:
+          path: COBO
+
+      - name: Checkout COUI 17
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.COUI_REPO }}
+          ref: ${{ env.COUI_REF }}
+          path: coui
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Accept Android SDK licenses
+        run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+
+      - name: Build & stage local COUI 17 (Android)
+        working-directory: coui
+        run: |
+          sed -i 's|mirrors.cloud.tencent.com/gradle/|services.gradle.org/distributions/|g' gradle/wrapper/gradle-wrapper.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --no-configuration-cache \
+            -ProllingSnapshot -x dokkaGenerate \
+            :coui-core:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-core:publishAndroidPublicationToLocalRepository \
+            :coui-shader:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-shader:publishAndroidPublicationToLocalRepository \
+            :coui-blur:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-blur:publishAndroidPublicationToLocalRepository \
+            :coui-squircle:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-squircle:publishAndroidPublicationToLocalRepository \
+            :coui-ui:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-ui:publishAndroidPublicationToLocalRepository \
+            :coui-icons:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-icons:publishAndroidPublicationToLocalRepository \
+            :coui-preference:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-preference:publishAndroidPublicationToLocalRepository
+
+      - name: Configure Gradle for CI
+        working-directory: COBO
+        run: |
+          sed -i 's|mirrors.cloud.tencent.com/gradle/|services.gradle.org/distributions/|g' gradle/wrapper/gradle-wrapper.properties
+          {
+            echo ""
+            echo "org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -Dfile.encoding=UTF-8"
+            echo "kotlin.daemon.jvmargs=-Xmx6g -XX:+UseG1GC -Dfile.encoding=UTF-8"
+          } >> gradle.properties
+
+      - name: Run unit tests & assemble Android Release APK
+        working-directory: COBO
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :shared:testAndroidHostTest :app:assembleRelease
+          mkdir -p dist
+          APK_FILE=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n 1)
+          test -n "$APK_FILE"
+          cp "$APK_FILE" dist/Cobo-android-release.apk
+          ls -lh dist/Cobo-android-release.apk
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cobo-android-release
+          path: COBO/dist/Cobo-android-release.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS IPA
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout COBO
+        uses: actions/checkout@v7
+        with:
+          path: COBO
+
+      - name: Checkout COUI 17
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.COUI_REPO }}
+          ref: ${{ env.COUI_REF }}
+          path: coui
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Show Xcode environment
+        run: |
+          sysctl hw.ncpu hw.memsize
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Accept Android SDK licenses
+        run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
+
+      - name: Build & stage local COUI 17 (iOS arm64)
+        working-directory: coui
+        run: |
+          sed -i '' 's|mirrors.cloud.tencent.com/gradle/|services.gradle.org/distributions/|g' gradle/wrapper/gradle-wrapper.properties
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --no-configuration-cache \
+            -ProllingSnapshot -x dokkaGenerate \
+            :coui-core:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-core:publishIosArm64PublicationToLocalRepository \
+            :coui-shader:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-shader:publishIosArm64PublicationToLocalRepository \
+            :coui-blur:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-blur:publishIosArm64PublicationToLocalRepository \
+            :coui-squircle:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-squircle:publishIosArm64PublicationToLocalRepository \
+            :coui-ui:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-ui:publishIosArm64PublicationToLocalRepository \
+            :coui-icons:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-icons:publishIosArm64PublicationToLocalRepository \
+            :coui-preference:publishKotlinMultiplatformPublicationToLocalRepository \
+            :coui-preference:publishIosArm64PublicationToLocalRepository
+
+      - name: Configure Gradle memory for CI
+        working-directory: COBO
+        run: |
+          sed -i '' 's|mirrors.cloud.tencent.com/gradle/|services.gradle.org/distributions/|g' gradle/wrapper/gradle-wrapper.properties
+          {
+            echo ""
+            echo "org.gradle.daemon=false"
+            echo "org.gradle.console=plain"
+            echo "org.gradle.configuration-cache=false"
+            echo "org.gradle.workers.max=2"
+            echo "org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -XX:G1PeriodicGCInterval=15000 -Dfile.encoding=UTF-8"
+            echo "kotlin.daemon.jvmargs=-Xmx1536m -XX:+UseG1GC -Dfile.encoding=UTF-8"
+            echo "kotlin.native.jvmArgs=-Xmx6g -XX:+UseG1GC"
+          } >> gradle.properties
+
+      - name: Build iOS Release app & package unsigned IPA
+        working-directory: COBO
+        run: |
+          chmod +x gradlew
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            -derivedDataPath build/ios-derived \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+          APP_PATH="build/ios-derived/Build/Products/Release-iphoneos/Cobo.app"
+          test -d "$APP_PATH"
+          ls -la "$APP_PATH"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
+
+          rm -rf build/ipa-staging dist
+          mkdir -p build/ipa-staging/Payload dist
+          OUT_IPA="$PWD/dist/Cobo-ios-unsigned.ipa"
+          cp -R "$APP_PATH" build/ipa-staging/Payload/
+          (cd build/ipa-staging && zip -qry "$OUT_IPA" Payload)
+          ls -lh "$OUT_IPA"
+
+      - name: Upload iOS IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Cobo-ios-unsigned
+          path: COBO/dist/Cobo-ios-unsigned.ipa
+          if-no-files-found: error

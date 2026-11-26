@@ -40,7 +40,7 @@ sealed interface ResolvedVideo {
     ) : ResolvedVideo
 }
 
-private val WeiboFidPattern = Regex("""\b(\d{4}:[0-9a-fA-F]{16,})\b""")
+private val WeiboFidPattern = Regex("""\b(\d{4}:[0-9a-fA-F]{6,})\b""")
 private val BiliBvidPattern = Regex("""\b(BV[0-9A-Za-z]{10})\b""")
 private val VideoUrlExtPattern = Regex("""\.(?:mp4|m3u8|flv|mov|webm)(?:\?|$)""", RegexOption.IGNORE_CASE)
 
@@ -61,10 +61,14 @@ internal fun isDirectVideoStream(url: String): Boolean {
     return false
 }
 
-internal fun isM3u8Stream(url: String): Boolean =
-    url.substringBefore('?').substringBefore('#').endsWith(".m3u8", ignoreCase = true)
+internal fun isM3u8Stream(url: String): Boolean {
+    val lower = url.trim().lowercase()
+    return lower.substringBefore('?').substringBefore('#').endsWith(".m3u8") ||
+        lower.contains("type=m3u8") ||
+        lower.contains("format=m3u8")
+}
 
-internal fun isSniffableMediaUrl(url: String): Boolean = isDirectVideoStream(url)
+internal fun isSniffableMediaUrl(url: String): Boolean = isDirectVideoStream(url) || isM3u8Stream(url)
 
 internal fun extractWeiboVideoFid(raw: String): String? {
     val decoded = runCatching { urlDecode(raw) }.getOrDefault(raw)
@@ -93,52 +97,98 @@ internal fun extractHtmlVideoUrl(html: String, baseUrl: String): String? {
     return null
 }
 
+private fun normalizeStreamHttps(raw: String): String = when {
+    raw.startsWith("//") -> "https:$raw"
+    raw.startsWith("http://", ignoreCase = true) -> "https://" + raw.substring(7)
+    else -> raw
+}
+
 internal fun parseWeiboLiveRoomJson(root: JSONObject, fallbackUrl: String = ""): ResolvedVideo? {
+    val defaultWebUrl = when {
+        fallbackUrl.startsWith("http://", true) || fallbackUrl.startsWith("https://", true) -> fallbackUrl
+        fallbackUrl.isNotBlank() -> "https://weibo.com/l/wblive/m/show/$fallbackUrl"
+        else -> ""
+    }
+    val code = root.optInt("code", 100000)
+    if (code != 100000 && root.optJSONObject("data") == null) {
+        return ResolvedVideo.LiveUnavailable(
+            message = "该直播已结束或直播间已关闭",
+            webUrl = defaultWebUrl,
+        )
+    }
     val data = root.optJSONObject("data") ?: root
     val item = data.optJSONObject("item") ?: data
-    val title = item.optString("title").ifBlank { data.optString("title") }
-    val status = item.optInt("status", -1)
+    val screenName = item.optJSONObject("user_info")?.optString("screen_name").orEmpty()
+        .ifBlank { data.optJSONObject("user_info")?.optString("screen_name").orEmpty() }
+    val title = item.optString("title")
+        .ifBlank { data.optString("title") }
+        .ifBlank { if (screenName.isNotBlank()) "${screenName}的直播" else "" }
+    val status = item.optInt("status", data.optInt("status", -1))
+    val limitType = item.optJSONObject("watch_limit_info")?.optInt("type", 0)
+        ?: data.optJSONObject("watch_limit_info")?.optInt("type", 0)
+        ?: 0
+    if (limitType > 0) {
+        return ResolvedVideo.LiveUnavailable(
+            message = "该直播需在微博官方客户端观看",
+            title = title,
+            webUrl = defaultWebUrl,
+        )
+    }
+    if (status == 0) {
+        return ResolvedVideo.LiveUnavailable(
+            message = "直播未开始",
+            title = title,
+            webUrl = defaultWebUrl,
+        )
+    }
     val streamInfo = item.optJSONObject("stream_info") ?: data.optJSONObject("stream_info")
     val pull = streamInfo?.optJSONObject("pull")
     val candidates = listOfNotNull(
         pull?.optString("live_origin_hls_url")?.takeIf { it.isNotBlank() },
         pull?.optString("live_hd_hls_url")?.takeIf { it.isNotBlank() },
         pull?.optString("live_ld_hls_url")?.takeIf { it.isNotBlank() },
+        pull?.optString("live_origin_flv_url")?.takeIf { it.isNotBlank() },
+        item.optString("replay_origin_url").takeIf { it.isNotBlank() },
+        data.optString("replay_origin_url").takeIf { it.isNotBlank() },
         item.optString("replay_url").takeIf { it.isNotBlank() },
         item.optString("replay_ld_url").takeIf { it.isNotBlank() },
         item.optString("hls").takeIf { it.isNotBlank() },
-        pull?.optString("live_origin_flv_url")?.takeIf { it.isNotBlank() },
     )
     val primary = candidates.firstOrNull()
     if (!primary.isNullOrBlank()) {
-        val normalized = if (primary.startsWith("//")) "https:$primary" else primary
-        val fallback = candidates.getOrNull(1)?.let { if (it.startsWith("//")) "https:$it" else it }.orEmpty()
+        val normalized = normalizeStreamHttps(primary)
+        val fallback = candidates.getOrNull(1)?.let(::normalizeStreamHttps).orEmpty()
+        val isReplay = status == 2 || status == 3
         return ResolvedVideo.DirectStream(
             url = normalized,
             fallbackUrl = fallback,
             referer = "https://weibo.com/",
             title = title,
-            isLive = status == 1 || normalized.contains("live"),
+            isLive = !isReplay && (status == 1 || normalized.contains("live")),
         )
     }
     if (status == 2 || status == 3) {
         return ResolvedVideo.LiveUnavailable(
             message = "直播已结束，暂无回放",
             title = title,
-            webUrl = fallbackUrl,
+            webUrl = defaultWebUrl,
         )
     }
     return null
 }
 
 internal fun extractSignedUrlExpireEpochSec(url: String): Long? {
+    if (url.startsWith("file:", ignoreCase = true)) return null
     val patterns = listOf(
-        Regex("""[?&]Expires=(\d{9,12})\b""", RegexOption.IGNORE_CASE),
-        Regex("""[?&]exp=(\d{9,12})\b""", RegexOption.IGNORE_CASE),
+        Regex("""[?&]Expires=(\d{9,13})\b""", RegexOption.IGNORE_CASE),
+        Regex("""[?&]exp=(\d{9,13})\b""", RegexOption.IGNORE_CASE),
+        Regex("""[?&]deadline=(\d{9,13})\b""", RegexOption.IGNORE_CASE),
     )
     for (p in patterns) {
         val v = p.find(url)?.groupValues?.getOrNull(1)?.toLongOrNull()
-        if (v != null && v > 0L) return v
+        if (v != null && v > 0L) {
+            return if (v > 9_999_999_999L) v / 1000L else v
+        }
     }
     return null
 }
@@ -156,9 +206,9 @@ internal fun canRefreshVideoSource(fid: String, statusId: String, isLive: Boolea
 
 internal fun shouldRefreshDirectStreamBeforePlay(
     url: String,
-    fid: String,
-    statusId: String,
-    isLive: Boolean,
+    fid: String = "",
+    statusId: String = "",
+    isLive: Boolean = false,
     nowEpochSec: Long = currentTimeMillis() / 1000L,
 ): Boolean = isSignedVideoUrlExpired(url, nowEpochSec) && canRefreshVideoSource(fid, statusId, isLive)
 
@@ -173,18 +223,41 @@ internal fun shouldKeepVideoScreenOn(isPlaying: Boolean, isBuffering: Boolean): 
     isPlaying || isBuffering
 
 internal fun videoStreamPathKey(url: String): String =
-    url.substringBefore('?').substringBefore('#')
+    com.cobo.app.platform.parseUrlPath(url).ifBlank { url.substringBefore('?').substringBefore('#') }
 
-internal fun pickRefreshedVideoFromStatus(status: Status): ResolvedVideo.DirectStream? {
-    val candidate = status.video ?: status.retweeted?.video ?: return null
-    val play = candidate.url
-    if (play.isBlank() || !isDirectVideoStream(play)) return null
-    return ResolvedVideo.DirectStream(
-        url = play,
-        referer = defaultRefererFor(play),
-        title = candidate.title,
-        isLive = candidate.isLive,
-    )
+internal fun pickRefreshedVideoFromStatus(
+    status: Status,
+    oldUrl: String = "",
+    fid: String = "",
+): ResolvedVideo.DirectStream? {
+    val all = buildList {
+        status.video?.let {
+            if (it.url.isNotBlank()) add(Triple(it.url, it.fid, ResolvedVideo.DirectStream(it.url, referer = defaultRefererFor(it.url), title = it.title, isLive = it.isLive)))
+        }
+        status.pics.forEach { pic ->
+            if (pic.videoUrl.isNotBlank()) {
+                add(Triple(pic.videoUrl, pic.videoFid, ResolvedVideo.DirectStream(pic.videoUrl, referer = defaultRefererFor(pic.videoUrl), title = pic.videoTitle, isLive = false)))
+            }
+        }
+        status.retweeted?.video?.let {
+            if (it.url.isNotBlank()) add(Triple(it.url, it.fid, ResolvedVideo.DirectStream(it.url, referer = defaultRefererFor(it.url), title = it.title, isLive = it.isLive)))
+        }
+        status.retweeted?.pics?.forEach { pic ->
+            if (pic.videoUrl.isNotBlank()) {
+                add(Triple(pic.videoUrl, pic.videoFid, ResolvedVideo.DirectStream(pic.videoUrl, referer = defaultRefererFor(pic.videoUrl), title = pic.videoTitle, isLive = false)))
+            }
+        }
+    }.filter { isDirectVideoStream(it.first) }
+    if (all.isEmpty()) return null
+    if (fid.isNotBlank()) {
+        all.firstOrNull { it.second == fid }?.let { return it.third }
+    }
+    if (oldUrl.isNotBlank()) {
+        val targetPath = videoStreamPathKey(oldUrl)
+        all.firstOrNull { videoStreamPathKey(it.first) == targetPath }?.let { return it.third }
+        return if (all.size == 1) all.first().third else null
+    }
+    return all.first().third
 }
 
 private suspend fun resolveWeiboFid(fid: String): ResolvedVideo? {

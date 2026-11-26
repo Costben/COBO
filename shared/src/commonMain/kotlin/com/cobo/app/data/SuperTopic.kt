@@ -11,14 +11,100 @@ import com.cobo.app.platform.urlDecode
 import com.cobo.app.platform.urlEncode
 
 private class SuperTopicParsedUri(raw: String) {
-    val scheme: String? = raw.substringBefore("://", "").takeIf { it.isNotBlank() && raw.contains("://") }
-    val host: String? = parseUrlHost(raw).ifBlank { null }
-    val rawUserInfo: String? = null
-    val port: Int = -1
-    val path: String? = parseUrlPath(raw).ifBlank { null }
-    val rawPath: String? = path
-    val rawQuery: String? = raw.substringAfter('?', "").substringBefore('#').ifBlank { null }
-    val rawFragment: String? = if ('#' in raw) raw.substringAfter('#').ifBlank { null } else null
+    val scheme: String?
+    val host: String?
+    val rawUserInfo: String?
+    val port: Int
+    val path: String?
+    val rawPath: String?
+    val rawQuery: String?
+    val rawFragment: String?
+
+    init {
+        val schemeIdx = raw.indexOf("://")
+        scheme = if (schemeIdx > 0) raw.substring(0, schemeIdx) else null
+        val afterScheme = if (schemeIdx > 0) raw.substring(schemeIdx + 3) else raw
+        val hashIdx = afterScheme.indexOf('#')
+        val withoutFrag = if (hashIdx >= 0) afterScheme.substring(0, hashIdx) else afterScheme
+        rawFragment = if (hashIdx >= 0) afterScheme.substring(hashIdx + 1).ifBlank { null } else null
+        val queryIdx = withoutFrag.indexOf('?')
+        val authorityAndPath = if (queryIdx >= 0) withoutFrag.substring(0, queryIdx) else withoutFrag
+        rawQuery = if (queryIdx >= 0) withoutFrag.substring(queryIdx + 1).ifBlank { null } else null
+        val slashIdx = authorityAndPath.indexOf('/')
+        val authority = if (slashIdx >= 0) authorityAndPath.substring(0, slashIdx) else authorityAndPath
+        val rawPathStr = if (slashIdx >= 0) authorityAndPath.substring(slashIdx) else ""
+        val atIdx = authority.lastIndexOf('@')
+        rawUserInfo = if (atIdx >= 0) authority.substring(0, atIdx) else null
+        val hostPort = if (atIdx >= 0) authority.substring(atIdx + 1) else authority
+        val colonIdx = hostPort.lastIndexOf(':')
+        if (colonIdx >= 0) {
+            host = hostPort.substring(0, colonIdx).ifBlank { null }
+            port = hostPort.substring(colonIdx + 1).toIntOrNull() ?: -2
+        } else {
+            host = hostPort.ifBlank { null }
+            port = -1
+        }
+        rawPath = rawPathStr.ifBlank { null }
+        path = rawPath?.let { strictPercentDecode(it) }
+    }
+}
+
+private fun strictPercentDecode(input: String): String {
+    val out = ByteArray(input.length)
+    var outLen = 0
+    var i = 0
+    while (i < input.length) {
+        val ch = input[i]
+        when {
+            ch == '%' -> {
+                if (i + 2 >= input.length) throw IllegalArgumentException("Malformed percent escape")
+                val hi = input[i + 1].digitToIntOrNull(16) ?: throw IllegalArgumentException("Malformed hex")
+                val lo = input[i + 2].digitToIntOrNull(16) ?: throw IllegalArgumentException("Malformed hex")
+                out[outLen++] = ((hi shl 4) or lo).toByte()
+                i += 3
+            }
+            ch == '+' -> {
+                out[outLen++] = ' '.code.toByte()
+                i++
+            }
+            ch.code < 0x80 -> {
+                out[outLen++] = ch.code.toByte()
+                i++
+            }
+            else -> {
+                val utf8 = ch.toString().encodeToByteArray()
+                // Rare non-ASCII literal in query: handle cleanly via StringBuilder fallback
+                return strictPercentDecodeUtf8(input)
+            }
+        }
+    }
+    return out.decodeToString(0, outLen)
+}
+
+private fun strictPercentDecodeUtf8(input: String): String {
+    val bytes = ArrayList<Byte>(input.length)
+    var i = 0
+    while (i < input.length) {
+        val ch = input[i]
+        when {
+            ch == '%' -> {
+                if (i + 2 >= input.length) throw IllegalArgumentException("Malformed percent escape")
+                val hi = input[i + 1].digitToIntOrNull(16) ?: throw IllegalArgumentException("Malformed hex")
+                val lo = input[i + 2].digitToIntOrNull(16) ?: throw IllegalArgumentException("Malformed hex")
+                bytes.add(((hi shl 4) or lo).toByte())
+                i += 3
+            }
+            ch == '+' -> {
+                bytes.add(' '.code.toByte())
+                i++
+            }
+            else -> {
+                for (b in ch.toString().encodeToByteArray()) bytes.add(b)
+                i++
+            }
+        }
+    }
+    return bytes.toByteArray().decodeToString()
 }
 
 enum class SuperTopicTabKind {
@@ -134,8 +220,8 @@ fun superTopicId(raw: String): String? {
     val params = runCatching {
         uri.rawQuery.orEmpty().split('&').map { part ->
             val pair = part.split('=', limit = 2)
-            urlDecode(pair[0]) to
-                urlDecode(pair.getOrElse(1) { "" })
+            strictPercentDecode(pair[0]) to
+                strictPercentDecode(pair.getOrElse(1) { "" })
         }
     }.getOrNull() ?: return null
     val ids = params.filter { it.first == "containerid" || (scheme == "sinaweibo" && it.first == "pageid") }

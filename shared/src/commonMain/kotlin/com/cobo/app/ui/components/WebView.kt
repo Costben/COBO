@@ -65,7 +65,7 @@ fun WeiboWebView(
     )
 }
 
-internal fun isStandardWebScheme(raw: String): Boolean {
+fun isStandardWebScheme(raw: String): Boolean {
     val lower = raw.trim().lowercase()
     return lower.startsWith("http://") ||
         lower.startsWith("https://") ||
@@ -75,7 +75,7 @@ internal fun isStandardWebScheme(raw: String): Boolean {
         lower.startsWith("blob:")
 }
 
-internal fun cleanMobileChromeUserAgent(defaultUa: String): String {
+fun cleanMobileChromeUserAgent(defaultUa: String): String {
     val trimmed = defaultUa.trim()
     if (trimmed.isBlank()) return Api.WEB_UA
     return trimmed
@@ -85,7 +85,7 @@ internal fun cleanMobileChromeUserAgent(defaultUa: String): String {
         .trim()
 }
 
-internal fun extractWebViewFallbackUrl(raw: String): String? {
+fun extractWebViewFallbackUrl(raw: String): String? {
     extractIntentFallbackUrl(raw)?.let { return it }
     val trimmed = raw.trim()
     val lower = trimmed.lowercase()

@@ -20,6 +20,7 @@ kotlin {
         minSdk = 26
         namespace = "com.cobo.app.shared"
         androidResources.enable = true
+        withHostTest {}
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
         }
@@ -66,6 +67,10 @@ kotlin {
             api(libs.media3.exoplayer.hls)
             api(libs.media3.ui)
             implementation(libs.zxing.core)
+        }
+        getByName("androidHostTest").dependencies {
+            implementation(libs.junit)
+            implementation(libs.org.json)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)

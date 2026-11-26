@@ -1023,7 +1023,7 @@ private fun WebAltVerifyView(
     }
 }
 
-internal sealed interface VerifyRedirectAction {
+sealed interface VerifyRedirectAction {
     data class SubmitAlt(val alt: String) : VerifyRedirectAction
     data class LoadUrl(val url: String) : VerifyRedirectAction
     data object CloseAndRetry : VerifyRedirectAction
@@ -1032,7 +1032,7 @@ internal sealed interface VerifyRedirectAction {
     data object Ignore : VerifyRedirectAction
 }
 
-internal fun parseVerifyRedirectAction(target: String): VerifyRedirectAction {
+fun parseVerifyRedirectAction(target: String): VerifyRedirectAction {
     val trimmed = target.trim()
     if (trimmed.isBlank()) return VerifyRedirectAction.Ignore
     val lower = trimmed.lowercase()
@@ -1078,7 +1078,7 @@ internal fun extractAltFromUrl(raw: String, depth: Int = 0): String? {
     return null
 }
 
-internal fun extractAltFromBridgeItem(item: JSONObject): String? {
+fun extractAltFromBridgeItem(item: JSONObject): String? {
     item.optString("alt").takeIf { it.isNotBlank() }?.let { return it }
     val paramsObj = parseJsonObjectField(item, "params")
     if (paramsObj != null) {
@@ -1094,7 +1094,7 @@ internal fun extractAltFromBridgeItem(item: JSONObject): String? {
     return null
 }
 
-internal fun extractBridgeTargetUrl(item: JSONObject): String? {
+fun extractBridgeTargetUrl(item: JSONObject): String? {
     val paramsObj = parseJsonObjectField(item, "params")
     for (source in listOfNotNull(paramsObj, item)) {
         for (key in listOf("url", "scheme", "href")) {
