@@ -1275,7 +1275,7 @@ private fun HubRowIcon(imageVector: ImageVector, colorfulTint: MeIconTint) {
     )
 }
 
-private fun SettingsGroup.hubIcon(): ImageVector = when (this) {
+internal fun SettingsGroup.hubIcon(): ImageVector = when (this) {
     SettingsGroup.Display -> MeIcons.DisplaySettings
     SettingsGroup.Feed -> MeIcons.FeedSettings
     SettingsGroup.AccountAndContent -> MeIcons.AccountSettings
@@ -1283,7 +1283,7 @@ private fun SettingsGroup.hubIcon(): ImageVector = when (this) {
     SettingsGroup.Other -> MeIcons.OtherSettings
 }
 
-private fun SettingsGroup.hubTint(): MeIconTint = when (this) {
+internal fun SettingsGroup.hubTint(): MeIconTint = when (this) {
     SettingsGroup.Display -> MeIconTint.Orange
     SettingsGroup.Feed -> MeIconTint.Green
     SettingsGroup.AccountAndContent -> MeIconTint.Blue

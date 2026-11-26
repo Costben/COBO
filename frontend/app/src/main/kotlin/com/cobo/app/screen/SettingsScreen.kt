@@ -82,7 +82,6 @@ import com.cobo.app.ui.accentColorSummary
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.components.BackIconButton
 import com.cobo.app.ui.components.ConfirmDialog
-import com.cobo.app.ui.components.EmptyState
 import com.cobo.app.ui.components.SectionTitle
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.formatHexColor
@@ -113,6 +112,8 @@ import io.github.suqi8.coui.kmp.basic.TextField
 import io.github.suqi8.coui.kmp.basic.TextFieldDefaults
 import io.github.suqi8.coui.kmp.basic.TextFieldMode
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
+import io.github.suqi8.coui.kmp.basic.rememberTopAppBarSearchState
+import io.github.suqi8.coui.kmp.basic.topAppBarSearchContent
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -122,8 +123,6 @@ import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.layout.DialogDefaults
 import io.github.suqi8.coui.kmp.overlay.OverlayDialog
-import io.github.suqi8.coui.kmp.preference.ArrowPreference
-import io.github.suqi8.coui.kmp.preference.OverlayDropdownPreference
 import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
@@ -263,6 +262,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
                 key = "display",
                 title = group.title,
                 entries = displaySettingsEntries(nav = nav, state = state),
+                group = group,
             ),
         )
         SettingsGroup.Feed -> listOf(
@@ -270,6 +270,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
                 key = "feed",
                 title = group.title,
                 entries = feedSettingsEntries(state = state),
+                group = group,
             ),
         )
         SettingsGroup.AccountAndContent -> listOf(
@@ -282,6 +283,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
                     scope = scope,
                     includeLibraryShortcuts = false,
                 ),
+                group = group,
             ),
         )
         SettingsGroup.Update -> listOf(
@@ -289,6 +291,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
                 key = "update",
                 title = group.title,
                 entries = updateSettingsEntries(nav = nav, state = state, scope = scope),
+                group = group,
             ),
         )
         SettingsGroup.Other -> listOf(
@@ -296,12 +299,14 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
                 key = "other",
                 title = group.title,
                 entries = otherSettingsEntries(nav = nav, state = state, context = context),
+                group = group,
             ),
             SettingsGroupSection(
                 key = "other_logout",
                 title = group.title,
                 entries = logoutSettingsEntries(nav = nav, state = state),
                 headerGroupKey = "other",
+                group = group,
             ),
         )
     }
@@ -339,11 +344,13 @@ private fun buildAllSettingsGroups(
         key = "display",
         title = SettingsGroup.Display.title,
         entries = displaySettingsEntries(nav = nav, state = state),
+        group = SettingsGroup.Display,
     ),
     SettingsGroupSection(
         key = "feed",
         title = SettingsGroup.Feed.title,
         entries = feedSettingsEntries(state = state),
+        group = SettingsGroup.Feed,
     ),
     SettingsGroupSection(
         key = "account",
@@ -354,23 +361,27 @@ private fun buildAllSettingsGroups(
             scope = scope,
             includeLibraryShortcuts = includeLibraryShortcuts,
         ),
+        group = SettingsGroup.AccountAndContent,
     ),
     SettingsGroupSection(
         key = "update",
         title = SettingsGroup.Update.title,
         entries = updateSettingsEntries(nav = nav, state = state, scope = scope),
+        group = SettingsGroup.Update,
     ),
     SettingsGroupSection(
         key = "other",
         title = SettingsGroup.Other.title,
         entries = otherSettingsEntries(nav = nav, state = state, context = context),
+        group = SettingsGroup.Other,
     ),
-    // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起。
+    // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起；搜索结果态按 headerGroupKey 合并到「其他」卡片。
     SettingsGroupSection(
         key = "other_logout",
         title = SettingsGroup.Other.title,
         entries = logoutSettingsEntries(nav = nav, state = state),
         headerGroupKey = "other",
+        group = SettingsGroup.Other,
     ),
 )
 
@@ -387,18 +398,23 @@ private fun SettingsScaffold(
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
-    val listState = rememberLazyListState()
-    BindScrollToTop(listState)
+    val mainListState = rememberLazyListState()
+    val searchListState = rememberLazyListState()
 
     var searchQuery by rememberSaveable(title) { mutableStateOf("") }
     var searchExpanded by rememberSaveable(title) { mutableStateOf(false) }
     val trimmedQuery = searchQuery.trim()
+    val inSearchResults = trimmedQuery.isNotEmpty()
     val searchTerms = remember(trimmedQuery) { parseSettingsSearchTerms(trimmedQuery) }
     val filteredGroups = filterSettingsGroups(groups, searchTerms)
+    val searchTransition = rememberTopAppBarSearchState(active = inSearchResults)
+
+    val activeListState = if (inSearchResults) searchListState else mainListState
+    BindScrollToTop(activeListState)
 
     LaunchedEffect(trimmedQuery) {
-        if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
-            listState.scrollToItem(0)
+        if (inSearchResults && (searchListState.firstVisibleItemIndex != 0 || searchListState.firstVisibleItemScrollOffset != 0)) {
+            searchListState.scrollToItem(0)
         }
     }
 
@@ -409,26 +425,25 @@ private fun SettingsScaffold(
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(state.blurEffects, backdrop).background(pageColor)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
-                // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
-                // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = glassBarContentTop(topBarHeight, 10.dp),
-                    end = 12.dp,
-                    bottom = 24.dp + navBottomPadding(),
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (filteredGroups.isEmpty()) {
-                    item(key = "settings-search-empty") {
-                        EmptyState("未找到与「$trimmedQuery」相关的设置")
-                    }
-                } else {
+            if (searchTransition.isContentVisible) {
+                LazyColumn(
+                    state = mainListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .topAppBarSearchContent(searchTransition)
+                        .scrollEndHaptic(),
+                    // 列表铺到屏幕最底，滚到末页时卡片从系统导航条下方穿过（沉浸），
+                    // 末项靠 contentPadding 抬到导航条之上，不会被挡住。
+                    contentPadding = PaddingValues(
+                        start = 12.dp,
+                        top = glassBarContentTop(topBarHeight, 10.dp),
+                        end = 12.dp,
+                        bottom = 24.dp + navBottomPadding(),
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     val shownHeaders = HashSet<String>()
-                    filteredGroups.forEach { group ->
+                    groups.forEach { group ->
                         if (showGroupHeaders && shownHeaders.add(group.headerGroupKey)) {
                             val isFirstHeader = shownHeaders.size == 1
                             item(key = "${group.headerGroupKey}-title") {
@@ -442,11 +457,19 @@ private fun SettingsScaffold(
                             SettingsGroupCard(entries = group.entries)
                         }
                     }
-                    if (trimmedQuery.isEmpty()) {
-                        footerContent()
-                    }
+                    footerContent()
                 }
             }
+
+            SettingsSearchResultsLayer(
+                visible = inSearchResults,
+                query = trimmedQuery,
+                terms = searchTerms,
+                filteredGroups = filteredGroups,
+                parentTitle = title,
+                listState = searchListState,
+                topBarHeight = topBarHeight,
+            )
         }
 
         CompositionLocalProvider(
@@ -461,7 +484,7 @@ private fun SettingsScaffold(
                 onQueryChange = { searchQuery = it },
                 onExpandedChange = { searchExpanded = it },
                 onBack = nav::pop,
-                listState = listState,
+                listState = activeListState,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
@@ -495,7 +518,7 @@ private fun displaySettingsEntries(
             summary = darkSummary,
             keywords = "暗黑 夜间 黑夜 主题 浅色 日间 跟随系统 dark theme night",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "深色模式",
                 modifier = Modifier.testTag("settings_dark"),
                 summary = darkSummary,
@@ -509,7 +532,7 @@ private fun displaySettingsEntries(
             summary = accentSummary,
             keywords = "主题色 配色 颜色 色彩 accent color",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "强调色",
                 modifier = Modifier.testTag("settings_accent_color"),
                 summary = accentSummary,
@@ -533,7 +556,7 @@ private fun displaySettingsEntries(
             summary = state.meIconStyle.label,
             keywords = "彩色 单色 主题色 图标 icon",
         ) { pos ->
-            OverlayDropdownPreference(
+            SettingsDropdownRow(
                 items = MeIconStyle.entries.map { it.label },
                 selectedIndex = state.meIconStyle.ordinal,
                 title = "「我」页图标样式",
@@ -552,7 +575,7 @@ private fun displaySettingsEntries(
             summary = fontSummary,
             keywords = "字体 大小 缩放 font size scale",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "字号",
                 modifier = Modifier.testTag("settings_font"),
                 summary = fontSummary,
@@ -566,7 +589,7 @@ private fun displaySettingsEntries(
             summary = predictiveSummary,
             keywords = "侧滑 返回 手势 轨迹 模糊 跟手 predictive back gesture",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "预测性返回手势设置",
                 summary = predictiveSummary,
                 modifier = Modifier.testTag("settings_predictive_back_entry"),
@@ -580,7 +603,7 @@ private fun displaySettingsEntries(
             summary = "调节微博展开、看图与页面切换的动画快慢",
             keywords = "快慢 动效 展开 切换 速度 animation speed",
         ) { pos ->
-            OverlayDropdownPreference(
+            SettingsDropdownRow(
                 items = AnimationSpeed.entries.map { it.label },
                 selectedIndex = App.settings.animationSpeed.ordinal,
                 title = "动画速度",
@@ -599,7 +622,7 @@ private fun displaySettingsEntries(
             summary = "关闭后顶栏与玻璃面改画纯色，滑动更省电",
             keywords = "毛玻璃 高斯 透明 玻璃 省电 blur glass",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.blurEffects,
                 onCheckedChange = {
                     state.blurEffects = it
@@ -617,7 +640,7 @@ private fun displaySettingsEntries(
             summary = "关闭后固定竖屏，不再进入左右双页",
             keywords = "旋转 竖屏 双页 分栏 平板 landscape rotate",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.allowLandscape,
                 onCheckedChange = {
                     state.allowLandscape = it
@@ -635,7 +658,7 @@ private fun displaySettingsEntries(
             summary = profileStatusesSummary,
             keywords = "个人主页 互动中心 设置入口 布局 profile",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.profileShowStatuses,
                 onCheckedChange = {
                     state.profileShowStatuses = it
@@ -653,7 +676,7 @@ private fun displaySettingsEntries(
             summary = state.searchPanelAnimation.label,
             keywords = "搜索 弹出 动效 样式 search animation",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "搜索面板动画",
                 modifier = Modifier.testTag("settings_search_panel_anim"),
                 summary = state.searchPanelAnimation.label,
@@ -667,7 +690,7 @@ private fun displaySettingsEntries(
             summary = App.settings.bottomLeftAction.label,
             keywords = "底部 悬浮栏 快捷 按钮 搜索 刷新 bottom",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "底栏左下角按钮",
                 modifier = Modifier.testTag("settings_bottom_left_action"),
                 summary = App.settings.bottomLeftAction.label,
@@ -681,7 +704,7 @@ private fun displaySettingsEntries(
             summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
             keywords = "顶栏 底栏 工具栏 沉浸 隐藏 收起 float bar",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.autoHideFloatingBars,
                 onCheckedChange = {
                     state.autoHideFloatingBars = it
@@ -699,7 +722,7 @@ private fun displaySettingsEntries(
             summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
             keywords = "回到顶部 刷新 原位置 双击 top return",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.feedTabTapToTopAndReturn,
                 onCheckedChange = {
                     state.feedTabTapToTopAndReturn = it
@@ -717,7 +740,7 @@ private fun displaySettingsEntries(
             summary = App.settings.imageBrowseQuality.label,
             keywords = "画质 原图 高清 缩略图 流量 省流 看图 image quality",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "浏览图片",
                 modifier = Modifier.testTag("settings_image_browse_quality"),
                 summary = App.settings.imageBrowseQuality.label,
@@ -731,7 +754,7 @@ private fun displaySettingsEntries(
             summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
             keywords = "实况 动态图 播放 live photo livephoto",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = App.settings.livePhotoAutoPlay,
                 onCheckedChange = { App.settings.applyLivePhotoAutoPlay(it) },
                 title = "实况图自动播放",
@@ -746,7 +769,7 @@ private fun displaySettingsEntries(
             summary = "播放实况图时同步播放附带的视频声音",
             keywords = "实况 静音 音频 音量 声音 live photo sound",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = App.settings.livePhotoSound,
                 onCheckedChange = { App.settings.applyLivePhotoSound(it) },
                 title = "实况图播放声音",
@@ -761,7 +784,7 @@ private fun displaySettingsEntries(
             summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
             keywords = "小窗 画中画 悬浮窗 后台 播放 video pip",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = App.settings.videoAutoFloatOnBack,
                 onCheckedChange = { App.settings.applyVideoAutoFloatOnBack(it) },
                 title = "视频播放时返回自动悬浮",
@@ -776,7 +799,7 @@ private fun displaySettingsEntries(
             summary = "非直播视频播放结束后自动关闭并返回上一页",
             keywords = "播放结束 自动关闭 退出 video",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = App.settings.videoAutoCloseOnComplete,
                 onCheckedChange = { App.settings.applyVideoAutoCloseOnComplete(it) },
                 title = "视频播完自动返回",
@@ -791,7 +814,7 @@ private fun displaySettingsEntries(
             summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；关闭后在顶栏显示小窗与画中画按钮",
             keywords = "小窗 画中画 上滑 下滑 手势 video pip gesture",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = App.settings.videoCenterSwipeActions,
                 onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
                 title = "视频中区滑动手势",
@@ -806,7 +829,7 @@ private fun displaySettingsEntries(
             summary = "关闭后点击外部链接将直接调用系统浏览器打开",
             keywords = "外链 网页 浏览器 系统浏览器 web browser",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.inAppBrowser,
                 onCheckedChange = {
                     state.inAppBrowser = it
@@ -823,7 +846,7 @@ private fun displaySettingsEntries(
             title = "点赞前确认",
             keywords = "误触 确认 弹窗 红心 喜欢 like confirm",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.confirmLike,
                 onCheckedChange = {
                     state.confirmLike = it
@@ -870,7 +893,7 @@ private fun feedSettingsEntries(
             summary = state.feedLeftTab.label,
             keywords = "主页 分栏 顶栏 标签 关注 推荐 好友圈 tab",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "微博左侧栏",
                 modifier = Modifier.testTag("settings_feed_left_tab"),
                 summary = state.feedLeftTab.label,
@@ -884,7 +907,7 @@ private fun feedSettingsEntries(
             summary = state.feedCenterTab.label,
             keywords = "主页 分栏 顶栏 标签 关注 推荐 全部 tab",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "微博中间栏",
                 modifier = Modifier.testTag("settings_feed_center_tab"),
                 summary = state.feedCenterTab.label,
@@ -898,7 +921,7 @@ private fun feedSettingsEntries(
             summary = state.feedRightTab.label,
             keywords = "主页 分栏 顶栏 标签 关注 推荐 附近 tab",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "微博右侧栏",
                 modifier = Modifier.testTag("settings_feed_right_tab"),
                 summary = state.feedRightTab.label,
@@ -912,7 +935,7 @@ private fun feedSettingsEntries(
             summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
             keywords = "分组 折叠 二级菜单 菜单 group",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.collapseFollowGroups,
                 onCheckedChange = {
                     state.collapseFollowGroups = it
@@ -930,7 +953,7 @@ private fun feedSettingsEntries(
             summary = hotBoardsSummary,
             keywords = "热搜 榜单 实时 文娱 隐藏 hot board",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "搜索页热搜榜单",
                 modifier = Modifier.testTag("settings_hot_boards"),
                 summary = hotBoardsSummary,
@@ -944,7 +967,7 @@ private fun feedSettingsEntries(
             summary = "刷新不回顶，从当前位置往上补看新微博",
             keywords = "时间线 不回顶 补看 新微博 reverse",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.reverseBrowse,
                 onCheckedChange = {
                     state.reverseBrowse = it
@@ -962,7 +985,7 @@ private fun feedSettingsEntries(
             summary = feedFrameSummary,
             keywords = "卡片 边框 圆角 扁平 对齐 card frame",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.feedCardFrame,
                 onCheckedChange = {
                     state.feedCardFrame = it
@@ -980,7 +1003,7 @@ private fun feedSettingsEntries(
             summary = detailFrameSummary,
             keywords = "正文 评论 边框 圆角 扁平 card frame",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.detailCardFrame,
                 onCheckedChange = {
                     state.detailCardFrame = it
@@ -998,7 +1021,7 @@ private fun feedSettingsEntries(
             summary = foldLongTextSummary,
             keywords = "展开全文 收纳 截断 简介 超话 话题 fold long text",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.foldLongText,
                 onCheckedChange = {
                     state.foldLongText = it
@@ -1016,7 +1039,7 @@ private fun feedSettingsEntries(
             summary = "开启后在昵称旁显示 VIP / SVIP / VVIP 及等级标识",
             keywords = "会员 svip vvip 标识 勋章 badge",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.showVipLevel,
                 onCheckedChange = {
                     state.showVipLevel = it
@@ -1034,7 +1057,7 @@ private fun feedSettingsEntries(
             summary = "开启后在评论区昵称旁显示铁粉、金粉、钻粉等粉丝标识",
             keywords = "铁粉 金粉 钻粉 挚爱粉 评论 标识 fan",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.showFanLevel,
                 onCheckedChange = {
                     state.showFanLevel = it
@@ -1052,7 +1075,7 @@ private fun feedSettingsEntries(
             summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
             keywords = "金v 蓝v 黄v 认证 头像 verified",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.showVerifiedBadge,
                 onCheckedChange = {
                     state.showVerifiedBadge = it
@@ -1093,7 +1116,7 @@ private fun accountSettingsEntries(
                 title = "账号管理",
                 keywords = "切号 多账号 添加 登录 account",
             ) { pos ->
-                ArrowPreference(
+                SettingsArrowRow(
                     title = "账号管理",
                     modifier = Modifier.testTag("settings_accounts"),
                     cardListPosition = pos,
@@ -1108,7 +1131,7 @@ private fun accountSettingsEntries(
                 summary = "长按悬浮底栏的「我」快速切换已保存账号",
                 keywords = "快捷 切号 多账号 switch account",
             ) { pos ->
-                SwitchPreference(
+                SettingsSwitchRow(
                     checked = state.quickSwitchAccount,
                     onCheckedChange = {
                         state.quickSwitchAccount = it
@@ -1128,7 +1151,7 @@ private fun accountSettingsEntries(
                 summary = "在悬浮底栏的「我」位置显示当前账号头像",
                 keywords = "头像 底栏 个人 avatar",
             ) { pos ->
-                SwitchPreference(
+                SettingsSwitchRow(
                     checked = state.profileTabAvatar,
                     onCheckedChange = {
                         state.profileTabAvatar = it
@@ -1150,7 +1173,7 @@ private fun accountSettingsEntries(
                     summary = localFollowSummary,
                     keywords = "本地关注 特别关注 悄悄关注 取数 follow",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "本地关注使用账号",
                         modifier = Modifier.testTag("settings_local_follow"),
                         summary = localFollowSummary,
@@ -1166,7 +1189,7 @@ private fun accountSettingsEntries(
                     summary = syncFavSummary,
                     keywords = "云端收藏 微博收藏 复制 同步 favorite sync",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "同步本地收藏",
                         summary = syncFavSummary,
                         modifier = Modifier.testTag("settings_sync_local_favorites"),
@@ -1197,7 +1220,7 @@ private fun accountSettingsEntries(
                     summary = draftsSummary,
                     keywords = "草稿 未发布 draft",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "草稿箱",
                         modifier = Modifier.testTag("settings_drafts"),
                         summary = draftsSummary,
@@ -1213,7 +1236,7 @@ private fun accountSettingsEntries(
                     summary = historySummary,
                     keywords = "历史记录 看过 history",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "浏览历史",
                         modifier = Modifier.testTag("settings_history"),
                         summary = historySummary,
@@ -1230,7 +1253,7 @@ private fun accountSettingsEntries(
                     summary = favoritesSummary,
                     keywords = "本地收藏 书签 favorite",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "收藏",
                         modifier = Modifier.testTag("settings_favorites"),
                         summary = favoritesSummary,
@@ -1245,7 +1268,7 @@ private fun accountSettingsEntries(
                     title = "话题 / 超话",
                     keywords = "超话 话题 广场 topic supertopic",
                 ) { pos ->
-                    ArrowPreference(
+                    SettingsArrowRow(
                         title = "话题 / 超话",
                         modifier = Modifier.testTag("settings_topic"),
                         cardListPosition = pos,
@@ -1260,7 +1283,7 @@ private fun accountSettingsEntries(
                         title = "附近",
                         keywords = "同城 定位 位置 nearby location",
                     ) { pos ->
-                        ArrowPreference(
+                        SettingsArrowRow(
                             title = "附近",
                             modifier = Modifier.testTag("settings_nearby"),
                             cardListPosition = pos,
@@ -1287,7 +1310,7 @@ private fun updateSettingsEntries(
             summary = updateSummary,
             keywords = "新版本 升级 版本号 update version",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "检查更新",
                 modifier = Modifier.testTag("settings_update"),
                 summary = updateSummary,
@@ -1300,7 +1323,7 @@ private fun updateSettingsEntries(
             title = "更新日志",
             keywords = "版本历史 改动 changelog",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "更新日志",
                 modifier = Modifier.testTag("settings_changelog"),
                 cardListPosition = pos,
@@ -1312,7 +1335,7 @@ private fun updateSettingsEntries(
             title = "自动检查更新",
             keywords = "启动 检查 升级 auto update",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.autoCheckUpdate,
                 onCheckedChange = {
                     state.autoCheckUpdate = it
@@ -1328,7 +1351,7 @@ private fun updateSettingsEntries(
             title = "接收预发布版本",
             keywords = "测试版 预览版 pre beta prerelease",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.acceptPrerelease,
                 onCheckedChange = {
                     state.acceptPrerelease = it
@@ -1344,7 +1367,7 @@ private fun updateSettingsEntries(
             title = "应用内更新",
             keywords = "下载 安装 apk 升级 in app update",
         ) { pos ->
-            SwitchPreference(
+            SettingsSwitchRow(
                 checked = state.inAppUpdate,
                 onCheckedChange = {
                     state.inAppUpdate = it
@@ -1372,7 +1395,7 @@ private fun otherSettingsEntries(
             summary = state.message,
             keywords = "清除 图片缓存 磁盘 空间 释放 cache clear storage",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "清理缓存",
                 modifier = Modifier.testTag("settings_clear_cache"),
                 cardListPosition = pos,
@@ -1394,7 +1417,7 @@ private fun otherSettingsEntries(
             summary = aboutSummary,
             keywords = "版本 开源 致谢 协议 许可证 about",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "关于",
                 modifier = Modifier.testTag("settings_about"),
                 summary = aboutSummary,
@@ -1417,7 +1440,7 @@ private fun logoutSettingsEntries(
             summary = "回到登录页，本地关注名单保留",
             keywords = "登出 注销 登录 退出 logout exit",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "退出纯本地模式",
                 modifier = Modifier.testTag("settings_leave_local"),
                 summary = "回到登录页，本地关注名单保留",
@@ -1437,7 +1460,7 @@ private fun logoutSettingsEntries(
             summary = "清除本地会话",
             keywords = "登出 注销 退出 账号 logout exit",
         ) { pos ->
-            ArrowPreference(
+            SettingsArrowRow(
                 title = "退出登录",
                 modifier = Modifier.testTag("settings_logout"),
                 summary = "清除本地会话",

@@ -32,16 +32,17 @@ internal object SettingsSearchMatcher {
         if (terms.isEmpty()) return 1
         val titleIdx = indexOf(entry.title)
         val summaryIdx = indexOf(entry.summary)
-        val keywordIdx = indexOf(entry.keywords)
+        val keywordIndices = keywordIndicesOf(entry.keywords)
         val groupIdx = indexOf(groupTitle)
 
         var total = 0
         for (rawTerm in terms) {
             val term = normalizeQuery(rawTerm)
             if (term.isEmpty()) continue
+            val keywordBest = keywordIndices.maxOfOrNull { scoreField(term, it, FieldWeight.KEYWORD) } ?: 0
             val best = maxOf(
                 scoreField(term, titleIdx, FieldWeight.TITLE),
-                scoreField(term, keywordIdx, FieldWeight.KEYWORD),
+                keywordBest,
                 scoreField(term, summaryIdx, FieldWeight.SUMMARY),
                 scoreField(term, groupIdx, FieldWeight.GROUP),
             )
@@ -49,6 +50,163 @@ internal object SettingsSearchMatcher {
             total += best
         }
         return total
+    }
+
+    /**
+     * 计算多词查询在原始文本 [text] 中命中的字符区间（闭区间，已排序并合并相邻/重叠区间），
+     * 用于按 ColorOS 系统设置风格对命中的原文、拼音、首字母或跳字片段做强调色高亮。
+     */
+    fun findHighlightRanges(
+        text: String,
+        terms: List<String>,
+    ): List<IntRange> {
+        if (text.isEmpty() || terms.isEmpty()) return emptyList()
+        val index = indexOf(text)
+        if (index.rawNorm.isEmpty()) return emptyList()
+
+        val rawRanges = ArrayList<IntRange>()
+        for (rawTerm in terms) {
+            val term = normalizeQuery(rawTerm)
+            if (term.isEmpty()) continue
+            collectHighlightRanges(term, index, text.length, rawRanges)
+        }
+        return mergeHighlightRanges(rawRanges, text.length)
+    }
+
+    private fun collectHighlightRanges(
+        term: String,
+        index: TextSearchIndex,
+        rawLength: Int,
+        out: MutableList<IntRange>,
+    ) {
+        // 1. 标准化原文直接命中（涵盖汉字子串、大小写忽略、简繁同义词归一）
+        var searchFrom = 0
+        var foundDirect = false
+        while (searchFrom <= index.rawNorm.length - term.length) {
+            val pos = index.rawNorm.indexOf(term, searchFrom)
+            if (pos < 0) break
+            foundDirect = true
+            val start = index.rawNormMap[pos]
+            val end = index.rawNormMap[pos + term.length - 1]
+            if (start in 0 until rawLength && end in start until rawLength) {
+                out.add(start..end)
+            }
+            searchFrom = pos + term.length
+        }
+        if (foundDirect) return
+
+        // 2. 去标点/去空格原文子串命中（例如「我页」命中「「我」页图标样式」）
+        val compactPos = index.compact.indexOf(term)
+        if (compactPos >= 0) {
+            for (offset in 0 until term.length) {
+                val rawIdx = index.compactMap[compactPos + offset]
+                if (rawIdx in 0 until rawLength) out.add(rawIdx..rawIdx)
+            }
+            return
+        }
+
+        val isAscii = term.all { it in 'a'..'z' || it in '0'..'9' }
+        val isAlphaOnly = isAscii && term.all { it in 'a'..'z' }
+
+        // 3. 拼音/英文音节对齐前缀命中（全拼、首字母、混拼，如 ssms / shensm / xsvip）
+        if (isAscii && index.syllables.isNotEmpty()) {
+            val syllableMatch = findSyllablePrefixMatch(term, index.syllables)
+            if (syllableMatch != null) {
+                for ((span, consumed) in syllableMatch) {
+                    val start = span.rawStart
+                    val end = if (span.isAscii) {
+                        min(span.rawEnd, span.rawStart + consumed - 1)
+                    } else {
+                        span.rawEnd
+                    }
+                    if (start in 0 until rawLength && end in start until rawLength) {
+                        out.add(start..end)
+                    }
+                }
+                return
+            }
+            // 4. 拼音首字母跳字子序列（如 ycfl 命中 滑动自动隐藏浮动栏）
+            if (isAlphaOnly && term.length >= 3) {
+                val matchedSpans = findInitialsSubsequenceMatch(term, index.syllables)
+                if (matchedSpans != null) {
+                    for (span in matchedSpans) {
+                        val end = if (span.isAscii) span.rawStart else span.rawEnd
+                        if (span.rawStart in 0 until rawLength && end in span.rawStart until rawLength) {
+                            out.add(span.rawStart..end)
+                        }
+                    }
+                    return
+                }
+            }
+        }
+
+        // 5. 汉字跳字子序列（如「深模」命中「深色模式」）
+        if (!isAscii && term.length >= 2) {
+            val subseqIndices = findSubsequenceIndices(term, index.compact)
+            if (subseqIndices != null) {
+                for (ci in subseqIndices) {
+                    val rawIdx = index.compactMap[ci]
+                    if (rawIdx in 0 until rawLength) out.add(rawIdx..rawIdx)
+                }
+                return
+            }
+        }
+
+        // 6. 轻度拼写容错（Damerau-Levenshtein ≤ 1）
+        if (isAscii && term.length >= 4) {
+            val matchedTokenSpan = index.syllables.firstOrNull { span ->
+                span.isAscii &&
+                    span.variants.any { it.length >= 4 && damerauLevenshteinAtMostOne(term, it) }
+            }
+            if (matchedTokenSpan != null) {
+                out.add(matchedTokenSpan.rawStart..matchedTokenSpan.rawEnd)
+                return
+            }
+            val pinyinWin = findSlidingTypoWindow(term, index.joinedPinyin)
+            if (pinyinWin != null) {
+                for (span in index.syllables) {
+                    if (span.joinedEnd >= pinyinWin.first && span.joinedStart <= pinyinWin.last) {
+                        out.add(span.rawStart..span.rawEnd)
+                    }
+                }
+            }
+        } else if (!isAscii && term.length >= 3 && index.compact.length >= 3) {
+            val win = findSlidingTypoWindow(term, index.compact)
+            if (win != null) {
+                for (ci in win) {
+                    val rawIdx = index.compactMap[ci]
+                    if (rawIdx in 0 until rawLength) out.add(rawIdx..rawIdx)
+                }
+            }
+        }
+    }
+
+    private fun mergeHighlightRanges(
+        ranges: List<IntRange>,
+        rawLength: Int,
+    ): List<IntRange> {
+        if (ranges.isEmpty() || rawLength <= 0) return emptyList()
+        val sorted = ranges
+            .mapNotNull { r ->
+                val s = r.first.coerceIn(0, rawLength - 1)
+                val e = r.last.coerceIn(0, rawLength - 1)
+                if (s <= e) s..e else null
+            }
+            .sortedWith(compareBy<IntRange> { it.first }.thenBy { it.last })
+        if (sorted.isEmpty()) return emptyList()
+        val merged = ArrayList<IntRange>(sorted.size)
+        var current = sorted[0]
+        for (i in 1 until sorted.size) {
+            val next = sorted[i]
+            if (next.first <= current.last + 1) {
+                current = current.first..maxOf(current.last, next.last)
+            } else {
+                merged.add(current)
+                current = next
+            }
+        }
+        merged.add(current)
+        return merged
     }
 
     private enum class FieldWeight(
@@ -85,19 +243,19 @@ internal object SettingsSearchMatcher {
 
         // 2. 英文/拼音音节前缀匹配：同时覆盖全拼（shense）、首字母（ssms）、混拼（shensm / cwzd）
         if (isAscii && index.syllables.isNotEmpty() && (term.length >= 2 || weight.allowShortPinyin)) {
-            if (matchesSyllablePrefixes(term, index.syllables)) {
+            if (findSyllablePrefixMatch(term, index.syllables) != null) {
                 return weight.syllable
             }
-            // 3. 拼音首字母跳字子序列（如 ycfl 命中 滑动自动隐藏浮动栏），仅在标题/关键词/分组中启用避免噪声
-            if (isAlphaOnly && term.length >= 2 && weight.initialsSubseq > 0) {
-                if (matchesInitialsSubsequence(term, index.syllables)) {
+            // 3. 拼音首字母跳字子序列（如 ycfl 命中 滑动自动隐藏浮动栏），至少 3 字母以避免 2 字母跨词误召回
+            if (isAlphaOnly && term.length >= 3 && weight.initialsSubseq > 0) {
+                if (findInitialsSubsequenceMatch(term, index.syllables) != null) {
                     return weight.initialsSubseq
                 }
             }
         }
 
         // 4. 汉字跳字子序列（如「深模」命中「深色模式」、「清缓」命中「清理缓存」）
-        if (!isAscii && weight.allowCjkSubseq && term.length >= 2 && isSubsequence(term, index.compact)) {
+        if (!isAscii && weight.allowCjkSubseq && term.length >= 2 && findSubsequenceIndices(term, index.compact) != null) {
             return weight.cjkSubseq
         }
 
@@ -114,7 +272,7 @@ internal object SettingsSearchMatcher {
                     return weight.typo - 4
                 }
             } else if (!isAscii && term.length >= 3 && index.compact.length >= 3) {
-                if (matchesSlidingTypo(term, index.compact)) {
+                if (findSlidingTypoWindow(term, index.compact) != null) {
                     return weight.typo
                 }
             }
@@ -122,6 +280,21 @@ internal object SettingsSearchMatcher {
 
         return 0
     }
+
+    private val keywordIndicesCache = ConcurrentHashMap<String, List<TextSearchIndex>>()
+
+    /** 将空格分隔的同义关键词拆分为独立词条分别建索引，避免跨同义词拼接造成误匹配（如「主题色 配色」误中 `sp`）。 */
+    private fun keywordIndicesOf(keywords: String): List<TextSearchIndex> {
+        if (keywords.isBlank()) return emptyList()
+        return keywordIndicesCache.getOrPut(keywords) {
+            keywords.trim()
+                .split(WHITESPACE_REGEX)
+                .filter { it.isNotEmpty() }
+                .map { indexOf(it) }
+        }
+    }
+
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     private fun indexOf(text: String): TextSearchIndex {
         if (text.isBlank()) return TextSearchIndex.EMPTY
@@ -139,21 +312,43 @@ internal object SettingsSearchMatcher {
 
     private fun buildIndex(raw: String): TextSearchIndex {
         val simplified = toSimplified(raw)
-        val rawNorm = normalizeBasic(simplified)
-        val compact = stripNonWord(rawNorm)
-        val syllables = extractSyllables(simplified)
+        val rawNormSb = StringBuilder(simplified.length)
+        val rawNormMapList = ArrayList<Int>(simplified.length)
+        val compactSb = StringBuilder(simplified.length)
+        val compactMapList = ArrayList<Int>(simplified.length)
+
+        // 逐字符做 NFKC + 小写映射，保留标准化索引与原始字符索引的精确对应，便于结果高亮定位。
+        val sameLength = simplified.length == raw.length
+        for (i in simplified.indices) {
+            val rawIdx = if (sameLength) i else i.coerceIn(0, (raw.length - 1).coerceAtLeast(0))
+            val normPiece = normalizeBasic(simplified[i].toString())
+            for (ch in normPiece) {
+                rawNormSb.append(ch)
+                rawNormMapList.add(rawIdx)
+                if (ch.isLetterOrDigit() || isCjkHan(ch) || ch == '@' || ch == '+') {
+                    compactSb.append(ch)
+                    compactMapList.add(rawIdx)
+                }
+            }
+        }
+
+        val rawNorm = rawNormSb.toString()
+        val compact = compactSb.toString()
+        val syllables = extractSyllables(simplified, raw.length)
         val asciiTokens = LinkedHashSet<String>()
         ASCII_TOKEN_REGEX.findAll(rawNorm).forEach { asciiTokens.add(it.value) }
-        val joinedPinyin = syllables.joinToString("") { it.firstOrNull().orEmpty() }
+        val joinedPinyin = syllables.joinToString("") { it.primary }
         // 同步把每个连续中文词段对应的全拼也收入 token，便于对关键词里的长词做拼写纠错
         HAN_SEGMENT_REGEX.findAll(simplified).forEach { match ->
-            val segSyllables = extractSyllables(match.value)
-            val full = segSyllables.joinToString("") { it.firstOrNull().orEmpty() }
+            val segSyllables = extractSyllables(match.value, match.value.length)
+            val full = segSyllables.joinToString("") { it.primary }
             if (full.length >= 4) asciiTokens.add(full)
         }
         return TextSearchIndex(
             rawNorm = rawNorm,
+            rawNormMap = rawNormMapList.toIntArray(),
             compact = compact,
+            compactMap = compactMapList.toIntArray(),
             syllables = syllables,
             joinedPinyin = joinedPinyin,
             asciiTokens = asciiTokens.toList(),
@@ -165,21 +360,53 @@ internal object SettingsSearchMatcher {
      * - 每个汉字映射为 1~N 个无声调拼音候选（自动修正多音字，并将 `ü` 同时展开为 `v` 和 `u`）；
      * - 连续英文/数字段按单词拆成一个音节单元，便于中英混排（如 `vip`、`v标`、`pip`）无缝匹配。
      */
-    private fun extractSyllables(text: String): List<List<String>> {
-        val result = ArrayList<List<String>>(text.length)
+    private fun extractSyllables(text: String, rawLength: Int): List<SyllableSpan> {
+        val result = ArrayList<SyllableSpan>(text.length)
+        val sameLength = text.length == rawLength
+        val maxRaw = (rawLength - 1).coerceAtLeast(0)
+        var joinedCursor = 0
         var i = 0
         while (i < text.length) {
             val ch = text[i]
             when {
                 isCjkHan(ch) -> {
                     val candidates = hanToPinyinVariants(ch)
-                    if (candidates.isNotEmpty()) result.add(candidates)
+                    if (candidates.isNotEmpty()) {
+                        val primary = candidates.first()
+                        val rawPos = if (sameLength) i else i.coerceIn(0, maxRaw)
+                        result.add(
+                            SyllableSpan(
+                                variants = candidates,
+                                primary = primary,
+                                rawStart = rawPos,
+                                rawEnd = rawPos,
+                                isAscii = false,
+                                joinedStart = joinedCursor,
+                                joinedEnd = joinedCursor + primary.length - 1,
+                            ),
+                        )
+                        joinedCursor += primary.length
+                    }
                     i++
                 }
                 ch.isLetterOrDigit() && ch.code < 128 -> {
                     val start = i
                     while (i < text.length && text[i].isLetterOrDigit() && text[i].code < 128) i++
-                    result.add(listOf(text.substring(start, i).lowercase(Locale.ROOT)))
+                    val token = text.substring(start, i).lowercase(Locale.ROOT)
+                    val rawStart = if (sameLength) start else start.coerceIn(0, maxRaw)
+                    val rawEnd = if (sameLength) i - 1 else (i - 1).coerceIn(rawStart, maxRaw)
+                    result.add(
+                        SyllableSpan(
+                            variants = listOf(token),
+                            primary = token,
+                            rawStart = rawStart,
+                            rawEnd = rawEnd,
+                            isAscii = true,
+                            joinedStart = joinedCursor,
+                            joinedEnd = joinedCursor + token.length - 1,
+                        ),
+                    )
+                    joinedCursor += token.length
                 }
                 else -> i++
             }
@@ -188,25 +415,27 @@ internal object SettingsSearchMatcher {
     }
 
     /**
-     * 音节对齐前缀匹配：判断 [query] 是否可以从任意起始音节开始，连续按音节前缀匹配完成。
-     * 例：`["shen", "se", "mo", "shi"]` 可命中 `ssms`、`shensm`、`shens`、`shensemoshi`、`ms`。
+     * 音节对齐前缀匹配：判断 [query] 是否可以从任意起始音节开始，连续按音节前缀匹配完成，
+     * 并返回命中的 `(SyllableSpan, consumedChars)` 序列以便精准高亮对应汉字或英文前缀。
      */
-    private fun matchesSyllablePrefixes(
+    private fun findSyllablePrefixMatch(
         query: String,
-        syllables: List<List<String>>,
-    ): Boolean {
+        syllables: List<SyllableSpan>,
+    ): List<Pair<SyllableSpan, Int>>? {
         val qLen = query.length
         val sLen = syllables.size
         for (start in 0 until sLen) {
-            if (syllables[start].none { it.isNotEmpty() && it[0] == query[0] }) continue
+            if (syllables[start].variants.none { it.isNotEmpty() && it[0] == query[0] }) continue
             val visited = BooleanArray((sLen + 1) * (qLen + 1))
+            val path = ArrayList<Pair<SyllableSpan, Int>>()
             fun dfs(si: Int, qi: Int): Boolean {
                 if (qi == qLen) return true
                 if (si >= sLen) return false
                 val state = si * (qLen + 1) + qi
                 if (visited[state]) return false
                 visited[state] = true
-                for (variant in syllables[si]) {
+                val span = syllables[si]
+                for (variant in span.variants) {
                     if (variant.isEmpty() || variant[0] != query[qi]) continue
                     var maxMatch = 0
                     val limit = min(variant.length, qLen - qi)
@@ -215,62 +444,68 @@ internal object SettingsSearchMatcher {
                     }
                     // 贪心优先尝试更长前缀，失败再回退到较短前缀（含仅取首字母）
                     for (take in maxMatch downTo 1) {
+                        path.add(span to take)
                         if (dfs(si + 1, qi + take)) return true
+                        path.removeAt(path.lastIndex)
                     }
                 }
                 return false
             }
-            if (dfs(start, 0)) return true
+            if (dfs(start, 0)) return path
         }
-        return false
+        return null
     }
 
-    /** 首字母跳字子序列匹配：判断 [query] 是否按顺序命中各音节候选的首字母。 */
-    private fun matchesInitialsSubsequence(
+    /** 首字母跳字子序列匹配：判断 [query] 是否按顺序命中各音节候选的首字母并返回命中的音节列表。 */
+    private fun findInitialsSubsequenceMatch(
         query: String,
-        syllables: List<List<String>>,
-    ): Boolean {
+        syllables: List<SyllableSpan>,
+    ): List<SyllableSpan>? {
+        val matched = ArrayList<SyllableSpan>(query.length)
         var qi = 0
-        for (variants in syllables) {
+        for (span in syllables) {
             val target = query[qi]
-            if (variants.any { it.isNotEmpty() && it[0] == target }) {
+            if (span.variants.any { it.isNotEmpty() && it[0] == target }) {
+                matched.add(span)
                 qi++
-                if (qi == query.length) return true
+                if (qi == query.length) return matched
             }
         }
-        return false
+        return null
     }
 
-    private fun isSubsequence(query: String, target: String): Boolean {
-        if (query.length > target.length) return false
+    private fun findSubsequenceIndices(query: String, target: String): List<Int>? {
+        if (query.length > target.length) return null
+        val matched = ArrayList<Int>(query.length)
         var qi = 0
         for (i in target.indices) {
             if (target[i] == query[qi]) {
+                matched.add(i)
                 qi++
-                if (qi == query.length) return true
+                if (qi == query.length) return matched
             }
         }
-        return false
+        return null
     }
 
     private fun matchesPinyinWithTypo(term: String, joinedPinyin: String): Boolean {
         if (abs(term.length - joinedPinyin.length) <= 1 && damerauLevenshteinAtMostOne(term, joinedPinyin)) {
             return true
         }
-        return matchesSlidingTypo(term, joinedPinyin)
+        return findSlidingTypoWindow(term, joinedPinyin) != null
     }
 
-    private fun matchesSlidingTypo(term: String, target: String): Boolean {
+    private fun findSlidingTypoWindow(term: String, target: String): IntRange? {
         val tLen = term.length
         for (winLen in (tLen - 1)..(tLen + 1)) {
             if (winLen < 3 || winLen > target.length) continue
             for (start in 0..(target.length - winLen)) {
                 if (damerauLevenshteinAtMostOne(term, target.substring(start, start + winLen))) {
-                    return true
+                    return start until (start + winLen)
                 }
             }
         }
-        return false
+        return null
     }
 
     /** O(N) 判断两串的 Damerau-Levenshtein 距离是否 ≤ 1（单次替换、插入、删除或相邻交换）。 */
@@ -299,16 +534,6 @@ internal object SettingsSearchMatcher {
     private fun normalizeBasic(input: String): String {
         val nfkc = Normalizer.normalize(input, Normalizer.Form.NFKC)
         return nfkc.lowercase(Locale.ROOT)
-    }
-
-    private fun stripNonWord(input: String): String {
-        val sb = StringBuilder(input.length)
-        for (ch in input) {
-            if (ch.isLetterOrDigit() || isCjkHan(ch) || ch == '@' || ch == '+') {
-                sb.append(ch)
-            }
-        }
-        return sb.toString()
     }
 
     private fun isCjkHan(ch: Char): Boolean = ch in '\u4E00'..'\u9FFF'
@@ -543,14 +768,26 @@ internal object SettingsSearchMatcher {
     }
 }
 
-private data class TextSearchIndex(
+private data class SyllableSpan(
+    val variants: List<String>,
+    val primary: String,
+    val rawStart: Int,
+    val rawEnd: Int,
+    val isAscii: Boolean,
+    val joinedStart: Int,
+    val joinedEnd: Int,
+)
+
+private class TextSearchIndex(
     val rawNorm: String,
+    val rawNormMap: IntArray,
     val compact: String,
-    val syllables: List<List<String>>,
+    val compactMap: IntArray,
+    val syllables: List<SyllableSpan>,
     val joinedPinyin: String,
     val asciiTokens: List<String>,
 ) {
     companion object {
-        val EMPTY = TextSearchIndex("", "", emptyList(), "", emptyList())
+        val EMPTY = TextSearchIndex("", IntArray(0), "", IntArray(0), emptyList(), "", emptyList())
     }
 }
