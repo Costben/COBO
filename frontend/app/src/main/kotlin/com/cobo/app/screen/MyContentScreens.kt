@@ -47,7 +47,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.MediaWallFilter
 import com.cobo.app.data.Status
+import com.cobo.app.data.extractMediaWallItems
 import com.cobo.app.data.parseWeiboTimeMillis
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.LocalTopBarBounds
@@ -64,6 +66,7 @@ import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.LoadingState
 import com.cobo.app.ui.components.StatusCard
+import com.cobo.app.ui.components.mediaAlbumGridItems
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.expandOrigin
 import com.cobo.app.ui.glassBarContentTop
@@ -87,6 +90,7 @@ import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
@@ -94,8 +98,10 @@ import io.github.suqi8.coui.kmp.basic.rememberFullPagePullToRefreshState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.GridView
 import io.github.suqi8.coui.kmp.icon.extended.Hide
 import io.github.suqi8.coui.kmp.icon.extended.More
+import io.github.suqi8.coui.kmp.icon.extended.Notes
 import io.github.suqi8.coui.kmp.icon.extended.Search
 import io.github.suqi8.coui.kmp.icon.extended.Sort
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
@@ -125,6 +131,7 @@ fun FavoritesScreen(nav: NavState) {
             store = localStore,
             emptyText = "还没有收藏的微博",
             testTag = "favorites_page",
+            enableAlbumWall = true,
         )
         return
     }
@@ -143,6 +150,8 @@ fun FavoritesScreen(nav: NavState) {
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
 
     var menuExpanded by remember { mutableStateOf(false) }
+    var albumMode by remember { mutableStateOf(false) }
+    var albumFilter by remember { mutableStateOf(MediaWallFilter.All) }
     var sortOrder by remember { mutableStateOf(FavoritesSortOrder.NewestFirst) }
     var hideExpired by remember { mutableStateOf(false) }
     var filterOpen by remember { mutableStateOf(false) }
@@ -189,6 +198,9 @@ fun FavoritesScreen(nav: NavState) {
                                 hideExpired -> "当前列表均为已失效微博"
                                 else -> null
                             },
+                            albumMode = albumMode,
+                            albumFilter = albumFilter,
+                            onAlbumFilterChange = { albumFilter = it },
                             transformItems = { items ->
                                 filterAndSortFavorites(
                                     items = items,
@@ -247,6 +259,16 @@ fun FavoritesScreen(nav: NavState) {
                                 )
                             },
                             actions = {
+                                HighlightedIconButton(
+                                    onClick = { albumMode = !albumMode },
+                                    modifier = Modifier.couiTopAppBarActionItem().testTag("favorites_album_toggle"),
+                                ) {
+                                    Icon(
+                                        imageVector = if (albumMode) COUIIcons.Notes else COUIIcons.GridView,
+                                        contentDescription = if (albumMode) "切换列表视图" else "切换相册墙",
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
                                 Box {
                                     HighlightedIconButton(
                                         onClick = { menuExpanded = true },
@@ -421,6 +443,7 @@ private fun SimpleStatusFeedScreen(
     store: FeedStore,
     emptyText: String,
     testTag: String,
+    enableAlbumWall: Boolean = false,
 ) {
     val listState = rememberLazyListState()
     BindScrollToTop(listState)
@@ -429,6 +452,8 @@ private fun SimpleStatusFeedScreen(
     val density = LocalDensity.current
     val topBarBounds = remember { TopBarBounds() }
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    var albumMode by remember { mutableStateOf(false) }
+    var albumFilter by remember { mutableStateOf(MediaWallFilter.All) }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor()).testTag(testTag)) {
         CompositionLocalProvider(LocalTopBarBounds provides topBarBounds) {
@@ -445,6 +470,9 @@ private fun SimpleStatusFeedScreen(
                         listState = listState,
                         topInset = topBarHeight,
                         emptyText = emptyText,
+                        albumMode = enableAlbumWall && albumMode,
+                        albumFilter = albumFilter,
+                        onAlbumFilterChange = { albumFilter = it },
                     )
                 }
             }
@@ -470,6 +498,20 @@ private fun SimpleStatusFeedScreen(
                         showDivider = false,
                         gradientGlass = false,
                         navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            if (enableAlbumWall) {
+                                HighlightedIconButton(
+                                    onClick = { albumMode = !albumMode },
+                                    modifier = Modifier.couiTopAppBarActionItem().testTag("favorites_album_toggle"),
+                                ) {
+                                    Icon(
+                                        imageVector = if (albumMode) COUIIcons.Notes else COUIIcons.GridView,
+                                        contentDescription = if (albumMode) "切换列表视图" else "切换相册墙",
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -486,6 +528,9 @@ private fun StatusFeedList(
     emptyText: String,
     extraTopInset: Dp = 0.dp,
     filteredEmptyText: String? = null,
+    albumMode: Boolean = false,
+    albumFilter: MediaWallFilter = MediaWallFilter.All,
+    onAlbumFilterChange: (MediaWallFilter) -> Unit = {},
     transformItems: (List<Status>) -> List<Status> = { it },
 ) {
     val scope = rememberCoroutineScope()
@@ -496,11 +541,13 @@ private fun StatusFeedList(
     LaunchedEffect(store) {
         if (!store.loaded) store.loadInitial()
     }
-    LaunchedEffect(listState, store, shownItems.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (last >= shownItems.size - 2 && store.items.isNotEmpty()) store.loadMore()
-            }
+    LaunchedEffect(listState, store, shownItems.size, albumMode) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
+        }
     }
 
     FullPagePullToRefresh(
@@ -514,6 +561,15 @@ private fun StatusFeedList(
         completeHoldDurationMillis = FullPageRefreshHoldMillis,
     ) {
         val feedCardFrame = App.settings.feedCardFrame
+        val wallItems = if (albumMode) {
+            extractMediaWallItems(
+                statuses = shownItems,
+                includeRetweeted = true,
+                filter = albumFilter,
+            )
+        } else {
+            emptyList()
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
@@ -523,8 +579,25 @@ private fun StatusFeedList(
                 end = 12.dp,
                 bottom = 16.dp + navBottomPadding(),
             ),
-            verticalArrangement = Arrangement.spacedBy(if (feedCardFrame) 8.dp else 0.dp),
+            verticalArrangement = Arrangement.spacedBy(if (albumMode) 3.dp else if (feedCardFrame) 8.dp else 0.dp),
         ) {
+            if (albumMode) {
+                item(key = "album_filter_tabs") {
+                    TabRowWithContour(
+                        tabs = MediaWallFilter.entries.map { it.label },
+                        selectedTabIndex = albumFilter.ordinal,
+                        onTabSelected = { idx -> onAlbumFilterChange(MediaWallFilter.entries[idx]) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 5.dp)
+                            .testTag("favorites_album_tabs"),
+                        height = TabRowDefaults.TabRowWithContourTinyHeight,
+                        cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
+                        contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
+                        segmentPadding = 6.dp,
+                    )
+                }
+            }
             if (store.items.isEmpty()) {
                 item {
                     when {
@@ -535,48 +608,77 @@ private fun StatusFeedList(
                         else -> EmptyState(emptyText)
                     }
                 }
+            } else if (albumMode) {
+                if (wallItems.isEmpty()) {
+                    item(key = "album_filtered_empty") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            EmptyState(
+                                if (shownItems.isEmpty() && filteredEmptyText != null) filteredEmptyText
+                                else "当前收藏中暂无匹配的图片或视频",
+                            )
+                            if (!store.end && !store.loading) {
+                                TextButton(
+                                    text = "加载更多",
+                                    onClick = { scope.launch { store.loadMore() } },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    mediaAlbumGridItems(
+                        items = wallItems,
+                        horizontalPadding = 0.dp,
+                        onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
+                        onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                        onOpenPost = { nav.push(Route.Detail(it.id, it.mid, store.readOnly)) },
+                    )
+                }
             } else if (shownItems.isEmpty()) {
                 item { EmptyState(filteredEmptyText ?: emptyText) }
-            }
-            itemsIndexed(shownItems, key = { _, s -> s.id }) { index, status ->
-                val origin = rememberExpandOrigin()
-                val topBar = LocalTopBarBounds.current
-                val showDivider = !feedCardFrame && shownItems.drop(index + 1).any { !App.repo.isDeleted(it.id) }
-                SideEffect {
-                    origin.listState = listState
-                    origin.rowKey = status.id
-                    origin.originKey = "card:${status.id}"
-                    origin.topBar = topBar
+            } else {
+                itemsIndexed(shownItems, key = { _, s -> s.id }) { index, status ->
+                    val origin = rememberExpandOrigin()
+                    val topBar = LocalTopBarBounds.current
+                    val showDivider = !feedCardFrame && shownItems.drop(index + 1).any { !App.repo.isDeleted(it.id) }
+                    SideEffect {
+                        origin.listState = listState
+                        origin.rowKey = status.id
+                        origin.originKey = "card:${status.id}"
+                        origin.topBar = topBar
+                    }
+                    StatusCard(
+                        status = status,
+                        modifier = Modifier.expandOrigin(origin),
+                        onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                        onUser = { nav.push(Route.Profile(it.id)) },
+                        onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
+                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                        onLike = {
+                            val rawIdx = store.items.indexOfFirst { it.id == status.id }
+                            if (rawIdx >= 0) scope.launch { store.like(rawIdx) }
+                        },
+                        onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                        onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                        actionsEnabled = !store.readOnly,
+                        onOpenQuoted = { quoted, quotedOrigin ->
+                            quotedOrigin.attachToRow(listState, status.id, topBar)
+                            nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
+                        },
+                        keepFrame = feedCardFrame,
+                        showBottomDivider = showDivider,
+                    )
                 }
-                StatusCard(
-                    status = status,
-                    modifier = Modifier.expandOrigin(origin),
-                    onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    onUser = { nav.push(Route.Profile(it.id)) },
-                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                    onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                    onLike = {
-                        val rawIdx = store.items.indexOfFirst { it.id == status.id }
-                        if (rawIdx >= 0) scope.launch { store.like(rawIdx) }
-                    },
-                    onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                    actionsEnabled = !store.readOnly,
-                    onOpenQuoted = { quoted, quotedOrigin ->
-                        quotedOrigin.attachToRow(listState, status.id, topBar)
-                        nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
-                    },
-                    keepFrame = feedCardFrame,
-                    showBottomDivider = showDivider,
-                )
             }
-            if (shownItems.isNotEmpty()) {
+            if (shownItems.isNotEmpty() && (!albumMode || wallItems.isNotEmpty())) {
                 item {
                     if (store.loading) {
                         LoadingState()
                     } else if (store.end) {
                         Text(
-                            text = "没有更多了",
+                            text = if (albumMode) "长按任意缩略图可查看原微博" else "没有更多了",
                             color = COUITheme.colorScheme.onSurfaceSecondary,
                             fontSize = 12.sp,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
