@@ -404,6 +404,10 @@ class Settings(context: Context) {
     var livePhotoSound by mutableStateOf(sp.getBoolean("live_photo_sound", true))
         private set
 
+    /** Wi-Fi 下信息流短视频静音自动播放：仅在 Wi-Fi 环境静音预览屏幕中的非直播短视频，默认关。 */
+    var feedVideoAutoPlay by mutableStateOf(sp.getBoolean("feed_video_auto_play", false))
+        private set
+
     /**
      * 视频播放时返回自动悬浮：开启后播放视频时按返回自动转入应用内悬浮小窗，
      * 切至后台自动进入系统画中画；关闭时按返回直接退出播放。默认关。
@@ -728,6 +732,11 @@ class Settings(context: Context) {
     fun applyLivePhotoSound(value: Boolean) {
         livePhotoSound = value
         sp.edit().putBoolean("live_photo_sound", value).apply()
+    }
+
+    fun applyFeedVideoAutoPlay(value: Boolean) {
+        feedVideoAutoPlay = value
+        sp.edit().putBoolean("feed_video_auto_play", value).apply()
     }
 
     fun applyVideoAutoFloatOnBack(value: Boolean) {

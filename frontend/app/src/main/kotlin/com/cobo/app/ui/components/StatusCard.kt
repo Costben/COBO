@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -46,7 +47,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -60,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.BigPicInfo
+import com.cobo.app.data.FeedVideoCandidate
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
@@ -71,6 +76,7 @@ import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.VoteInfo
+import com.cobo.app.data.computeVisibleRatio
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.foldWeiboHtml
 import com.cobo.app.data.isServerTruncatedHtml
@@ -78,9 +84,13 @@ import com.cobo.app.data.stripTrailingFullTextMarker
 import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
+import com.cobo.app.ui.FeedInlineVideoPreview
+import com.cobo.app.ui.LocalFeedVideoAutoPlay
+import com.cobo.app.ui.LocalFeedVideoRouteActive
 import com.cobo.app.ui.LocalLinkHandler
 import com.cobo.app.ui.LocalStatusEditor
 import com.cobo.app.ui.LiveBadgeSize
+import com.cobo.app.ui.LocalTopBarBounds
 import com.cobo.app.ui.isLongImageAspect
 import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.expandOrigin
@@ -1229,13 +1239,88 @@ private const val LiveBadgeFadeMillis = 220
 
 @Composable
 fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) {
+    val autoPlay = LocalFeedVideoAutoPlay.current
+    val routeActive = LocalFeedVideoRouteActive.current
+    val topBarBounds = LocalTopBarBounds.current
+    val view = LocalView.current
+    val settingEnabled = App.settings.feedVideoAutoPlay
+    val eligible = autoPlay != null &&
+        routeActive &&
+        settingEnabled &&
+        !video.isLive &&
+        video.url.isNotBlank()
+    val cardKey = remember(video.url, video.fid, video.statusId) {
+        autoPlay?.nextKey().orEmpty()
+    }
+    var previewFailed by remember(video.url, video.fid, video.statusId) { mutableStateOf(false) }
+    var firstFrameReady by remember(cardKey) { mutableStateOf(false) }
+    var muted by remember(cardKey) { mutableStateOf(true) }
+
+    DisposableEffect(autoPlay, cardKey, eligible, previewFailed) {
+        if (autoPlay != null && cardKey.isNotEmpty() && (!eligible || previewFailed)) {
+            autoPlay.unregister(cardKey)
+        }
+        onDispose {
+            if (autoPlay != null && cardKey.isNotEmpty()) {
+                autoPlay.unregister(cardKey)
+            }
+        }
+    }
+
+    val isPreviewActive = eligible && !previewFailed && cardKey.isNotEmpty() && autoPlay?.activeKey == cardKey
+    LaunchedEffect(isPreviewActive) {
+        if (!isPreviewActive) {
+            firstFrameReady = false
+            muted = true
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(if (compact) 2.1f else 1.78f)
+            .then(
+                if (autoPlay != null && cardKey.isNotEmpty() && eligible && !previewFailed) {
+                    Modifier.onGloballyPositioned { coords ->
+                        val pos = coords.positionInWindow()
+                        val w = coords.size.width.toFloat()
+                        val h = coords.size.height.toFloat()
+                        val viewportTop = topBarBounds?.bottom ?: 0f
+                        val viewportBottom = view.height.toFloat()
+                        val viewportRight = view.width.toFloat()
+                        val ratio = computeVisibleRatio(
+                            leftPx = pos.x,
+                            topPx = pos.y,
+                            rightPx = pos.x + w,
+                            bottomPx = pos.y + h,
+                            viewportLeftPx = 0f,
+                            viewportTopPx = viewportTop,
+                            viewportRightPx = viewportRight,
+                            viewportBottomPx = viewportBottom,
+                        )
+                        autoPlay.updateCandidate(
+                            candidate = FeedVideoCandidate(
+                                key = cardKey,
+                                leftPx = pos.x,
+                                topPx = pos.y,
+                                rightPx = pos.x + w,
+                                bottomPx = pos.y + h,
+                                visibleRatio = ratio,
+                            ),
+                            viewportTop = viewportTop,
+                            viewportBottom = viewportBottom,
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .clip(RoundedCornerShape(10.dp))
             .background(COUITheme.colorScheme.surfaceContainerHigh)
-            .clickable { onVideo(video) },
+            .clickable {
+                autoPlay?.pauseAll()
+                onVideo(video)
+            },
     ) {
         if (video.cover.isNotBlank()) {
             AsyncImage(
@@ -1243,6 +1328,17 @@ fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) 
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+        if (isPreviewActive) {
+            FeedInlineVideoPreview(
+                video = video,
+                muted = muted,
+                onFirstFrame = { firstFrameReady = true },
+                onFailed = { previewFailed = true },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = if (firstFrameReady) 1f else 0f },
             )
         }
         Box(
@@ -1256,15 +1352,23 @@ fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) 
                     )
                 ),
         )
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.42f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(COUIIcons.Play, "播放", Modifier.size(26.dp), tint = Color.White)
+        val playBadgeAlpha by animateFloatAsState(
+            targetValue = if (isPreviewActive && firstFrameReady) 0f else 1f,
+            animationSpec = tween(180),
+            label = "videoPlayBadgeAlpha",
+        )
+        if (playBadgeAlpha > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .graphicsLayer { alpha = playBadgeAlpha }
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.42f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(COUIIcons.Play, "播放", Modifier.size(26.dp), tint = Color.White)
+            }
         }
         if (video.isLive) {
             Row(
@@ -1291,16 +1395,46 @@ fun VideoCard(video: VideoInfo, compact: Boolean, onVideo: (VideoInfo) -> Unit) 
                 )
             }
         }
+        val showMuteButton = isPreviewActive && firstFrameReady
         if (video.title.isNotBlank()) {
             Text(
                 text = video.title,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(
+                        start = 12.dp,
+                        top = 8.dp,
+                        end = if (showMuteButton) 44.dp else 12.dp,
+                        bottom = 8.dp,
+                    ),
                 color = Color.White,
                 fontSize = 12.sp,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (showMuteButton) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.56f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { muted = !muted }
+                    .testTag("feed_video_mute_toggle"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (muted) CoboIcons.VolumeOff else CoboIcons.VolumeOn,
+                    contentDescription = if (muted) "取消静音" else "静音",
+                    modifier = Modifier.size(16.dp),
+                    tint = Color.White,
+                )
+            }
         }
     }
 }

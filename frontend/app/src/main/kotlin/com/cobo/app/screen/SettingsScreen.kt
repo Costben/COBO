@@ -779,6 +779,21 @@ private fun displaySettingsEntries(
             )
         },
         SettingsEntry(
+            id = "feed_video_auto_play",
+            title = "信息流视频自动播放",
+            summary = "仅在 Wi-Fi 下静音预览屏幕中的短视频，点击可进入全屏播放",
+            keywords = "视频 自动播放 静音 wifi 预览 video autoplay",
+        ) { pos ->
+            SettingsSwitchRow(
+                checked = App.settings.feedVideoAutoPlay,
+                onCheckedChange = { App.settings.applyFeedVideoAutoPlay(it) },
+                title = "信息流视频自动播放",
+                summary = "仅在 Wi-Fi 下静音预览屏幕中的短视频，点击可进入全屏播放",
+                modifier = Modifier.testTag("settings_feed_video_auto_play"),
+                cardListPosition = pos,
+            )
+        },
+        SettingsEntry(
             id = "video_auto_float_on_back",
             title = "视频播放时返回自动悬浮",
             summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
