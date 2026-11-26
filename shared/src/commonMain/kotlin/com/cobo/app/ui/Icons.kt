@@ -915,4 +915,74 @@ object CoboIcons {
             lineTo(17.7f, 17.7f)
         }
     }
+
+    /** 稍后再看：书签轮廓。 */
+    val Bookmark: ImageVector by lazy {
+        outline("Bookmark") {
+            moveTo(6.4f, 4.2f)
+            horizontalLineTo(17.6f)
+            curveTo(18.5f, 4.2f, 19.1f, 4.8f, 19.1f, 5.7f)
+            verticalLineTo(19.8f)
+            lineTo(12.0f, 15.6f)
+            lineTo(4.9f, 19.8f)
+            verticalLineTo(5.7f)
+            curveTo(4.9f, 4.8f, 5.5f, 4.2f, 6.4f, 4.2f)
+            close()
+        }
+    }
+
+    /** 微博账号收藏：云朵轮廓，用来与星形本地收藏区分。 */
+    val Cloud: ImageVector by lazy {
+        outline("Cloud") {
+            moveTo(7.2f, 18.2f)
+            horizontalLineTo(17.1f)
+            curveTo(19.2f, 18.2f, 20.8f, 16.6f, 20.8f, 14.6f)
+            curveTo(20.8f, 12.7f, 19.4f, 11.2f, 17.5f, 11.0f)
+            curveTo(17.0f, 7.9f, 14.3f, 5.8f, 11.2f, 5.8f)
+            curveTo(8.1f, 5.8f, 5.6f, 8.1f, 5.3f, 11.1f)
+            curveTo(3.9f, 11.5f, 3.0f, 12.8f, 3.0f, 14.4f)
+            curveTo(3.0f, 16.5f, 4.8f, 18.2f, 7.2f, 18.2f)
+            close()
+        }
+    }
+
+    /** 已收藏到微博账号：实心云朵。 */
+    val CloudFill: ImageVector by lazy {
+        solid("CloudFill") {
+            moveTo(7.2f, 18.5f)
+            horizontalLineTo(17.1f)
+            curveTo(19.4f, 18.5f, 21.1f, 16.8f, 21.1f, 14.6f)
+            curveTo(21.1f, 12.6f, 19.6f, 10.9f, 17.6f, 10.7f)
+            curveTo(17.0f, 7.5f, 14.3f, 5.4f, 11.2f, 5.4f)
+            curveTo(8.0f, 5.4f, 5.4f, 7.8f, 5.1f, 10.9f)
+            curveTo(3.6f, 11.4f, 2.7f, 12.8f, 2.7f, 14.4f)
+            curveTo(2.7f, 16.7f, 4.6f, 18.5f, 7.2f, 18.5f)
+            close()
+        }
+    }
+
+    /** 已加入稍后再看：实心书签。 */
+    val BookmarkFill: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "BookmarkFill",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(6.2f, 3.6f)
+                horizontalLineTo(17.8f)
+                curveTo(18.9f, 3.6f, 19.6f, 4.3f, 19.6f, 5.4f)
+                verticalLineTo(20.1f)
+                curveTo(19.6f, 20.6f, 19.0f, 20.9f, 18.6f, 20.6f)
+                lineTo(12.0f, 16.7f)
+                lineTo(5.4f, 20.6f)
+                curveTo(5.0f, 20.9f, 4.4f, 20.6f, 4.4f, 20.1f)
+                verticalLineTo(5.4f)
+                curveTo(4.4f, 4.3f, 5.1f, 3.6f, 6.2f, 3.6f)
+                close()
+            }
+        }.build()
+    }
 }

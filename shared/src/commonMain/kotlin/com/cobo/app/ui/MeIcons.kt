@@ -308,6 +308,21 @@ internal object MeIcons {
         )
     }
 
+    /** 稍后再看：圆角书签底托 + 内嵌两条阅读指示线。 */
+    val ReadLater: ImageVector by lazy {
+        val bookmark = "M6.2,3.6H17.8C18.9,3.6 19.6,4.35 19.6,5.5V20.0C19.6,20.55 19.0,20.9 18.55,20.6" +
+            "L12.0,16.65L5.45,20.6C5.0,20.9 4.4,20.55 4.4,20.0V5.5C4.4,4.35 5.1,3.6 6.2,3.6Z"
+        val bar1 = roundedRectPath(8.1f, 7.6f, 7.8f, 1.85f, 0.925f)
+        val bar2 = roundedRectPath(8.1f, 11.2f, 5.4f, 1.85f, 0.925f)
+        dualToneVector(
+            name = "MeReadLater",
+            layers = listOf(
+                MeLayer(path = bookmark + bar1 + bar2, alpha = SECONDARY_ALPHA, evenOdd = true),
+                MeLayer(path = bar1 + bar2),
+            ),
+        )
+    }
+
     /** 其他设置：六齿对称齿轮 + 柔透内孔。 */
     val OtherSettings: ImageVector by lazy {
         val gearOuter = "M9.226,5.302Q9.586,3.85 10.223,2.413Q12.0,1.9 13.777,2.413Q14.414,3.85 14.774,5.302" +

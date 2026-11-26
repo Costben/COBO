@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.data.Membership
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
@@ -36,9 +37,11 @@ fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifier) {
         Avatar(user.avatar, 46.dp, verifiedKind = user.verifiedKind)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
+            val remark = UserRemarks[user.id]
+            val shownName = remark ?: user.name
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    user.name,
+                    shownName,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -49,6 +52,16 @@ fun UserRow(user: User, onClick: () -> Unit, modifier: Modifier = Modifier) {
                     Spacer(Modifier.width(4.dp))
                     MemberBadge(user.membership, compact = true, rank = user.mbrank)
                 }
+            }
+            if (remark != null && remark != user.name && user.name.isNotBlank()) {
+                Text(
+                    "原昵称 ${user.name}",
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
             }
             if (user.description.isNotBlank()) {
                 Text(

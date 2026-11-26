@@ -11,6 +11,7 @@ import com.cobo.app.data.CacheStore
 import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
+import com.cobo.app.data.ReadLater
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
 import com.cobo.app.data.Status
@@ -18,6 +19,7 @@ import com.cobo.app.data.Store
 import com.cobo.app.data.UpdateInfo
 import com.cobo.app.data.Updater
 import com.cobo.app.data.User
+import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.WeiboEmojiBitmaps
 import com.cobo.app.platform.PlatformContext
 import com.cobo.app.platform.PlatformHttp
@@ -262,6 +264,8 @@ object App {
         store = Store(this.context)
         FollowTags.attach(store)
         ContentFilters.attach(store)
+        UserRemarks.attach(store)
+        ReadLater.attach(store)
         cache = CacheStore(this.context)
         snapshots = FeedSnapshotStore(this.context)
         repo = Repo(this.context, store)

@@ -238,6 +238,7 @@ sealed interface Route {
     data class TopicFeed(val topic: String) : Route
     data object Drafts : Route
     data object History : Route
+    data object ReadLater : Route
     data object Accounts : Route
     data object Favorites : Route
     data object MyLikes : Route
