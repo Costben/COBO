@@ -206,6 +206,7 @@ import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
@@ -1000,6 +1001,7 @@ fun MainShell(nav: NavState) {
                     onSearchCancel = cancelFeedSearch,
                     onSearchSubmit = submitHomeSearch,
                     filtersVisible = searchTransition.filtersVisible,
+                    filtersAlpha = { searchTransition.filtersAlpha },
                     resultsState = homeResultsState,
                     searchListState = searchListState,
                     panelAlpha = { panelAlpha.value },
@@ -1009,7 +1011,7 @@ fun MainShell(nav: NavState) {
                 )
                 // 筛选行左侧四宫格圆钮的菜单：菜单渲染在根 Scaffold，锚点按筛选行的行高与
                 // 间距落在那颗圆钮上，栏的几何一改这里跟着走，不用两边各写一份坐标。
-                if (searchShowingResults) {
+                if (feedSearchExpanded && searchShowingResults) {
                     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                     Box(
                         Modifier
@@ -1390,7 +1392,7 @@ private fun HomeSearchOverlay(
                 ) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                        modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
                         contentPadding = PaddingValues(
                             start = 0.dp,
                             top = listTopPadding,
@@ -1440,6 +1442,7 @@ private fun MainTitleRow(
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
     filtersVisible: Boolean,
+    filtersAlpha: () -> Float,
     resultsState: SearchResultsState,
     searchListState: LazyListState,
     panelAlpha: () -> Float,
@@ -1464,6 +1467,7 @@ private fun MainTitleRow(
                 onSearchCancel = onSearchCancel,
                 onSearchSubmit = onSearchSubmit,
                 filtersVisible = filtersVisible,
+                filtersAlpha = filtersAlpha,
                 resultsState = resultsState,
                 searchListState = searchListState,
                 panelAlpha = panelAlpha,
@@ -1632,6 +1636,7 @@ private fun FeedTitleRow(
     onSearchCancel: () -> Unit,
     onSearchSubmit: (String) -> Unit,
     filtersVisible: Boolean,
+    filtersAlpha: () -> Float,
     resultsState: SearchResultsState,
     searchListState: LazyListState,
     panelAlpha: () -> Float,
@@ -1670,6 +1675,7 @@ private fun FeedTitleRow(
                 base * scroll
             }
         },
+        filtersAlpha = filtersAlpha,
     ) {
         Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
             Box(
