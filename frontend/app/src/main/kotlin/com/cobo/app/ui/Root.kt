@@ -4,23 +4,39 @@ import android.os.Build
 import android.view.RoundedCorner
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -34,8 +50,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -58,17 +76,25 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
+import com.cobo.app.data.DetectedWeiboLink
 import com.cobo.app.data.Pic
+import com.cobo.app.data.ShareAction
 import com.cobo.app.data.Updater
+import com.cobo.app.data.decideShareAction
 import com.cobo.app.data.normalizeWeiboMediaUrl
 import com.cobo.app.data.superTopicId
 import com.cobo.app.screen.AboutScreen
@@ -106,14 +132,23 @@ import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SnackbarDuration
 import io.github.suqi8.coui.kmp.basic.SnackbarHost
 import io.github.suqi8.coui.kmp.basic.SnackbarHostState
+import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
+import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Close
+import io.github.suqi8.coui.kmp.layout.DialogButtonBar
+import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayDialog
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.addSquircleRect
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -126,6 +161,7 @@ import io.github.suqi8.coui.kmp.utils.isPredictiveBackBlurSupported
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -283,6 +319,23 @@ fun CoboRoot(
         }
     }
 
+    var pendingSharePrompt by remember { mutableStateOf<ShareAction.AskWeiboLinkOrCompose?>(null) }
+    LaunchedEffect(App.shareVersion) {
+        val share = App.consumeShare() ?: return@LaunchedEffect
+        when (val action = decideShareAction(share, App.repo.guest)) {
+            ShareAction.Empty -> Unit
+            is ShareAction.OpenWeiboLink -> linkHandler(action.link.rawUrl)
+            is ShareAction.AskWeiboLinkOrCompose -> pendingSharePrompt = action
+            is ShareAction.Compose -> {
+                if (App.repo.guest) {
+                    App.toast("纯本地模式暂不支持发微博，请先登录")
+                } else {
+                    nav.push(Route.Publish(draft = action.text, initialMediaUris = action.imageUris))
+                }
+            }
+        }
+    }
+
     // 长按缩略图弹「保存原图 / 保存实况图」的菜单挂在根节点，任何页面都不用自己搭浮层。
     var saveTargets by remember { mutableStateOf<List<SaveImageItem>?>(null) }
     var saveIndex by remember { mutableIntStateOf(0) }
@@ -340,6 +393,13 @@ fun CoboRoot(
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
                 }
+                ClipboardLinkBanner(
+                    nav = nav,
+                    onOpen = { link ->
+                        App.dismissClipboardLink()
+                        linkHandler(link.rawUrl)
+                    },
+                )
                 // 使用 COUI 组件库统一的 SnackbarHost（连续曲率圆角、系统级阴影与弹簧动效），
                 // 放在 popupHost 顶层保证在弹窗与软键盘之上可见，并在带底栏页面自动避让底栏。
                 AppSnackbarHost(nav = nav)
@@ -464,6 +524,23 @@ fun CoboRoot(
                     )
                     // 点赞前确认也挂在根节点：任何页面的爱心都走 App.confirmLike，由这里统一问一句。
                     LikeConfirmPrompt()
+                    // 混合分享（含文案与微博链接）在此询问是打开链接还是作为发微博草稿。
+                    pendingSharePrompt?.let { prompt ->
+                        key(prompt) {
+                            ShareChoiceDialog(
+                                prompt = prompt,
+                                onDismiss = { pendingSharePrompt = null },
+                                onOpenLink = {
+                                    pendingSharePrompt = null
+                                    linkHandler(prompt.link.rawUrl)
+                                },
+                                onCompose = {
+                                    pendingSharePrompt = null
+                                    nav.push(Route.Publish(draft = prompt.text))
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -502,6 +579,171 @@ private fun AppSnackbarHost(nav: NavState) {
         contentAlignment = Alignment.BottomCenter,
     ) {
         SnackbarHost(state = hostState)
+    }
+}
+
+@Composable
+private fun ClipboardLinkBanner(
+    nav: NavState,
+    onOpen: (DetectedWeiboLink) -> Unit,
+) {
+    val detected = App.pendingClipboardLink
+    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
+    val suppressed = topRoute is Route.Login ||
+        topRoute is Route.SmsLogin ||
+        topRoute is Route.Images ||
+        topRoute is Route.Video ||
+        topRoute is Route.Publish ||
+        topRoute is Route.EditStatus
+
+    LaunchedEffect(detected) {
+        if (detected != null) {
+            delay(8_000L)
+            App.dismissClipboardLink()
+        }
+    }
+
+    val density = LocalDensity.current
+    val imeOpen = WindowInsets.ime.getBottom(density) > 0
+    val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
+    val scheme = COUITheme.colorScheme
+    val cornerRadius = CardDefaults.GroupCornerRadius
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(
+                start = 16.dp,
+                end = 16.dp,
+                bottom = if (hasFloatingBottomBar) 80.dp else 16.dp,
+            ),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        AnimatedVisibility(
+            visible = detected != null && !suppressed,
+            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(180)) { it / 2 },
+        ) {
+            val link = detected ?: return@AnimatedVisibility
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(8.dp, RoundedCornerShape(cornerRadius))
+                    .border(
+                        width = 0.5.dp,
+                        color = scheme.outline.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(cornerRadius),
+                    ),
+                cornerRadius = cornerRadius,
+                insideMargin = PaddingValues(start = 14.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+                weight = CardDefaults.GroupWeight,
+                onClick = { onOpen(link) },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "剪贴板发现${link.kind.label}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = scheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = link.displayText,
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "打开",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(scheme.primary.copy(alpha = 0.12f))
+                            .clickable { onOpen(link) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .testTag("clipboard_link_open"),
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { App.dismissClipboardLink() }
+                            .testTag("clipboard_link_dismiss"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = COUIIcons.Close,
+                            contentDescription = "关闭",
+                            tint = scheme.onSurfaceSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareChoiceDialog(
+    prompt: ShareAction.AskWeiboLinkOrCompose,
+    onDismiss: () -> Unit,
+    onOpenLink: () -> Unit,
+    onCompose: () -> Unit,
+) {
+    var show by remember { mutableStateOf(false) }
+    var choice by remember { mutableStateOf<Int?>(null) }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { show = true }
+
+    OverlayDialog(
+        show = show,
+        title = "识别到${prompt.link.kind.label}",
+        summary = "分享内容中包含微博链接（${prompt.link.displayText}），请选择处理方式。",
+        outsideMargin = DpSize(16.dp, 8.dp),
+        onDismissRequest = { show = false },
+        onDismissFinished = {
+            if (!settled) {
+                settled = true
+                when (choice) {
+                    1 -> onOpenLink()
+                    2 -> onCompose()
+                    else -> onDismiss()
+                }
+            }
+        },
+    ) {
+        DialogButtonBar(
+            negative = DialogButtonBarAction(
+                text = "作为发微博草稿",
+                onClick = {
+                    choice = 2
+                    show = false
+                },
+            ),
+            positive = DialogButtonBarAction(
+                text = "打开链接",
+                recommended = true,
+                onClick = {
+                    choice = 1
+                    show = false
+                },
+            ),
+        )
     }
 }
 
@@ -903,7 +1145,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)
-        is Route.Publish -> PublishScreen(nav, route.draft)
+        is Route.Publish -> PublishScreen(nav, route.draft, initialMediaUris = route.initialMediaUris)
         is Route.EditStatus -> PublishScreen(nav, draft = "", editStatusId = route.id, editStatusMid = route.mid)
         is Route.Chat -> ChatScreen(nav, route.uid, route.name, route.gid)
         is Route.Notifications -> NotificationsScreen(nav, route.initialTab)

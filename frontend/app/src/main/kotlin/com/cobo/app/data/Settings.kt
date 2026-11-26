@@ -322,6 +322,10 @@ class Settings(context: Context) {
     var inAppBrowser by mutableStateOf(sp.getBoolean("in_app_browser", true))
         private set
 
+    /** 切回应用时识别剪贴板里的微博链接并提示打开，默认开。 */
+    var clipboardLinkDetect by mutableStateOf(sp.getBoolean("clipboard_link_detect", true))
+        private set
+
     /** 长按悬浮底栏的「我」是否显示快捷切换账号菜单。默认开。 */
     var quickSwitchAccount by mutableStateOf(sp.getBoolean("quick_switch_account", true))
         private set
@@ -643,6 +647,11 @@ class Settings(context: Context) {
     fun applyInAppBrowser(value: Boolean) {
         inAppBrowser = value
         sp.edit().putBoolean("in_app_browser", value).apply()
+    }
+
+    fun applyClipboardLinkDetect(value: Boolean) {
+        clipboardLinkDetect = value
+        sp.edit().putBoolean("clipboard_link_detect", value).apply()
     }
 
     fun applyQuickSwitchAccount(value: Boolean) {

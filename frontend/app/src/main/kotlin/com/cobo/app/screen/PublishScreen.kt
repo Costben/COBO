@@ -107,6 +107,7 @@ fun PublishScreen(
     draft: String = "",
     editStatusId: String? = null,
     editStatusMid: String = "",
+    initialMediaUris: List<String> = emptyList(),
 ) {
     val isEditMode = !editStatusId.isNullOrBlank()
     val initialStatus = remember(editStatusId, editStatusMid) {
@@ -132,12 +133,16 @@ fun PublishScreen(
     var userEditedMedia by remember(editStatusId) { mutableStateOf(false) }
     var userEditedVisibility by remember(editStatusId) { mutableStateOf(false) }
 
-    var field by rememberSaveable(editStatusId, stateSaver = TextFieldValue.Saver) {
+    var field by rememberSaveable(editStatusId, draft, initialMediaUris, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(initialText, TextRange(initialText.length)))
     }
-    var mediaItems by remember(editStatusId) {
+    var mediaItems by remember(editStatusId, initialMediaUris) {
         mutableStateOf<List<ComposerMediaItem>>(
-            if (isEditMode) initialStatus?.pics.orEmpty().toExistingComposerMedia() else emptyList(),
+            if (isEditMode) {
+                initialStatus?.pics.orEmpty().toExistingComposerMedia()
+            } else {
+                initialMediaUris.take(9).map { ComposerMediaItem.Local(Uri.parse(it)) }
+            },
         )
     }
     var liveDetected by remember(editStatusId) { mutableStateOf<Map<Uri, Boolean>>(emptyMap()) }
