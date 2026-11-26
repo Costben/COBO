@@ -1357,13 +1357,15 @@ private fun HomeSearchOverlay(
     val keyboard = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(listState, resultsState.submitted, resultsState.tab, resultsState.stateFor(resultsState.tab).count) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (resultsState.submitted.isBlank()) return@collect
-                val tabState = resultsState.stateFor(resultsState.tab)
-                if (!tabState.started || tabState.end || tabState.count == 0) return@collect
-                if (last >= tabState.count - 2) resultsState.load(resultsState.tab, reset = false, force = false)
-            }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (resultsState.submitted.isBlank()) return@collect
+            val tabState = resultsState.stateFor(resultsState.tab)
+            if (!tabState.started || tabState.end || tabState.count == 0) return@collect
+            if (total > 0 && last >= total - 2) resultsState.load(resultsState.tab, reset = false, force = false)
+        }
     }
 
     val suggesting = searchQuery.isNotBlank() && !showingResults
@@ -1436,6 +1438,8 @@ private fun HomeSearchOverlay(
                     loadingTopPadding = resultsBarTopPadding,
                     loadingContent = { LoadingState() },
                 ) {
+                    val filterRules = com.cobo.app.data.ContentFilters.rules
+                    val selfUid = App.repo.session?.uid
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
@@ -1455,6 +1459,7 @@ private fun HomeSearchOverlay(
                                 onSelectKeyword = activeSelectKeyword,
                                 onRetryHot = onRetryHot,
                                 onSelectUser = { user -> nav.push(Route.Profile(user.id)) },
+                                filterRules = filterRules,
                             )
                         } else if (resultsVisible) {
                             searchResultsItems(
@@ -1463,6 +1468,8 @@ private fun HomeSearchOverlay(
                                 horizontalPadding = horizontalPadding,
                                 scope = scope,
                                 onSelectKeyword = activeSelectKeyword,
+                                filterRules = filterRules,
+                                selfUid = selfUid,
                             )
                         }
                     }

@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.Comment
 import com.cobo.app.data.CommentFilterState
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.Pic
 import com.cobo.app.data.User
 import com.cobo.app.data.VerifiedKind
@@ -59,6 +60,7 @@ import com.cobo.app.data.commentFilterEmptyMessage
 import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.parseWeiboTimeMillis
+import com.cobo.app.data.shouldFilterComment
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandEasing
@@ -292,9 +294,15 @@ private fun CommentDetailSheetContent(
             }
     }
 
-    val sortedReplies = remember(rawReplies.toList(), sort, subFilter, postAuthorUid) {
+    val filterRules = ContentFilters.rules
+    val selfUid = App.repo.session?.uid
+
+    val sortedReplies = remember(rawReplies.toList(), sort, subFilter, postAuthorUid, filterRules, selfUid) {
+        val visible = orderSubReplies(rawReplies.toList(), sort).filterNot {
+            shouldFilterComment(it, filterRules, selfUid)
+        }
         filterComments(
-            comments = orderSubReplies(rawReplies.toList(), sort),
+            comments = visible,
             filter = subFilter,
             authorUid = postAuthorUid,
             includeReplies = false,

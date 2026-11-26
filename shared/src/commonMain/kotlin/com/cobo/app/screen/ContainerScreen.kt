@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -20,6 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
+import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.FilterSurface
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.AppBarSurface
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.PinnedBarDensity
@@ -80,10 +83,12 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
         }
     }
     LaunchedEffect(listState, store) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (last >= store.items.size - 2 && store.items.isNotEmpty()) store.loadMore()
-            }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
+        }
     }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
@@ -115,6 +120,11 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                     ),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    val filterRules = ContentFilters.rules
+                    val selfUid = App.repo.session?.uid
+                    val visibleIndexed = store.items.withIndex().filterNot {
+                        !isFavorites && shouldFilterStatus(it.value, filterRules, FilterSurface.Feed, selfUid)
+                    }
                     if (store.items.isEmpty()) {
                         item {
                             when {
@@ -125,8 +135,10 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                                 else -> EmptyState(if (isFavorites) "还没有收藏的微博" else "这里还没有内容")
                             }
                         }
+                    } else if (visibleIndexed.isEmpty()) {
+                        item(key = "filtered_empty") { EmptyState("当前内容均已被屏蔽规则隐藏") }
                     }
-                    itemsIndexed(store.items, key = { _, s -> s.id }) { index, status ->
+                    items(visibleIndexed, key = { it.value.id }) { (index, status) ->
                         val origin = rememberExpandOrigin()
                         StatusCard(
                             status = status,

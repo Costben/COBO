@@ -64,6 +64,7 @@ import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.BottomLeftAction
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
@@ -75,6 +76,7 @@ import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.VideoTopBarButton
 import com.cobo.app.data.feedTabOptions
+import com.cobo.app.data.formatContentFilterSummary
 import com.cobo.app.ui.AccentHueCycle
 import com.cobo.app.ui.AccentPresets
 import com.cobo.app.ui.AppBarSurface
@@ -339,7 +341,7 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
             SettingsGroupSection(
                 key = "feed_all",
                 title = group.title,
-                entries = feedAllSearchableEntries(state = state),
+                entries = feedAllSearchableEntries(nav = nav, state = state),
                 group = group,
             ),
         )
@@ -486,7 +488,7 @@ private fun buildAllSearchableSettingsGroups(
     SettingsGroupSection(
         key = "feed",
         title = SettingsGroup.Feed.title,
-        entries = feedAllSearchableEntries(state = state),
+        entries = feedAllSearchableEntries(nav = nav, state = state),
         group = SettingsGroup.Feed,
     ),
     SettingsGroupSection(
@@ -1346,8 +1348,10 @@ private fun feedUserBadgesSubEntries(
 
 @Composable
 private fun feedGeneralEntries(
+    nav: NavState,
     state: SettingsUiState,
 ): List<SettingsEntry> {
+    val filterSummary = formatContentFilterSummary(ContentFilters.rules)
     val hotBoardsSummary = App.settings.hotBoards.let { picked ->
         when {
             picked.isEmpty() -> "已隐藏"
@@ -1356,6 +1360,20 @@ private fun feedGeneralEntries(
         }
     }
     return listOf(
+        SettingsEntry(
+            id = "content_filter",
+            title = "内容屏蔽",
+            summary = filterSummary,
+            keywords = "屏蔽 过滤 关键词 正则 话题 静音 拉黑 filter mute",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "内容屏蔽",
+                modifier = Modifier.testTag("settings_content_filter"),
+                summary = filterSummary,
+                cardListPosition = pos,
+                onClick = { nav.push(Route.ContentFilterSettings) },
+            )
+        },
         SettingsEntry(
             id = "hot_boards",
             title = "搜索页热搜榜单",
@@ -1430,7 +1448,7 @@ private fun feedOverviewSections(
                 onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.UserBadges)) },
             )
         },
-    ) + feedGeneralEntries(state)
+    ) + feedGeneralEntries(nav = nav, state = state)
 
     return listOf(
         SettingsGroupSection(
@@ -1452,10 +1470,11 @@ private fun feedOverviewSections(
 
 @Composable
 private fun feedAllSearchableEntries(
+    nav: NavState,
     state: SettingsUiState,
 ): List<SettingsEntry> =
     feedTabsSubEntries(state) +
-        feedGeneralEntries(state) +
+        feedGeneralEntries(nav = nav, state = state) +
         feedCardStyleSubEntries(state) +
         feedUserBadgesSubEntries(state)
 

@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.cobo.app.data.Api
 import com.cobo.app.data.CacheStore
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Repo
@@ -260,6 +261,7 @@ object App {
         this.context = context
         store = Store(this.context)
         FollowTags.attach(store)
+        ContentFilters.attach(store)
         cache = CacheStore(this.context)
         snapshots = FeedSnapshotStore(this.context)
         repo = Repo(this.context, store)

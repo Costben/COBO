@@ -49,9 +49,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.FeedTopAction
+import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.Status
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.LocalBottomBarBounds
 import com.cobo.app.ui.LocalTopBarBounds
@@ -1020,11 +1023,12 @@ private fun TimelinePage(
         }
     }
     LaunchedEffect(listState, store) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                val total = store.entryCount()
-                if (last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
-            }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
+        }
     }
     // 快照恢复之后落回上次停下的那张卡片。只落一次：之后的位置归 LazyListState 自己管。
     // 落位之前不能开始记位置：那一刻列表还是空的，(0,0) 会把存档里的位置直接盖掉。
@@ -1104,7 +1108,16 @@ private fun TimelinePage(
                     }
                 }
             }
-            val entries = store.entries()
+            val filterRules = ContentFilters.rules
+            val selfUid = App.repo.session?.uid
+            val rawEntries = store.entries()
+            val entries = rawEntries.filter { entry ->
+                entry !is FeedEntry.Post ||
+                    !shouldFilterStatus(entry.status, filterRules, FilterSurface.Feed, selfUid)
+            }
+            if (rawEntries.any { it is FeedEntry.Post } && entries.none { it is FeedEntry.Post }) {
+                item(key = "filtered_empty") { EmptyState("当前页微博均已被屏蔽规则隐藏") }
+            }
             itemsIndexed(
                 items = entries,
                 key = { _, entry -> entry.key },
