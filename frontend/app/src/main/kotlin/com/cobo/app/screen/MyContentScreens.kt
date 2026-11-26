@@ -259,16 +259,6 @@ fun FavoritesScreen(nav: NavState) {
                                 )
                             },
                             actions = {
-                                HighlightedIconButton(
-                                    onClick = { albumMode = !albumMode },
-                                    modifier = Modifier.couiTopAppBarActionItem().testTag("favorites_album_toggle"),
-                                ) {
-                                    Icon(
-                                        imageVector = if (albumMode) COUIIcons.Notes else COUIIcons.GridView,
-                                        contentDescription = if (albumMode) "切换列表视图" else "切换相册墙",
-                                        modifier = Modifier.size(22.dp),
-                                    )
-                                }
                                 Box {
                                     HighlightedIconButton(
                                         onClick = { menuExpanded = true },
@@ -335,6 +325,21 @@ fun FavoritesScreen(nav: NavState) {
                                                             }
                                                         },
                                                         onClick = { hideExpired = !hideExpired },
+                                                    ),
+                                                    DropdownItem(
+                                                        text = "相册墙视图",
+                                                        selected = albumMode,
+                                                        icon = { iconModifier ->
+                                                            Box(iconModifier, contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = COUIIcons.GridView,
+                                                                    contentDescription = null,
+                                                                    modifier = Modifier.size(18.dp),
+                                                                    tint = menuScheme.onSurfaceContainer,
+                                                                )
+                                                            }
+                                                        },
+                                                        onClick = { albumMode = !albumMode },
                                                     ),
                                                     DropdownItem(
                                                         text = "搜索",
