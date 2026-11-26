@@ -110,6 +110,7 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Photos
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -127,7 +128,7 @@ private const val ChatPollMillis = 15_000L
 private const val TimeGapMillis = 5 * 60 * 1000L
 
 /** 底栏胶囊高度：输入框与发送按钮共用，保证两者单行时严格等高。 */
-private val ChatComposerHeight = 36.dp
+private val ChatComposerHeight = 40.dp
 
 /** 输入框最多长到多高，再多就在框里自己滚。 */
 private val ChatComposerMaxHeight = 108.dp
@@ -357,13 +358,13 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
     // 键盘弹起时输入栏贴着键盘，不用再补导航条高度；收起时才补。
     val navPad = if (imeBottom > 0) 0.dp else navBottomPadding()
 
-    // 底栏浮在列表上面：列表底部空出底栏的实测高度，长草稿把输入框顶高时消息跟着往上走，
-    // 不会被盖住。测不到高度时退回单行底栏的估算值。
+    // 底栏浮在列表上面：列表底部空出含底部安全区在内的底栏实测总高度，无论键盘弹起或收起、
+    // 长草稿换行顶高时消息都能完整露在底栏上方，不会被盖住。
     val composerHeight = with(density) { composerHeightPx.toDp() }
     val listBottomPadding = if (dead) {
-        12.dp
+        12.dp + navPad
     } else {
-        (composerHeight.takeIf { it > 0.dp } ?: (ChatComposerHeight + 24.dp)) + 8.dp
+        (composerHeight.takeIf { it > 0.dp } ?: (ChatComposerHeight + 24.dp + navPad)) + 8.dp
     }
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
@@ -396,7 +397,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                         ) { EmptyState("还没有聊过，打个招呼吧") }
                         else -> LazyColumn(
                             state = listState,
-                            modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                            modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
                             reverseLayout = true,
                             contentPadding = PaddingValues(
                                 top = topBarHeight + 10.dp,
@@ -466,8 +467,8 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(bottom = navPad)
-                            .onSizeChanged { composerHeightPx = it.height },
+                            .onSizeChanged { composerHeightPx = it.height }
+                            .padding(bottom = navPad),
                     ) {
                         ChatBottomBar(
                             value = draft,
@@ -605,6 +606,10 @@ private fun ChatBottomBar(
 ) {
     val scheme = COUITheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
+    val density = LocalDensity.current
+    var singleLineHeightPx by remember { mutableIntStateOf(0) }
+    val singleLineHeightDp = with(density) { singleLineHeightPx.toDp() }
+    val syncedButtonHeight = if (singleLineHeightDp > ChatComposerHeight) singleLineHeightDp else ChatComposerHeight
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -612,19 +617,27 @@ private fun ChatBottomBar(
         verticalAlignment = Alignment.Bottom,
     ) {
         val squircleEnabled = isSquircleEnabled()
-        val composerShape = remember(squircleEnabled) {
-            CapsuleOutlineShape(cornerRadius = ChatComposerHeight / 2, squircleEnabled = squircleEnabled)
+        val composerShape = remember(squircleEnabled, syncedButtonHeight) {
+            CapsuleOutlineShape(cornerRadius = syncedButtonHeight / 2, squircleEnabled = squircleEnabled)
         }
         Row(
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = ChatComposerHeight)
+                .onSizeChanged { size ->
+                    if (!value.text.contains('\n') && size.height > 0) {
+                        val dp = with(density) { size.height.toDp() }
+                        if (dp <= ChatComposerHeight + 14.dp) {
+                            singleLineHeightPx = size.height
+                        }
+                    }
+                }
                 // 和发送按钮同一块材质：有 backdrop 就走 COUI 磨砂（背后消息被高斯磨平再叠混合色），
                 // 没有就退回平面胶囊。
                 .inputCapsuleGlass(
                     backdrop = backdrop,
                     isDark = isDark,
-                    cornerRadius = ChatComposerHeight / 2,
+                    cornerRadius = syncedButtonHeight / 2,
                 )
                 .clip(composerShape),
         ) {
@@ -641,7 +654,7 @@ private fun ChatBottomBar(
                     .testTag("chat_input"),
                 label = label,
                 minLines = 1,
-                insideMargin = DpSize(14.dp, 6.dp),
+                insideMargin = DpSize(14.dp, 8.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
                 compact = true,
@@ -650,13 +663,13 @@ private fun ChatBottomBar(
             Row(
                 modifier = Modifier
                     .align(Alignment.Bottom)
-                    .padding(bottom = 3.dp, end = 5.dp),
+                    .padding(bottom = 4.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ComposerToolButton(
                     active = emotePanelOpen,
-                    size = 30.dp,
-                    cornerRadius = 15.dp,
+                    size = 32.dp,
+                    cornerRadius = 16.dp,
                     onClick = onToggleEmote,
                     modifier = Modifier.testTag("chat_emoji"),
                 ) {
@@ -672,8 +685,8 @@ private fun ChatBottomBar(
 
                 ComposerToolButton(
                     active = false,
-                    size = 30.dp,
-                    cornerRadius = 15.dp,
+                    size = 32.dp,
+                    cornerRadius = 16.dp,
                     onClick = onPickImage,
                     modifier = Modifier.testTag("chat_pick"),
                 ) {
@@ -693,7 +706,7 @@ private fun ChatBottomBar(
             text = if (isSending) "发送中" else "发送",
             onClick = onSend,
             enabled = value.text.isNotBlank() && !isSending,
-            height = ChatComposerHeight,
+            height = syncedButtonHeight,
             containerColor = scheme.surfaceContainer,
             isDark = isDark,
             backdrop = backdrop,

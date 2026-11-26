@@ -198,8 +198,8 @@ internal fun ComposerEmoteTextField(
     val density = LocalDensity.current
     val scheme = COUITheme.colorScheme
     val baseStyle = TextFieldDefaults.textStyle(TextFieldMode.None)
-    val inputStyle = remember(baseStyle, scheme.onSurface) {
-        baseStyle.copy(color = scheme.onSurface, lineHeight = 24.sp)
+    val inputStyle = remember(baseStyle, scheme.onSurface, compact) {
+        baseStyle.copy(color = scheme.onSurface, lineHeight = if (compact) 20.sp else 24.sp)
     }
     val slotFontSize = 21.sp
     val parsed = remember(value.text, emotes, slotFontSize) {
