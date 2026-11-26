@@ -478,6 +478,14 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
             )
             SwitchPreference(
+                checked = App.settings.videoAutoFloatOnBack,
+                onCheckedChange = { App.settings.applyVideoAutoFloatOnBack(it) },
+                title = "视频播放时返回自动悬浮",
+                summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
+                modifier = Modifier.testTag("settings_video_auto_float_on_back"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
                 checked = state.inAppBrowser,
                 onCheckedChange = {
                     state.inAppBrowser = it

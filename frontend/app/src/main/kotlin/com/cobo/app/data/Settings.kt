@@ -391,6 +391,13 @@ class Settings(context: Context) {
         private set
 
     /**
+     * 视频播放时返回自动悬浮：开启后播放视频时按返回自动转入应用内悬浮小窗，
+     * 切至后台自动进入系统画中画；关闭时按返回直接退出播放。默认关。
+     */
+    var videoAutoFloatOnBack by mutableStateOf(sp.getBoolean("video_auto_float_on_back", false))
+        private set
+
+    /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
      * 没存过键时是全部五个榜；存成空串表示一个都不选，此时整个热搜区块都不显示。
@@ -689,6 +696,11 @@ class Settings(context: Context) {
     fun applyLivePhotoSound(value: Boolean) {
         livePhotoSound = value
         sp.edit().putBoolean("live_photo_sound", value).apply()
+    }
+
+    fun applyVideoAutoFloatOnBack(value: Boolean) {
+        videoAutoFloatOnBack = value
+        sp.edit().putBoolean("video_auto_float_on_back", value).apply()
     }
 
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */

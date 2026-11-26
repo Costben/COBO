@@ -171,13 +171,18 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.cobo.app.ui.FloatingVideoRequest
+import com.cobo.app.ui.FloatingVideoSession
+import com.cobo.app.ui.LocalFloatingVideoController
 import com.cobo.app.ui.findActivity
 import com.cobo.app.ui.isDarkTheme
+import com.cobo.app.ui.shouldAutoFloatVideoOnBack
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import coil3.BitmapImage
 import coil3.compose.AsyncImage
@@ -3094,6 +3099,16 @@ private fun playerView(context: Context, player: ExoPlayer, controls: Boolean): 
 
 private val VideoTopBarButtonHeight = MediaControlHeight
 
+internal const val VideoControlsAutoHideDelayMillis = 2_500L
+
+internal fun shouldAutoHideVideoControls(
+    controlsVisible: Boolean,
+    isPlaying: Boolean,
+    speedMenu: Boolean,
+    isScrubbing: Boolean,
+    systemPipActive: Boolean,
+): Boolean = controlsVisible && isPlaying && !speedMenu && !isScrubbing && !systemPipActive
+
 private const val SeekStepMs = 5_000L
 
 private val Speeds = listOf(1f, 1.25f, 1.5f, 2f, 3f)
@@ -3159,20 +3174,30 @@ fun VideoScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val floatingController = LocalFloatingVideoController.current
     val liveRequested = remember(url, isLive) { isLive || isWeiboLiveLink(url) }
     val browserFallbackUrl = remember(url) {
         val unwrapped = unwrapWeiboLink(url)
         resolveWeiboLink(unwrapped) ?: unwrapped
     }
     var resolved by remember(url, liveRequested, fid, statusId) {
+        val floatingMatch = floatingController.peekMatching(url)
         mutableStateOf<ResolvedVideo?>(
-            if (
+            when {
+                floatingMatch != null -> ResolvedVideo.DirectStream(
+                    url = floatingMatch.request.streamUrl,
+                    fallbackUrl = floatingMatch.request.fallbackStreamUrl,
+                    referer = floatingMatch.request.referer,
+                    title = floatingMatch.request.title,
+                    isLive = floatingMatch.request.isLive,
+                )
                 !liveRequested &&
-                isDirectVideoStream(url) &&
-                !shouldRefreshDirectStreamBeforePlay(url, fid, statusId, false)
-            ) {
-                ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
-            } else null,
+                    isDirectVideoStream(url) &&
+                    !shouldRefreshDirectStreamBeforePlay(url, fid, statusId, false) -> {
+                    ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
+                }
+                else -> null
+            },
         )
     }
     val canRefresh = remember(url, fid, statusId, liveRequested) {
@@ -3384,6 +3409,9 @@ fun VideoScreen(
             }
             DirectVideoPlayer(
                 nav = nav,
+                rawUrl = url,
+                fid = fid,
+                statusId = statusId,
                 streamUrl = current.url,
                 fallbackStreamUrl = current.fallbackUrl,
                 referer = current.referer,
@@ -3429,6 +3457,9 @@ fun VideoScreen(
 @Composable
 private fun DirectVideoPlayer(
     nav: NavState,
+    rawUrl: String,
+    fid: String,
+    statusId: String,
     streamUrl: String,
     fallbackStreamUrl: String?,
     referer: String?,
@@ -3444,6 +3475,8 @@ private fun DirectVideoPlayer(
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val activity = remember(context) { context.findActivity() }
+    val floatingController = LocalFloatingVideoController.current
+    val systemPipActive = floatingController.systemPipActive
     val audio = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
@@ -3453,71 +3486,84 @@ private fun DirectVideoPlayer(
     var refreshedOnError by remember { mutableStateOf(false) }
     var pendingSeekMs by remember { mutableLongStateOf(0L) }
     val currentOnRefreshStream by rememberUpdatedState(onRefreshStream)
-    val player = remember(activeStreamUrl, activeReferer) {
-        val effectiveReferer = activeReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
-        val httpFactory = DefaultHttpDataSource.Factory().apply {
-            setUserAgent(Api.WEB_UA)
-            setAllowCrossProtocolRedirects(true)
-            if (!effectiveReferer.isNullOrBlank()) {
-                setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
-            }
-        }
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .apply {
-                addListener(
-                    object : Player.Listener {
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e("CoboVideo", "ExoPlayer error for $activeStreamUrl: ${error.errorCodeName}", error)
-                            val fallback = fallbackStreamUrl?.takeIf { it.isNotBlank() && it != activeStreamUrl }
-                            if (fallback != null) {
-                                activeStreamUrl = fallback
-                                return
-                            }
-                            val refresher = currentOnRefreshStream
-                            if (
-                                refresher != null &&
-                                !refreshedOnError &&
-                                !refreshingStream &&
-                                shouldAttemptStreamRefreshOnError(error.errorCode)
-                            ) {
-                                refreshedOnError = true
-                                refreshingStream = true
-                                pendingSeekMs = currentPosition.coerceAtLeast(0L)
-                                scope.launch {
-                                    val fresh = runCatching { refresher() }.getOrNull()
-                                    refreshingStream = false
-                                    if (fresh != null && fresh.url.isNotBlank() && fresh.url != activeStreamUrl) {
-                                        activeReferer = fresh.referer
-                                        activeStreamUrl = fresh.url
-                                    } else {
-                                        pendingSeekMs = 0L
-                                        flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
-                                    }
-                                }
-                                return
-                            }
-                            flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
-                        }
-                    },
-                )
-                setMediaItem(MediaItem.fromUri(activeStreamUrl))
-                if (pendingSeekMs > 0L && !isLive) {
-                    seekTo(pendingSeekMs)
-                    pendingSeekMs = 0L
+    val claimedSession = remember(rawUrl, activeStreamUrl) {
+        floatingController.claimForFullscreen(rawUrl, activeStreamUrl)
+    }
+    val player = remember(activeStreamUrl, activeReferer, claimedSession) {
+        if (claimedSession != null) {
+            claimedSession.player
+        } else {
+            floatingController.dismissFloating()
+            val effectiveReferer = activeReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
+            val httpFactory = DefaultHttpDataSource.Factory().apply {
+                setUserAgent(Api.WEB_UA)
+                setAllowCrossProtocolRedirects(true)
+                if (!effectiveReferer.isNullOrBlank()) {
+                    setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
                 }
-                prepare()
-                playWhenReady = true
             }
+            val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+            ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .build()
+                .apply {
+                    addListener(
+                        object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e("CoboVideo", "ExoPlayer error for $activeStreamUrl: ${error.errorCodeName}", error)
+                                val fallback = fallbackStreamUrl?.takeIf { it.isNotBlank() && it != activeStreamUrl }
+                                if (fallback != null) {
+                                    activeStreamUrl = fallback
+                                    return
+                                }
+                                val refresher = currentOnRefreshStream
+                                if (
+                                    refresher != null &&
+                                    !refreshedOnError &&
+                                    !refreshingStream &&
+                                    shouldAttemptStreamRefreshOnError(error.errorCode)
+                                ) {
+                                    refreshedOnError = true
+                                    refreshingStream = true
+                                    pendingSeekMs = currentPosition.coerceAtLeast(0L)
+                                    scope.launch {
+                                        val fresh = runCatching { refresher() }.getOrNull()
+                                        refreshingStream = false
+                                        if (fresh != null && fresh.url.isNotBlank() && fresh.url != activeStreamUrl) {
+                                            activeReferer = fresh.referer
+                                            activeStreamUrl = fresh.url
+                                        } else {
+                                            pendingSeekMs = 0L
+                                            flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
+                                        }
+                                    }
+                                    return
+                                }
+                                flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
+                            }
+                        },
+                    )
+                    setMediaItem(MediaItem.fromUri(activeStreamUrl))
+                    if (pendingSeekMs > 0L && !isLive) {
+                        seekTo(pendingSeekMs)
+                        pendingSeekMs = 0L
+                    }
+                    prepare()
+                    playWhenReady = true
+                }
+        }
     }
 
+    var handedOffToFloating by remember(player) { mutableStateOf(false) }
+    var videoAspectRatio by remember(player) {
+        mutableFloatStateOf(claimedSession?.aspectRatio ?: (16f / 9f))
+    }
     var controlsVisible by remember { mutableStateOf(true) }
-    var isPlaying by remember { mutableStateOf(true) }
-    var isBuffering by remember { mutableStateOf(true) }
-    var playbackState by remember { mutableIntStateOf(Player.STATE_BUFFERING) }
-    var playWhenReady by remember { mutableStateOf(true) }
+    var controlsInteractionTick by remember { mutableIntStateOf(0) }
+    var isPlaying by remember { mutableStateOf(player.isPlaying || player.playWhenReady) }
+    var isBuffering by remember { mutableStateOf(player.playbackState == Player.STATE_BUFFERING) }
+    var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
+    var playWhenReady by remember(player) { mutableStateOf(player.playWhenReady) }
     var playerIsLive by remember(activeStreamUrl) { mutableStateOf(false) }
     val liveMode = isLive || playerIsLive
     val currentLiveMode by rememberUpdatedState(liveMode)
@@ -3526,7 +3572,7 @@ private fun DirectVideoPlayer(
     var bufferedPositionMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
-    var speed by remember { mutableFloatStateOf(1f) }
+    var speed by remember(player) { mutableFloatStateOf(claimedSession?.request?.playbackSpeed ?: 1f) }
     var speedMenu by remember { mutableStateOf(false) }
     var longPressSpeedActive by remember { mutableStateOf(false) }
     var longPressSpeedLocked by remember { mutableStateOf(false) }
@@ -3595,7 +3641,33 @@ private fun DirectVideoPlayer(
         syncPlayerState()
     }
 
-    DisposableEffect(player) {
+    val fullscreenSession = remember(player, rawUrl, activeStreamUrl, title, liveMode) {
+        FloatingVideoSession(
+            request = FloatingVideoRequest(
+                rawUrl = rawUrl,
+                streamUrl = activeStreamUrl,
+                fallbackStreamUrl = fallbackStreamUrl,
+                referer = activeReferer,
+                title = title,
+                isLive = liveMode,
+                fid = fid,
+                statusId = statusId,
+                playbackSpeed = speed,
+            ),
+            player = player,
+            onRefreshStream = currentOnRefreshStream,
+            initialAspectRatio = videoAspectRatio,
+        )
+    }
+
+    LaunchedEffect(fullscreenSession, isPlaying, isBuffering, videoAspectRatio) {
+        fullscreenSession.isPlaying = isPlaying
+        fullscreenSession.isBuffering = isBuffering
+        fullscreenSession.aspectRatio = videoAspectRatio
+    }
+
+    DisposableEffect(player, fullscreenSession) {
+        floatingController.fullscreenSession = fullscreenSession
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
@@ -3612,12 +3684,24 @@ private fun DirectVideoPlayer(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 syncPlayerState()
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    val pixelRatio = videoSize.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+                    videoAspectRatio = (videoSize.width * pixelRatio) / videoSize.height.toFloat()
+                }
+            }
         }
         player.addListener(listener)
         syncPlayerState()
         onDispose {
             player.removeListener(listener)
-            player.release()
+            if (floatingController.fullscreenSession === fullscreenSession) {
+                floatingController.fullscreenSession = null
+            }
+            if (!handedOffToFloating) {
+                player.release()
+            }
         }
     }
 
@@ -3629,9 +3713,24 @@ private fun DirectVideoPlayer(
         }
     }
 
-    LaunchedEffect(controlsVisible, isPlaying, speedMenu, isScrubbing) {
-        if (controlsVisible && isPlaying && !speedMenu && !isScrubbing) {
-            delay(5000)
+    LaunchedEffect(
+        controlsVisible,
+        controlsInteractionTick,
+        isPlaying,
+        speedMenu,
+        isScrubbing,
+        systemPipActive,
+    ) {
+        if (
+            shouldAutoHideVideoControls(
+                controlsVisible = controlsVisible,
+                isPlaying = isPlaying,
+                speedMenu = speedMenu,
+                isScrubbing = isScrubbing,
+                systemPipActive = systemPipActive,
+            )
+        ) {
+            delay(VideoControlsAutoHideDelayMillis)
             controlsVisible = false
         }
     }
@@ -3658,7 +3757,47 @@ private fun DirectVideoPlayer(
         refreshingStream = refreshingStream,
     )
 
-    CoboPredictiveBackHandler(nav)
+    val enterInAppFloating: () -> Unit = {
+        if (!handedOffToFloating) {
+            handedOffToFloating = true
+            val session = FloatingVideoSession(
+                request = FloatingVideoRequest(
+                    rawUrl = rawUrl,
+                    streamUrl = activeStreamUrl,
+                    fallbackStreamUrl = fallbackStreamUrl,
+                    referer = activeReferer,
+                    title = title,
+                    isLive = liveMode,
+                    fid = fid,
+                    statusId = statusId,
+                    playbackSpeed = speed,
+                ),
+                player = player,
+                onRefreshStream = currentOnRefreshStream,
+                initialAspectRatio = videoAspectRatio,
+            )
+            if (floatingController.fullscreenSession?.player === player) {
+                floatingController.fullscreenSession = null
+            }
+            floatingController.startFloating(session)
+            nav.pop()
+        }
+    }
+
+    ViewerSystemBars(visible = !systemPipActive && (controlsVisible || speedMenu))
+
+    val autoFloatOnBack = shouldAutoFloatVideoOnBack(
+        autoFloatEnabled = App.settings.videoAutoFloatOnBack,
+        isPlaying = isPlaying,
+        isLive = liveMode,
+    )
+    if (speedMenu) {
+        BackHandler(enabled = true) { speedMenu = false }
+    } else if (autoFloatOnBack) {
+        BackHandler(enabled = true) { enterInAppFloating() }
+    } else {
+        CoboPredictiveBackHandler(nav)
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -3879,7 +4018,7 @@ private fun DirectVideoPlayer(
         )
 
         AnimatedVisibility(
-            visible = controlsVisible || speedMenu,
+            visible = !systemPipActive && (controlsVisible || speedMenu),
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
             modifier = Modifier
@@ -3941,7 +4080,10 @@ private fun DirectVideoPlayer(
                     Box {
                         VideoSpeedPill(
                             text = speedLabel(effectivePlaybackSpeed),
-                            onClick = { speedMenu = !speedMenu },
+                            onClick = {
+                                controlsInteractionTick++
+                                speedMenu = !speedMenu
+                            },
                         )
                         OverlayListPopup(
                             show = speedMenu,
@@ -3958,6 +4100,7 @@ private fun DirectVideoPlayer(
                                         index = index,
                                         groupKey = "video_speed",
                                         onSelectedIndexChange = {
+                                            controlsInteractionTick++
                                             speed = value
                                             longPressSpeedLocked = false
                                             flash("${speedLabel(value)} 倍速")
@@ -3969,19 +4112,53 @@ private fun DirectVideoPlayer(
                         }
                     }
                     Spacer(Modifier.width(6.dp))
-                    HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
+                    HighlightedIconButton(
+                        onClick = {
+                            controlsInteractionTick++
+                            onDownload()
+                        },
+                        size = VideoTopBarButtonHeight,
+                    ) {
                         Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
                     }
                     Spacer(Modifier.width(6.dp))
                 }
-                HighlightedIconButton(onClick = onOpenInBrowser, size = VideoTopBarButtonHeight) {
+                HighlightedIconButton(
+                    onClick = {
+                        controlsInteractionTick++
+                        enterInAppFloating()
+                    },
+                    size = VideoTopBarButtonHeight,
+                ) {
+                    Icon(CoboIcons.FloatingWindow, "小窗播放", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                HighlightedIconButton(
+                    onClick = {
+                        controlsInteractionTick++
+                        if (!floatingController.requestSystemPip(videoAspectRatio)) {
+                            flash("当前设备不支持画中画")
+                        }
+                    },
+                    size = VideoTopBarButtonHeight,
+                ) {
+                    Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                HighlightedIconButton(
+                    onClick = {
+                        controlsInteractionTick++
+                        onOpenInBrowser()
+                    },
+                    size = VideoTopBarButtonHeight,
+                ) {
                     Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
             }
         }
 
         AnimatedVisibility(
-            visible = !liveMode && (controlsVisible || speedMenu),
+            visible = !systemPipActive && !liveMode && (controlsVisible || speedMenu),
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
             modifier = Modifier
@@ -4011,7 +4188,10 @@ private fun DirectVideoPlayer(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     HighlightedIconButton(
-                        onClick = { seekBy(-SeekStepMs) },
+                        onClick = {
+                            controlsInteractionTick++
+                            seekBy(-SeekStepMs)
+                        },
                         size = VideoTopBarButtonHeight,
                         modifier = Modifier.semantics { contentDescription = "快退 5 秒" },
                     ) {
@@ -4023,7 +4203,10 @@ private fun DirectVideoPlayer(
                         )
                     }
                     HighlightedIconButton(
-                        onClick = ::togglePlayPause,
+                        onClick = {
+                            controlsInteractionTick++
+                            togglePlayPause()
+                        },
                         size = VideoTopBarButtonHeight,
                     ) {
                         Icon(
@@ -4033,7 +4216,10 @@ private fun DirectVideoPlayer(
                         )
                     }
                     HighlightedIconButton(
-                        onClick = { seekBy(SeekStepMs) },
+                        onClick = {
+                            controlsInteractionTick++
+                            seekBy(SeekStepMs)
+                        },
                         size = VideoTopBarButtonHeight,
                         modifier = Modifier.semantics { contentDescription = "快进 5 秒" },
                     ) {
@@ -4100,7 +4286,7 @@ private fun DirectVideoPlayer(
         }
 
         AnimatedVisibility(
-            visible = !liveMode && (longPressSpeedActive || longPressSpeedLocked),
+            visible = !systemPipActive && !liveMode && (longPressSpeedActive || longPressSpeedLocked),
             enter = fadeIn(tween(150)),
             exit = fadeOut(tween(150)),
             modifier = Modifier
@@ -4127,9 +4313,9 @@ private fun DirectVideoPlayer(
                     }
                     Text(
                         text = if (longPressSpeedLocked) {
-                            "3.0× 已锁定 · 长按解锁"
+                            "3.0× 已锁定，长按解锁"
                         } else {
-                            "3.0× 快进中 · 下滑锁定"
+                            "3.0× 快进中，下滑锁定"
                         },
                         color = if (longPressSpeedLocked) COUITheme.colorScheme.primary else LocalContentColor.current,
                         fontSize = 13.sp,
@@ -4140,7 +4326,7 @@ private fun DirectVideoPlayer(
             }
         }
 
-        if (hud.isNotEmpty()) {
+        if (hud.isNotEmpty() && !systemPipActive) {
             Text(
                 text = hud,
                 color = Color.White,

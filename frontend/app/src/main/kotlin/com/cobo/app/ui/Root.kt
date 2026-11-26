@@ -147,7 +147,10 @@ private const val ListPaneWeight = 0.72f
 private const val DetailPaneWeight = 1f
 
 @Composable
-fun CoboRoot() {
+fun CoboRoot(
+    floatingVideoController: FloatingVideoController = remember { FloatingVideoController() },
+    onUpdateAutoPip: (Boolean, Float) -> Unit = { _, _ -> },
+) {
     val nav = remember { NavState() }
     val scope = rememberCoroutineScope()
     SideEffect { nav.attach(scope) }
@@ -302,6 +305,18 @@ fun CoboRoot() {
         ExpandOriginVisibility(nav.stack, paneEntry = { nav.paneEntry })
     }
 
+    val autoPipSession = floatingVideoController.activePipSession()
+    val autoPipEnabled = shouldAutoEnterSystemPip(
+        autoFloatEnabled = App.settings.videoAutoFloatOnBack,
+        hasActiveVideo = autoPipSession != null,
+        isPlaying = autoPipSession?.isPlaying == true,
+        isLive = autoPipSession?.request?.isLive == true,
+    )
+    val autoPipRatio = autoPipSession?.aspectRatio ?: (16f / 9f)
+    LaunchedEffect(autoPipEnabled, autoPipRatio) {
+        onUpdateAutoPip(autoPipEnabled, autoPipRatio)
+    }
+
     // 顶栏和底栏在各自的节点里钉密度（见 [PinnedBarDensity]），页面内容跟随系统「显示大小」。
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
     CompositionLocalProvider(
@@ -313,6 +328,7 @@ fun CoboRoot() {
         LocalImageSaver provides imageSaver,
         LocalImageOrigins provides imageOrigins,
         LocalExpandOriginVisibility provides expandOriginVisibility,
+        LocalFloatingVideoController provides floatingVideoController,
     ) {
         // 根 Scaffold 提供全局 LocalRootDialogStates / LocalRootPopupStates，
         // 让全应用所有对话框（OverlayDialog）、底部面板（OverlayBottomSheet）和菜单（含嵌套 Scaffold 页面）
@@ -422,6 +438,15 @@ fun CoboRoot() {
                         },
                 )
             }
+
+            // 应用内视频悬浮小窗（系统画中画激活时置顶铺满纯画面）。
+            FloatingVideoOverlay(
+                controller = floatingVideoController,
+                nav = nav,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(if (floatingVideoController.systemPipActive && floatingVideoController.activeSession != null) 30f else 15f),
+            )
 
             // 保存图片菜单与点赞确认挂在根节点，弹层内容由外层根 Scaffold 的 popupHost 统一承载并采样 rootBackdrop。
             Box(

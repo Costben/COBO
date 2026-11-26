@@ -840,4 +840,65 @@ object CoboIcons {
             horizontalLineTo(21.2f)
         }
     }
+
+    /** 应用内视频小窗：外框 + 右下角小窗。 */
+    val FloatingWindow: ImageVector by lazy {
+        outline("FloatingWindow") {
+            moveTo(4.5f, 5.2f)
+            horizontalLineTo(19.5f)
+            curveTo(20.4f, 5.2f, 21.0f, 5.8f, 21.0f, 6.7f)
+            verticalLineTo(17.3f)
+            curveTo(21.0f, 18.2f, 20.4f, 18.8f, 19.5f, 18.8f)
+            horizontalLineTo(4.5f)
+            curveTo(3.6f, 18.8f, 3.0f, 18.2f, 3.0f, 17.3f)
+            verticalLineTo(6.7f)
+            curveTo(3.0f, 5.8f, 3.6f, 5.2f, 4.5f, 5.2f)
+            close()
+            moveTo(12.6f, 11.6f)
+            horizontalLineTo(18.2f)
+            verticalLineTo(16.2f)
+            horizontalLineTo(12.6f)
+            close()
+        }
+    }
+
+    /** 系统画中画：外框 + 指向右下角子窗的箭头。 */
+    val PictureInPicture: ImageVector by lazy {
+        outline("PictureInPicture") {
+            moveTo(19.0f, 10.6f)
+            verticalLineTo(6.7f)
+            curveTo(19.0f, 5.8f, 18.4f, 5.2f, 17.5f, 5.2f)
+            horizontalLineTo(4.5f)
+            curveTo(3.6f, 5.2f, 3.0f, 5.8f, 3.0f, 6.7f)
+            verticalLineTo(17.3f)
+            curveTo(3.0f, 18.2f, 3.6f, 18.8f, 4.5f, 18.8f)
+            horizontalLineTo(10.0f)
+            moveTo(13.0f, 13.0f)
+            horizontalLineTo(20.5f)
+            verticalLineTo(18.8f)
+            horizontalLineTo(13.0f)
+            close()
+            moveTo(7.2f, 8.8f)
+            lineTo(10.8f, 12.2f)
+            moveTo(10.8f, 9.4f)
+            verticalLineTo(12.2f)
+            horizontalLineTo(8.0f)
+        }
+    }
+
+    /** 还原全屏：左下与右上对角双向展开箭头。 */
+    val ExpandFullscreen: ImageVector by lazy {
+        outline("ExpandFullscreen") {
+            moveTo(14.0f, 4.8f)
+            horizontalLineTo(19.2f)
+            verticalLineTo(10.0f)
+            moveTo(19.2f, 4.8f)
+            lineTo(13.4f, 10.6f)
+            moveTo(10.0f, 19.2f)
+            horizontalLineTo(4.8f)
+            verticalLineTo(14.0f)
+            moveTo(4.8f, 19.2f)
+            lineTo(10.6f, 13.4f)
+        }
+    }
 }
