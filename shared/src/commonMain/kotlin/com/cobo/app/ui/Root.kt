@@ -362,6 +362,9 @@ fun CoboRoot(
         onUpdateAutoPip(autoPipEnabled, autoPipRatio)
     }
 
+    val feedVideoAutoPlay = remember { FeedVideoAutoPlayController() }
+    rememberFeedVideoAutoPlayEnvironment(feedVideoAutoPlay, nav, floatingVideoController)
+
     // 顶栏和底栏在各自的节点里钉密度（见 [PinnedBarDensity]），页面内容跟随系统「显示大小」。
     // 以前这里把整棵树都钉在 360dp 短边，结果正文字号也跟着缩了一档。
     CompositionLocalProvider(
@@ -375,6 +378,7 @@ fun CoboRoot(
         LocalImageOrigins provides imageOrigins,
         LocalExpandOriginVisibility provides expandOriginVisibility,
         LocalFloatingVideoController provides floatingVideoController,
+        LocalFeedVideoAutoPlay provides feedVideoAutoPlay,
     ) {
         // 根 Scaffold 提供全局 LocalRootDialogStates / LocalRootPopupStates，
         // 让全应用所有对话框（OverlayDialog）、底部面板（OverlayBottomSheet）和菜单（含嵌套 Scaffold 页面）
@@ -994,6 +998,7 @@ private fun RouteLayer(
         LocalRouteTransition provides transition,
         LocalCurrentNavEntry provides entry,
         LocalBackRouteIsTop provides isActiveTop,
+        LocalFeedVideoRouteActive provides isActiveTop,
     ) {
         Box(layer) {
             if (entry.expand) {

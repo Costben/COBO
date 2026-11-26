@@ -42,6 +42,7 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_show_verified_badge",
             "settings_live_photo_auto_play",
             "settings_live_photo_sound",
+            "settings_feed_video_auto_play",
             "settings_video_auto_float_on_back",
             "settings_video_auto_close_on_complete",
             "settings_video_center_swipe_actions",
