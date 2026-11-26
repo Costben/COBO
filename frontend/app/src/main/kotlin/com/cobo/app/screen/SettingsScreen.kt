@@ -502,6 +502,30 @@ private fun LazyListScope.displaySettingsItems(
                 cardListPosition = CardListPosition.Middle,
             )
             SwitchPreference(
+                checked = App.settings.videoAutoFloatOnBack,
+                onCheckedChange = { App.settings.applyVideoAutoFloatOnBack(it) },
+                title = "视频播放时返回自动悬浮",
+                summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
+                modifier = Modifier.testTag("settings_video_auto_float_on_back"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
+                checked = App.settings.videoAutoCloseOnComplete,
+                onCheckedChange = { App.settings.applyVideoAutoCloseOnComplete(it) },
+                title = "视频播完自动返回",
+                summary = "非直播视频播放结束后自动关闭并返回上一页",
+                modifier = Modifier.testTag("settings_video_auto_close_on_complete"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
+                checked = App.settings.videoCenterSwipeActions,
+                onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
+                title = "视频中区滑动手势",
+                summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；关闭后在顶栏显示小窗与画中画按钮",
+                modifier = Modifier.testTag("settings_video_center_swipe_actions"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
                 checked = state.inAppBrowser,
                 onCheckedChange = {
                     state.inAppBrowser = it

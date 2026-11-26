@@ -70,7 +70,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.CubicBezierEasing
@@ -87,6 +89,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -175,13 +182,27 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.cobo.app.ui.FloatingVideoRequest
+import com.cobo.app.ui.FloatingVideoSession
+import com.cobo.app.ui.LocalFloatingVideoController
+import com.cobo.app.ui.VideoCenterGestureAction
+import com.cobo.app.ui.VideoCenterGestureAutoDismissMillis
+import com.cobo.app.ui.VideoCenterGestureDirection
+import com.cobo.app.ui.VideoCenterGestureSnapshot
+import com.cobo.app.ui.VideoVerticalZone
+import com.cobo.app.ui.classifyVideoVerticalZone
+import com.cobo.app.ui.evaluateVideoCenterGesture
 import com.cobo.app.ui.findActivity
 import com.cobo.app.ui.isDarkTheme
+import com.cobo.app.ui.shouldAutoCloseVideoOnComplete
+import com.cobo.app.ui.shouldAutoFloatVideoOnBack
+import com.cobo.app.ui.videoCenterGestureHintText
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import coil3.BitmapImage
 import coil3.compose.AsyncImage
@@ -3255,6 +3276,19 @@ private fun playerView(context: Context, player: ExoPlayer, controls: Boolean): 
 
 private val VideoTopBarButtonHeight = MediaControlHeight
 
+internal const val VideoControlsAutoHideDelayMillis = 3_000L
+
+private val VideoBarEnterEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+private val VideoBarExitEasing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
+
+internal fun shouldAutoHideVideoControls(
+    controlsVisible: Boolean,
+    isPlaying: Boolean,
+    speedMenu: Boolean,
+    isScrubbing: Boolean,
+    systemPipActive: Boolean,
+): Boolean = controlsVisible && isPlaying && !speedMenu && !isScrubbing && !systemPipActive
+
 private const val SeekStepMs = 5_000L
 
 private val Speeds = listOf(1f, 1.25f, 1.5f, 2f, 3f)
@@ -3320,20 +3354,30 @@ fun VideoScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val floatingController = LocalFloatingVideoController.current
     val liveRequested = remember(url, isLive) { isLive || isWeiboLiveLink(url) }
     val browserFallbackUrl = remember(url) {
         val unwrapped = unwrapWeiboLink(url)
         resolveWeiboLink(unwrapped) ?: unwrapped
     }
     var resolved by remember(url, liveRequested, fid, statusId) {
+        val floatingMatch = floatingController.peekMatching(url)
         mutableStateOf<ResolvedVideo?>(
-            if (
+            when {
+                floatingMatch != null -> ResolvedVideo.DirectStream(
+                    url = floatingMatch.request.streamUrl,
+                    fallbackUrl = floatingMatch.request.fallbackStreamUrl,
+                    referer = floatingMatch.request.referer,
+                    title = floatingMatch.request.title,
+                    isLive = floatingMatch.request.isLive,
+                )
                 !liveRequested &&
-                isDirectVideoStream(url) &&
-                !shouldRefreshDirectStreamBeforePlay(url, fid, statusId, false)
-            ) {
-                ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
-            } else null,
+                    isDirectVideoStream(url) &&
+                    !shouldRefreshDirectStreamBeforePlay(url, fid, statusId, false) -> {
+                    ResolvedVideo.DirectStream(url, referer = defaultRefererFor(url), isLive = false)
+                }
+                else -> null
+            },
         )
     }
     val canRefresh = remember(url, fid, statusId, liveRequested) {
@@ -3545,6 +3589,9 @@ fun VideoScreen(
             }
             DirectVideoPlayer(
                 nav = nav,
+                rawUrl = url,
+                fid = fid,
+                statusId = statusId,
                 streamUrl = current.url,
                 fallbackStreamUrl = current.fallbackUrl,
                 referer = current.referer,
@@ -3590,6 +3637,9 @@ fun VideoScreen(
 @Composable
 private fun DirectVideoPlayer(
     nav: NavState,
+    rawUrl: String,
+    fid: String,
+    statusId: String,
     streamUrl: String,
     fallbackStreamUrl: String?,
     referer: String?,
@@ -3605,6 +3655,8 @@ private fun DirectVideoPlayer(
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val activity = remember(context) { context.findActivity() }
+    val floatingController = LocalFloatingVideoController.current
+    val systemPipActive = floatingController.systemPipActive
     val audio = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
@@ -3614,71 +3666,88 @@ private fun DirectVideoPlayer(
     var refreshedOnError by remember { mutableStateOf(false) }
     var pendingSeekMs by remember { mutableLongStateOf(0L) }
     val currentOnRefreshStream by rememberUpdatedState(onRefreshStream)
-    val player = remember(activeStreamUrl, activeReferer) {
-        val effectiveReferer = activeReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
-        val httpFactory = DefaultHttpDataSource.Factory().apply {
-            setUserAgent(Api.WEB_UA)
-            setAllowCrossProtocolRedirects(true)
-            if (!effectiveReferer.isNullOrBlank()) {
-                setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
-            }
-        }
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .apply {
-                addListener(
-                    object : Player.Listener {
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e("CoboVideo", "ExoPlayer error for $activeStreamUrl: ${error.errorCodeName}", error)
-                            val fallback = fallbackStreamUrl?.takeIf { it.isNotBlank() && it != activeStreamUrl }
-                            if (fallback != null) {
-                                activeStreamUrl = fallback
-                                return
-                            }
-                            val refresher = currentOnRefreshStream
-                            if (
-                                refresher != null &&
-                                !refreshedOnError &&
-                                !refreshingStream &&
-                                shouldAttemptStreamRefreshOnError(error.errorCode)
-                            ) {
-                                refreshedOnError = true
-                                refreshingStream = true
-                                pendingSeekMs = currentPosition.coerceAtLeast(0L)
-                                scope.launch {
-                                    val fresh = runCatching { refresher() }.getOrNull()
-                                    refreshingStream = false
-                                    if (fresh != null && fresh.url.isNotBlank() && fresh.url != activeStreamUrl) {
-                                        activeReferer = fresh.referer
-                                        activeStreamUrl = fresh.url
-                                    } else {
-                                        pendingSeekMs = 0L
-                                        flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
-                                    }
-                                }
-                                return
-                            }
-                            flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
-                        }
-                    },
-                )
-                setMediaItem(MediaItem.fromUri(activeStreamUrl))
-                if (pendingSeekMs > 0L && !isLive) {
-                    seekTo(pendingSeekMs)
-                    pendingSeekMs = 0L
+    val claimedSession = remember(rawUrl, activeStreamUrl) {
+        floatingController.claimForFullscreen(rawUrl, activeStreamUrl)
+    }
+    val player = remember(activeStreamUrl, activeReferer, claimedSession) {
+        if (claimedSession != null) {
+            claimedSession.player
+        } else {
+            floatingController.dismissFloating()
+            val effectiveReferer = activeReferer?.takeIf { it.isNotBlank() } ?: defaultRefererFor(activeStreamUrl)
+            val httpFactory = DefaultHttpDataSource.Factory().apply {
+                setUserAgent(Api.WEB_UA)
+                setAllowCrossProtocolRedirects(true)
+                if (!effectiveReferer.isNullOrBlank()) {
+                    setDefaultRequestProperties(mapOf("Referer" to effectiveReferer))
                 }
-                prepare()
-                playWhenReady = true
             }
+            val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+            ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .build()
+                .apply {
+                    addListener(
+                        object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e("CoboVideo", "ExoPlayer error for $activeStreamUrl: ${error.errorCodeName}", error)
+                                val fallback = fallbackStreamUrl?.takeIf { it.isNotBlank() && it != activeStreamUrl }
+                                if (fallback != null) {
+                                    activeStreamUrl = fallback
+                                    return
+                                }
+                                val refresher = currentOnRefreshStream
+                                if (
+                                    refresher != null &&
+                                    !refreshedOnError &&
+                                    !refreshingStream &&
+                                    shouldAttemptStreamRefreshOnError(error.errorCode)
+                                ) {
+                                    refreshedOnError = true
+                                    refreshingStream = true
+                                    pendingSeekMs = currentPosition.coerceAtLeast(0L)
+                                    scope.launch {
+                                        val fresh = runCatching { refresher() }.getOrNull()
+                                        refreshingStream = false
+                                        if (fresh != null && fresh.url.isNotBlank() && fresh.url != activeStreamUrl) {
+                                            activeReferer = fresh.referer
+                                            activeStreamUrl = fresh.url
+                                        } else {
+                                            pendingSeekMs = 0L
+                                            flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
+                                        }
+                                    }
+                                    return
+                                }
+                                flash(if (isLive) "直播加载失败（${error.errorCodeName}）" else "视频播放失败（${error.errorCodeName}）")
+                            }
+                        },
+                    )
+                    setMediaItem(MediaItem.fromUri(activeStreamUrl))
+                    if (pendingSeekMs > 0L && !isLive) {
+                        seekTo(pendingSeekMs)
+                        pendingSeekMs = 0L
+                    }
+                    prepare()
+                    playWhenReady = true
+                }
+        }
     }
 
+    var handedOffToFloating by remember(player) { mutableStateOf(false) }
+    var videoAspectRatio by remember(player) {
+        mutableFloatStateOf(claimedSession?.aspectRatio ?: (16f / 9f))
+    }
     var controlsVisible by remember { mutableStateOf(true) }
-    var isPlaying by remember { mutableStateOf(true) }
-    var isBuffering by remember { mutableStateOf(true) }
-    var playbackState by remember { mutableIntStateOf(Player.STATE_BUFFERING) }
-    var playWhenReady by remember { mutableStateOf(true) }
+    var controlsInteractionTick by remember { mutableIntStateOf(0) }
+    var isPlaying by remember { mutableStateOf(player.isPlaying || player.playWhenReady) }
+    var isBuffering by remember { mutableStateOf(player.playbackState == Player.STATE_BUFFERING) }
+    var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
+    var playWhenReady by remember(player) { mutableStateOf(player.playWhenReady) }
+    var hasStartedPlaying by remember(player) {
+        mutableStateOf(player.isPlaying || player.playbackState == Player.STATE_READY)
+    }
+    var autoCloseTriggered by remember(player) { mutableStateOf(false) }
     var playerIsLive by remember(activeStreamUrl) { mutableStateOf(false) }
     val liveMode = isLive || playerIsLive
     val currentLiveMode by rememberUpdatedState(liveMode)
@@ -3687,7 +3756,7 @@ private fun DirectVideoPlayer(
     var bufferedPositionMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
-    var speed by remember { mutableFloatStateOf(1f) }
+    var speed by remember(player) { mutableFloatStateOf(claimedSession?.request?.playbackSpeed ?: 1f) }
     var speedMenu by remember { mutableStateOf(false) }
     var longPressSpeedActive by remember { mutableStateOf(false) }
     var longPressSpeedLocked by remember { mutableStateOf(false) }
@@ -3721,6 +3790,9 @@ private fun DirectVideoPlayer(
         playWhenReady = player.playWhenReady
         isPlaying = player.isPlaying
         isBuffering = playbackState == Player.STATE_BUFFERING
+        if (isPlaying || playbackState == Player.STATE_READY) {
+            hasStartedPlaying = true
+        }
         if (player.isCurrentMediaItemLive) {
             playerIsLive = true
         }
@@ -3756,12 +3828,39 @@ private fun DirectVideoPlayer(
         syncPlayerState()
     }
 
-    DisposableEffect(player) {
+    val fullscreenSession = remember(player, rawUrl, activeStreamUrl, title, liveMode) {
+        FloatingVideoSession(
+            request = FloatingVideoRequest(
+                rawUrl = rawUrl,
+                streamUrl = activeStreamUrl,
+                fallbackStreamUrl = fallbackStreamUrl,
+                referer = activeReferer,
+                title = title,
+                isLive = liveMode,
+                fid = fid,
+                statusId = statusId,
+                playbackSpeed = speed,
+            ),
+            player = player,
+            onRefreshStream = currentOnRefreshStream,
+            initialAspectRatio = videoAspectRatio,
+        )
+    }
+
+    LaunchedEffect(fullscreenSession, isPlaying, isBuffering, videoAspectRatio) {
+        fullscreenSession.isPlaying = isPlaying
+        fullscreenSession.isBuffering = isBuffering
+        fullscreenSession.aspectRatio = videoAspectRatio
+    }
+
+    DisposableEffect(player, fullscreenSession) {
+        floatingController.fullscreenSession = fullscreenSession
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
                 playWhenReady = player.playWhenReady
                 playbackState = player.playbackState
+                if (playing) hasStartedPlaying = true
             }
 
             override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
@@ -3773,12 +3872,24 @@ private fun DirectVideoPlayer(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 syncPlayerState()
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    val pixelRatio = videoSize.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+                    videoAspectRatio = (videoSize.width * pixelRatio) / videoSize.height.toFloat()
+                }
+            }
         }
         player.addListener(listener)
         syncPlayerState()
         onDispose {
             player.removeListener(listener)
-            player.release()
+            if (floatingController.fullscreenSession === fullscreenSession) {
+                floatingController.fullscreenSession = null
+            }
+            if (!handedOffToFloating) {
+                player.release()
+            }
         }
     }
 
@@ -3790,10 +3901,72 @@ private fun DirectVideoPlayer(
         }
     }
 
-    LaunchedEffect(controlsVisible, isPlaying, speedMenu, isScrubbing) {
-        if (controlsVisible && isPlaying && !speedMenu && !isScrubbing) {
-            delay(5000)
+    LaunchedEffect(
+        controlsVisible,
+        controlsInteractionTick,
+        isPlaying,
+        speedMenu,
+        isScrubbing,
+        systemPipActive,
+    ) {
+        if (
+            shouldAutoHideVideoControls(
+                controlsVisible = controlsVisible,
+                isPlaying = isPlaying,
+                speedMenu = speedMenu,
+                isScrubbing = isScrubbing,
+                systemPipActive = systemPipActive,
+            )
+        ) {
+            delay(VideoControlsAutoHideDelayMillis)
             controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(
+        playbackState,
+        hasStartedPlaying,
+        isScrubbing,
+        liveMode,
+        handedOffToFloating,
+        App.settings.videoAutoCloseOnComplete,
+    ) {
+        if (
+            !autoCloseTriggered &&
+            shouldAutoCloseVideoOnComplete(
+                autoCloseEnabled = App.settings.videoAutoCloseOnComplete,
+                playbackState = playbackState,
+                hasStartedPlaying = hasStartedPlaying,
+                isLive = liveMode,
+                isScrubbing = isScrubbing,
+                handedOffToFloating = handedOffToFloating,
+            )
+        ) {
+            delay(250L)
+            if (
+                !autoCloseTriggered &&
+                player.playbackState == Player.STATE_ENDED &&
+                !isScrubbing &&
+                !handedOffToFloating &&
+                !currentLiveMode &&
+                App.settings.videoAutoCloseOnComplete
+            ) {
+                autoCloseTriggered = true
+                nav.pop()
+            }
+        }
+    }
+
+    var centerGestureSnapshot by remember { mutableStateOf(VideoCenterGestureSnapshot()) }
+    var centerGestureAnchorYPx by remember { mutableFloatStateOf(0f) }
+    var centerGestureDismissJob by remember { mutableStateOf<Job?>(null) }
+    val centerSwipeEnabled = App.settings.videoCenterSwipeActions
+    val currentCenterSwipeEnabled by rememberUpdatedState(centerSwipeEnabled)
+    LaunchedEffect(centerSwipeEnabled) {
+        if (!centerSwipeEnabled) {
+            centerGestureDismissJob?.cancel()
+            centerGestureDismissJob = null
+            centerGestureSnapshot = VideoCenterGestureSnapshot()
         }
     }
 
@@ -3819,7 +3992,55 @@ private fun DirectVideoPlayer(
         refreshingStream = refreshingStream,
     )
 
-    CoboPredictiveBackHandler(nav)
+    val enterInAppFloating: () -> Unit = {
+        if (!handedOffToFloating) {
+            handedOffToFloating = true
+            val session = FloatingVideoSession(
+                request = FloatingVideoRequest(
+                    rawUrl = rawUrl,
+                    streamUrl = activeStreamUrl,
+                    fallbackStreamUrl = fallbackStreamUrl,
+                    referer = activeReferer,
+                    title = title,
+                    isLive = liveMode,
+                    fid = fid,
+                    statusId = statusId,
+                    playbackSpeed = speed,
+                ),
+                player = player,
+                onRefreshStream = currentOnRefreshStream,
+                initialAspectRatio = videoAspectRatio,
+            )
+            if (floatingController.fullscreenSession?.player === player) {
+                floatingController.fullscreenSession = null
+            }
+            floatingController.startFloating(session)
+            nav.pop()
+        }
+    }
+
+    val currentEnterInAppFloating by rememberUpdatedState(enterInAppFloating)
+    val currentRequestSystemPip by rememberUpdatedState({
+        if (!floatingController.requestSystemPip(videoAspectRatio)) {
+            flash("当前设备不支持画中画")
+        }
+    })
+    val currentCloseVideo by rememberUpdatedState({ nav.pop() })
+
+    ViewerSystemBars(visible = !systemPipActive && (controlsVisible || speedMenu))
+
+    val autoFloatOnBack = shouldAutoFloatVideoOnBack(
+        autoFloatEnabled = App.settings.videoAutoFloatOnBack,
+        isPlaying = isPlaying,
+        isLive = liveMode,
+    )
+    if (speedMenu) {
+        BackHandler(enabled = true) { speedMenu = false }
+    } else if (autoFloatOnBack) {
+        BackHandler(enabled = true) { enterInAppFloating() }
+    } else {
+        CoboPredictiveBackHandler(nav)
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -3855,8 +4076,8 @@ private fun DirectVideoPlayer(
         }
 
         // 手势层铺在底部与顶部控件下面：单点切换整套控件显隐，左/中/右双击快退5秒/暂停播放/快进5秒，
-        // 左右拖动联动底部进度条快进/快退，左半上下划调亮度、右半上下划调音量，长按临时 3× 倍速并支持下滑锁定。
-        // 直播模式下仅保留单点显隐与亮度/音量手势，禁用倍速、进度拖动、快进/快退与暂停。
+        // 左右拖动联动底部进度条快进/快退；纵向滑动按左/中/右分区分别调节亮度、触发中区悬浮或关闭、调节音量；
+        // 长按临时 3× 倍速并支持下滑锁定。直播模式下禁用倍速、进度拖动、快进/快退与暂停。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -3911,12 +4132,14 @@ private fun DirectVideoPlayer(
                     )
                 }
                 .pointerInput(Unit) {
-                    var left = true
+                    val screenDensity = this.density
+                    var zone = VideoVerticalZone.Brightness
                     var startBrightness = 0.5f
                     var startVolume = 0
                     var maxVolume = 1
                     var dragged = 0f
                     var verticalActive = false
+                    var lastArmed = VideoCenterGestureAction.None
                     detectVerticalDragGestures(
                         onDragStart = { position ->
                             if (longPressSpeedActive) {
@@ -3924,36 +4147,108 @@ private fun DirectVideoPlayer(
                                 return@detectVerticalDragGestures
                             }
                             verticalActive = true
-                            left = position.x < size.width / 2f
+                            zone = classifyVideoVerticalZone(
+                                xPx = position.x,
+                                containerWidthPx = size.width.toFloat(),
+                                centerSwipeEnabled = currentCenterSwipeEnabled,
+                            )
                             dragged = 0f
-                            if (left) {
-                                startBrightness = windowBrightness()
-                            } else {
-                                startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                maxVolume = audio
-                                    .getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                    .coerceAtLeast(1)
+                            when (zone) {
+                                VideoVerticalZone.Brightness -> {
+                                    startBrightness = windowBrightness()
+                                }
+                                VideoVerticalZone.Volume -> {
+                                    startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                    maxVolume = audio
+                                        .getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                        .coerceAtLeast(1)
+                                }
+                                VideoVerticalZone.CenterActions -> {
+                                    centerGestureDismissJob?.cancel()
+                                    centerGestureDismissJob = null
+                                    centerGestureAnchorYPx = position.y
+                                    centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                    lastArmed = VideoCenterGestureAction.None
+                                }
                             }
                         },
                         onVerticalDrag = { change, dy ->
                             if (!verticalActive || longPressSpeedActive) return@detectVerticalDragGestures
                             change.consume()
                             dragged += dy
-                            val ratio = -dragged / size.height
-                            if (left) {
-                                val value = (startBrightness + ratio).coerceIn(0.02f, 1f)
-                                applyBrightness(value)
-                                flash("亮度 ${(value * 100).roundToInt()}%")
-                            } else {
-                                val value = (startVolume + ratio * maxVolume)
-                                    .roundToInt()
-                                    .coerceIn(0, maxVolume)
-                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
-                                flash("音量 ${value * 100 / maxVolume}%")
+                            when (zone) {
+                                VideoVerticalZone.Brightness -> {
+                                    val ratio = -dragged / size.height
+                                    val value = (startBrightness + ratio).coerceIn(0.02f, 1f)
+                                    applyBrightness(value)
+                                    flash("亮度 ${(value * 100).roundToInt()}%")
+                                }
+                                VideoVerticalZone.Volume -> {
+                                    val ratio = -dragged / size.height
+                                    val value = (startVolume + ratio * maxVolume)
+                                        .roundToInt()
+                                        .coerceIn(0, maxVolume)
+                                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+                                    flash("音量 ${value * 100 / maxVolume}%")
+                                }
+                                VideoVerticalZone.CenterActions -> {
+                                    val next = evaluateVideoCenterGesture(dragged, screenDensity)
+                                    if (
+                                        next.armedAction != lastArmed &&
+                                        next.armedAction != VideoCenterGestureAction.None
+                                    ) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                                    }
+                                    lastArmed = next.armedAction
+                                    centerGestureSnapshot = next
+                                }
                             }
                         },
-                        onDragEnd = { verticalActive = false },
-                        onDragCancel = { verticalActive = false },
+                        onDragEnd = {
+                            if (!verticalActive) return@detectVerticalDragGestures
+                            verticalActive = false
+                            if (zone == VideoVerticalZone.CenterActions) {
+                                val armed = centerGestureSnapshot.armedAction
+                                val dir = centerGestureSnapshot.direction
+                                when (armed) {
+                                    VideoCenterGestureAction.InAppFloating -> {
+                                        centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                        currentEnterInAppFloating()
+                                    }
+                                    VideoCenterGestureAction.SystemPip -> {
+                                        centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                        currentRequestSystemPip()
+                                    }
+                                    VideoCenterGestureAction.Close -> {
+                                        centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                        currentCloseVideo()
+                                    }
+                                    VideoCenterGestureAction.None -> {
+                                        if (dir != VideoCenterGestureDirection.None) {
+                                            centerGestureDismissJob?.cancel()
+                                            centerGestureDismissJob = scope.launch {
+                                                delay(VideoCenterGestureAutoDismissMillis)
+                                                centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            if (!verticalActive) return@detectVerticalDragGestures
+                            verticalActive = false
+                            if (
+                                zone == VideoVerticalZone.CenterActions &&
+                                centerGestureSnapshot.direction != VideoCenterGestureDirection.None
+                            ) {
+                                centerGestureDismissJob?.cancel()
+                                centerGestureDismissJob = scope.launch {
+                                    delay(VideoCenterGestureAutoDismissMillis)
+                                    centerGestureSnapshot = VideoCenterGestureSnapshot()
+                                }
+                            }
+                        },
                     )
                 }
                 .pointerInput(liveMode) {
@@ -4040,9 +4335,11 @@ private fun DirectVideoPlayer(
         )
 
         AnimatedVisibility(
-            visible = controlsVisible || speedMenu,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150)),
+            visible = !systemPipActive && (controlsVisible || speedMenu),
+            enter = fadeIn(tween(300, easing = VideoBarEnterEasing)) +
+                slideInVertically(tween(340, easing = VideoBarEnterEasing)) { -it / 4 },
+            exit = fadeOut(tween(480, easing = VideoBarExitEasing)) +
+                slideOutVertically(tween(520, easing = VideoBarExitEasing)) { -it / 5 },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter),
@@ -4102,7 +4399,10 @@ private fun DirectVideoPlayer(
                     Box {
                         VideoSpeedPill(
                             text = speedLabel(effectivePlaybackSpeed),
-                            onClick = { speedMenu = !speedMenu },
+                            onClick = {
+                                controlsInteractionTick++
+                                speedMenu = !speedMenu
+                            },
                         )
                         OverlayListPopup(
                             show = speedMenu,
@@ -4119,6 +4419,7 @@ private fun DirectVideoPlayer(
                                         index = index,
                                         groupKey = "video_speed",
                                         onSelectedIndexChange = {
+                                            controlsInteractionTick++
                                             speed = value
                                             longPressSpeedLocked = false
                                             flash("${speedLabel(value)} 倍速")
@@ -4130,21 +4431,59 @@ private fun DirectVideoPlayer(
                         }
                     }
                     Spacer(Modifier.width(6.dp))
-                    HighlightedIconButton(onClick = onDownload, size = VideoTopBarButtonHeight) {
+                    HighlightedIconButton(
+                        onClick = {
+                            controlsInteractionTick++
+                            onDownload()
+                        },
+                        size = VideoTopBarButtonHeight,
+                    ) {
                         Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
                     }
                     Spacer(Modifier.width(6.dp))
                 }
-                HighlightedIconButton(onClick = onOpenInBrowser, size = VideoTopBarButtonHeight) {
+                if (!centerSwipeEnabled) {
+                    HighlightedIconButton(
+                        onClick = {
+                            controlsInteractionTick++
+                            enterInAppFloating()
+                        },
+                        size = VideoTopBarButtonHeight,
+                    ) {
+                        Icon(CoboIcons.FloatingWindow, "小窗播放", Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    HighlightedIconButton(
+                        onClick = {
+                            controlsInteractionTick++
+                            if (!floatingController.requestSystemPip(videoAspectRatio)) {
+                                flash("当前设备不支持画中画")
+                            }
+                        },
+                        size = VideoTopBarButtonHeight,
+                    ) {
+                        Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                HighlightedIconButton(
+                    onClick = {
+                        controlsInteractionTick++
+                        onOpenInBrowser()
+                    },
+                    size = VideoTopBarButtonHeight,
+                ) {
                     Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
             }
         }
 
         AnimatedVisibility(
-            visible = !liveMode && (controlsVisible || speedMenu),
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150)),
+            visible = !systemPipActive && !liveMode && (controlsVisible || speedMenu),
+            enter = fadeIn(tween(300, easing = VideoBarEnterEasing)) +
+                slideInVertically(tween(340, easing = VideoBarEnterEasing)) { it / 4 },
+            exit = fadeOut(tween(480, easing = VideoBarExitEasing)) +
+                slideOutVertically(tween(520, easing = VideoBarExitEasing)) { it / 5 },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter),
@@ -4172,7 +4511,10 @@ private fun DirectVideoPlayer(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     HighlightedIconButton(
-                        onClick = { seekBy(-SeekStepMs) },
+                        onClick = {
+                            controlsInteractionTick++
+                            seekBy(-SeekStepMs)
+                        },
                         size = VideoTopBarButtonHeight,
                         modifier = Modifier.semantics { contentDescription = "快退 5 秒" },
                     ) {
@@ -4184,7 +4526,10 @@ private fun DirectVideoPlayer(
                         )
                     }
                     HighlightedIconButton(
-                        onClick = ::togglePlayPause,
+                        onClick = {
+                            controlsInteractionTick++
+                            togglePlayPause()
+                        },
                         size = VideoTopBarButtonHeight,
                     ) {
                         Icon(
@@ -4194,7 +4539,10 @@ private fun DirectVideoPlayer(
                         )
                     }
                     HighlightedIconButton(
-                        onClick = { seekBy(SeekStepMs) },
+                        onClick = {
+                            controlsInteractionTick++
+                            seekBy(SeekStepMs)
+                        },
                         size = VideoTopBarButtonHeight,
                         modifier = Modifier.semantics { contentDescription = "快进 5 秒" },
                     ) {
@@ -4260,59 +4608,238 @@ private fun DirectVideoPlayer(
             }
         }
 
+        val topToastInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
+        val activeGestureHint = if (
+            !systemPipActive &&
+            centerSwipeEnabled &&
+            centerGestureSnapshot.direction != VideoCenterGestureDirection.None
+        ) {
+            videoCenterGestureHintText(centerGestureSnapshot.direction, centerGestureSnapshot.armedAction)
+        } else {
+            ""
+        }
+        val activeSpeedLockToast = !systemPipActive && !liveMode && (longPressSpeedActive || longPressSpeedLocked)
+        val activeTopToastText = when {
+            activeGestureHint.isNotEmpty() -> activeGestureHint
+            activeSpeedLockToast -> if (longPressSpeedLocked) "3.0× 已锁定，长按解锁" else "3.0× 快进中，下滑锁定"
+            !systemPipActive && hud.isNotEmpty() -> hud
+            else -> ""
+        }
+        val activeTopToastLocked = activeGestureHint.isEmpty() && activeSpeedLockToast && longPressSpeedLocked
+        var lastTopToastText by remember { mutableStateOf("") }
+        var lastTopToastLocked by remember { mutableStateOf(false) }
+        if (activeTopToastText.isNotEmpty()) {
+            lastTopToastText = activeTopToastText
+            lastTopToastLocked = activeTopToastLocked
+        }
+        val topToastVisible = activeTopToastText.isNotEmpty()
+        val displayTopToastText = if (topToastVisible) activeTopToastText else lastTopToastText
+        val displayTopToastLocked = if (topToastVisible) activeTopToastLocked else lastTopToastLocked
+
         AnimatedVisibility(
-            visible = !liveMode && (longPressSpeedActive || longPressSpeedLocked),
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(150)),
+            visible = topToastVisible,
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(240, easing = VideoBarExitEasing)),
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 58.dp),
+                .windowInsetsPadding(topToastInsets)
+                .padding(top = 56.dp),
         ) {
             MediaMaterialPill(
-                onClick = if (longPressSpeedLocked) {
+                height = 34.dp,
+                horizontalPadding = 14.dp,
+                onClick = if (displayTopToastLocked) {
                     { longPressSpeedLocked = false }
                 } else {
                     null
                 },
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (longPressSpeedLocked) {
-                        Icon(
-                            imageVector = COUIIcons.Lock,
-                            contentDescription = "已锁定倍速",
-                            tint = COUITheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp),
+                AnimatedContent(
+                    targetState = displayTopToastText to displayTopToastLocked,
+                    transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+                    label = "videoUnifiedTopToast",
+                ) { (text, locked) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (locked) {
+                            Icon(
+                                imageVector = COUIIcons.Lock,
+                                contentDescription = "已锁定倍速",
+                                tint = COUITheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            text = text,
+                            color = if (locked) COUITheme.colorScheme.primary else LocalContentColor.current,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
                         )
-                        Spacer(Modifier.width(5.dp))
                     }
-                    Text(
-                        text = if (longPressSpeedLocked) {
-                            "3.0× 已锁定 · 长按解锁"
-                        } else {
-                            "3.0× 快进中 · 下滑锁定"
-                        },
-                        color = if (longPressSpeedLocked) COUITheme.colorScheme.primary else LocalContentColor.current,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                    )
                 }
             }
         }
 
-        if (hud.isNotEmpty()) {
-            Text(
-                text = hud,
-                color = Color.White,
-                fontSize = 15.sp,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+        if (!systemPipActive && centerSwipeEnabled) {
+            VideoCenterGestureOverlay(
+                snapshot = centerGestureSnapshot,
+                anchorYPx = centerGestureAnchorYPx,
+                modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+}
+
+@Composable
+private fun VideoCenterGestureOverlay(
+    snapshot: VideoCenterGestureSnapshot,
+    anchorYPx: Float,
+    modifier: Modifier = Modifier,
+) {
+    val isVisible = snapshot.direction != VideoCenterGestureDirection.None
+    var lastActiveSnapshot by remember { mutableStateOf(snapshot) }
+    if (isVisible) {
+        lastActiveSnapshot = snapshot
+    }
+    val overlayAlpha by animateFloatAsState(
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (isVisible) 180 else 280,
+            easing = if (isVisible) VideoBarEnterEasing else VideoBarExitEasing,
+        ),
+        label = "videoCenterGestureAlpha",
+    )
+    if (!isVisible && overlayAlpha <= 0.001f) return
+
+    val display = if (isVisible) snapshot else lastActiveSnapshot
+    val density = LocalDensity.current
+    val statusTopPx = WindowInsets.statusBars.union(WindowInsets.displayCutout).getTop(density).toFloat()
+    val navBottomPx = WindowInsets.navigationBars.getBottom(density).toFloat()
+    val primaryColor = COUITheme.colorScheme.primary
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val containerHPx = constraints.maxHeight.toFloat()
+        val buttonSizePx = with(density) { 54.dp.toPx() }
+        val buttonHalfPx = buttonSizePx / 2f
+
+        when (display.direction) {
+            VideoCenterGestureDirection.Up -> {
+                val minUpAnchorY = statusTopPx + with(density) { 340.dp.toPx() }
+                val maxUpAnchorY = (containerHPx - navBottomPx - with(density) { 48.dp.toPx() })
+                    .coerceAtLeast(minUpAnchorY)
+                val safeAnchorY = anchorYPx.coerceIn(minUpAnchorY, maxUpAnchorY)
+
+                if (display.pipReveal > 0.001f) {
+                    val pipTopPx = safeAnchorY - with(density) { 196.dp.toPx() } - buttonHalfPx
+                    VideoGestureCircleButton(
+                        icon = CoboIcons.PictureInPicture,
+                        contentDescription = "系统画中画",
+                        reveal = display.pipReveal,
+                        overlayAlpha = overlayAlpha,
+                        armed = display.armedAction == VideoCenterGestureAction.SystemPip,
+                        armedFillColor = primaryColor,
+                        floatOffsetPx = (1f - display.pipReveal) * with(density) { 22.dp.toPx() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset { IntOffset(0, pipTopPx.roundToInt()) },
+                    )
+                }
+
+                if (display.inAppReveal > 0.001f) {
+                    val inAppTopPx = safeAnchorY - with(density) { 104.dp.toPx() } - buttonHalfPx
+                    VideoGestureCircleButton(
+                        icon = CoboIcons.FloatingWindow,
+                        contentDescription = "应用内小窗",
+                        reveal = display.inAppReveal,
+                        overlayAlpha = overlayAlpha,
+                        armed = display.armedAction == VideoCenterGestureAction.InAppFloating,
+                        armedFillColor = primaryColor,
+                        floatOffsetPx = (1f - display.inAppReveal) * with(density) { 18.dp.toPx() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset { IntOffset(0, inAppTopPx.roundToInt()) },
+                    )
+                }
+            }
+
+            VideoCenterGestureDirection.Down -> {
+                val minDownAnchorY = statusTopPx + with(density) { 108.dp.toPx() }
+                val maxDownAnchorY = (containerHPx - navBottomPx - with(density) { 156.dp.toPx() })
+                    .coerceAtLeast(minDownAnchorY)
+                val safeAnchorY = anchorYPx.coerceIn(minDownAnchorY, maxDownAnchorY)
+
+                if (display.closeReveal > 0.001f) {
+                    val closeTopPx = safeAnchorY + with(density) { 116.dp.toPx() } - buttonHalfPx
+                    VideoGestureCircleButton(
+                        icon = COUIIcons.Close,
+                        contentDescription = "关闭视频",
+                        reveal = display.closeReveal,
+                        overlayAlpha = overlayAlpha,
+                        armed = display.armedAction == VideoCenterGestureAction.Close,
+                        armedFillColor = Color(0xFFFF3B30).copy(alpha = 0.88f),
+                        floatOffsetPx = -(1f - display.closeReveal) * with(density) { 18.dp.toPx() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset { IntOffset(0, closeTopPx.roundToInt()) },
+                    )
+                }
+            }
+
+            VideoCenterGestureDirection.None -> Unit
+        }
+    }
+}
+
+@Composable
+private fun VideoGestureCircleButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    reveal: Float,
+    overlayAlpha: Float,
+    armed: Boolean,
+    armedFillColor: Color,
+    floatOffsetPx: Float,
+    modifier: Modifier = Modifier,
+) {
+    val armedScale by animateFloatAsState(
+        targetValue = if (armed) 1.18f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.72f),
+        label = "videoGestureCircleScale",
+    )
+    val fillColor by animateColorAsState(
+        targetValue = if (armed) armedFillColor else Color(0xFF1C1C1E).copy(alpha = 0.72f),
+        animationSpec = tween(160),
+        label = "videoGestureCircleFill",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (armed) armedFillColor.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.22f),
+        animationSpec = tween(160),
+        label = "videoGestureCircleBorder",
+    )
+    val baseScale = 0.72f + 0.28f * reveal.coerceIn(0f, 1f)
+    val totalScale = baseScale * armedScale
+
+    Box(
+        modifier = modifier
+            .size(54.dp)
+            .graphicsLayer {
+                alpha = reveal.coerceIn(0f, 1f) * overlayAlpha
+                scaleX = totalScale
+                scaleY = totalScale
+                translationY = floatOffsetPx
+            }
+            .clip(CircleShape)
+            .background(fillColor)
+            .border(if (armed) 2.dp else 1.dp, borderColor, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
@@ -4597,17 +5124,27 @@ private fun WebVideoPlayer(
             )
         }
 
-        if (hud.isNotEmpty()) {
-            Text(
-                text = hud,
-                color = Color.White,
-                fontSize = 15.sp,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            )
+        val topToastInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
+        var lastWebHud by remember { mutableStateOf("") }
+        if (hud.isNotEmpty()) lastWebHud = hud
+        AnimatedVisibility(
+            visible = hud.isNotEmpty(),
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(240, easing = VideoBarExitEasing)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(topToastInsets)
+                .padding(top = 56.dp),
+        ) {
+            MediaMaterialPill(height = 34.dp, horizontalPadding = 14.dp) {
+                Text(
+                    text = if (hud.isNotEmpty()) hud else lastWebHud,
+                    color = LocalContentColor.current,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

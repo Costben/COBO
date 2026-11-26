@@ -41,6 +41,9 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_show_verified_badge",
             "settings_live_photo_auto_play",
             "settings_live_photo_sound",
+            "settings_video_auto_float_on_back",
+            "settings_video_auto_close_on_complete",
+            "settings_video_center_swipe_actions",
             "settings_in_app_browser",
             "settings_confirm_like",
             "settings_accounts",
@@ -204,6 +207,21 @@ class SettingsE2eTest : UiE2eTest() {
             waitUntil("内置浏览器开关没有切回") { App.settings.inAppBrowser == before }
         } finally {
             App.settings.applyInAppBrowser(before)
+        }
+    }
+
+    @Test
+    fun videoAutoFloatOnBack_togglesAndRestores() {
+        openSettings()
+        val before = App.settings.videoAutoFloatOnBack
+        try {
+            scrollToTag("settings_video_auto_float_on_back")
+            tapTag("settings_video_auto_float_on_back")
+            waitUntil("视频播放时返回自动悬浮开关没有切换") { App.settings.videoAutoFloatOnBack != before }
+            tapTag("settings_video_auto_float_on_back")
+            waitUntil("视频播放时返回自动悬浮开关没有切回") { App.settings.videoAutoFloatOnBack == before }
+        } finally {
+            App.settings.applyVideoAutoFloatOnBack(before)
         }
     }
 
