@@ -44,6 +44,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,12 +68,14 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -102,7 +105,9 @@ import com.cobo.app.ui.LocalImageOrigins
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.extractResolvablePhotoLinksFromHtml
 import com.cobo.app.ui.imageOrigin
+import com.cobo.app.ui.FloatingBarNonInteractiveThreshold
 import com.cobo.app.ui.layerBackdropIf
+import com.cobo.app.ui.rememberFloatingBarScrollController
 import com.cobo.app.ui.PinnedBarDensity
 import com.cobo.app.ui.pinnedHeight
 import com.cobo.app.ui.pinnedRowsHeight
@@ -368,11 +373,23 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         animationSpec = tween(durationMillis = 160),
         label = "commentsAlpha",
     )
+    val autoHideFloatingBars = App.settings.autoHideFloatingBars
+    val detailBarScroll = rememberFloatingBarScrollController(
+        enabled = autoHideFloatingBars,
+        forceShow = repostDialog || commentDialog || activeCommentDetail != null || repostComment != null,
+        listState = listState,
+        topSafeZone = 16.dp,
+    )
+    val detailHideProgress = detailBarScroll.hideProgress
+    val detailBarHidden by remember(detailHideProgress) {
+        derivedStateOf { detailHideProgress.value >= FloatingBarNonInteractiveThreshold }
+    }
 
     Box(Modifier.fillMaxSize().background(pageContainerColor())) {
         Box(
             Modifier
                 .fillMaxSize()
+                .nestedScroll(detailBarScroll.connection)
                 .layerBackdropIf(blurEffectsEnabled(), backdrop)
                 .background(pageContainerColor())
         ) {
@@ -608,10 +625,21 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
             PinnedBarDensity {
                 val current = status
                 val currentFavorited = current?.let { App.repo.isFavorited(it) } == true
+                var toolbarHeightPx by remember { mutableIntStateOf(0) }
+                val toolbarExtraClearancePx = with(LocalDensity.current) { 24.dp.toPx() }
                 DetailFloatingToolbar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = BottomFloatingNavigationBarDefaults.navigationBarPadding()),
+                        .onSizeChanged { toolbarHeightPx = it.height }
+                        .graphicsLayer {
+                            val hp = detailHideProgress.value.coerceIn(0f, 1f)
+                            val travel = if (toolbarHeightPx > 0) toolbarHeightPx.toFloat() else toolbarExtraClearancePx * 5f
+                            translationY = hp * (travel + toolbarExtraClearancePx)
+                            alpha = (1f - hp * 1.25f).coerceIn(0f, 1f)
+                        }
+                        .padding(bottom = BottomFloatingNavigationBarDefaults.navigationBarPadding())
+                        .then(if (detailBarHidden) Modifier.clearAndSetSemantics {} else Modifier),
+                    barrierEnabled = !detailBarHidden,
                 ) {
                     DetailFloatingToolbarItem(
                         icon = CoboIcons.Repost,
@@ -619,7 +647,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         contentDescription = "转发",
                         onClick = { repostDialog = true },
                         modifier = Modifier.testTag("detail_repost"),
-                        enabled = !readOnly,
+                        enabled = !readOnly && !detailBarHidden,
                     )
                     DetailFloatingToolbarItem(
                         icon = CoboIcons.Comment,
@@ -627,7 +655,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         contentDescription = "评论",
                         onClick = { commentDialog = true },
                         modifier = Modifier.testTag("detail_comment"),
-                        enabled = !readOnly,
+                        enabled = !readOnly && !detailBarHidden,
                     )
                     DetailFloatingToolbarItem(
                         icon = if (currentFavorited) CoboIcons.StarFill else CoboIcons.Star,
@@ -641,7 +669,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         },
                         modifier = Modifier.testTag("detail_favorite"),
                         active = currentFavorited,
-                        enabled = current != null,
+                        enabled = current != null && !detailBarHidden,
                     )
                     DetailFloatingToolbarItem(
                         icon = if (current?.liked == true) CoboIcons.HeartFill else CoboIcons.Heart,
@@ -655,7 +683,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                         },
                         modifier = Modifier.testTag("detail_like"),
                         active = current?.liked == true,
-                        enabled = !readOnly,
+                        enabled = !readOnly && !detailBarHidden,
                     )
                 }
             }
@@ -1711,6 +1739,7 @@ private fun SortProgressLine(visible: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun DetailFloatingToolbar(
     modifier: Modifier = Modifier,
+    barrierEnabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -1733,7 +1762,7 @@ private fun DetailFloatingToolbar(
             .heightIn(min = BottomFloatingToolbarDefaults.MinHeight),
         contentAlignment = Alignment.Center,
     ) {
-        Box(modifier = Modifier.popupBottomBarrier()) {
+        Box(modifier = if (barrierEnabled) Modifier.popupBottomBarrier() else Modifier) {
             if (!isDark && capsuleWidthPx > 0) {
                 Box(
                     modifier = Modifier
