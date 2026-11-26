@@ -1,5 +1,6 @@
 package com.cobo.app.data
 
+import com.cobo.app.screen.defaultFavoritesInitialTab
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -99,5 +100,16 @@ class LocalNotesTest {
         }
         assertEquals(listOf("1"), byRemark.map { it.status.id })
         assertFalse(filterReadLaterEntries(entries, ReadLaterFilter.Unread, "不存在") { null }.isNotEmpty())
+    }
+
+    @Test
+    fun favoritesInitialTabPrioritizesReadLaterWhenNonEmpty() {
+        assertEquals(2, defaultFavoritesInitialTab(requestedTab = null, readLaterTabIndex = 2, hasReadLater = true))
+        assertEquals(1, defaultFavoritesInitialTab(requestedTab = null, readLaterTabIndex = 1, hasReadLater = true))
+        assertEquals(0, defaultFavoritesInitialTab(requestedTab = null, readLaterTabIndex = 2, hasReadLater = false))
+        assertEquals(0, defaultFavoritesInitialTab(requestedTab = null, readLaterTabIndex = 1, hasReadLater = false))
+        assertEquals(2, defaultFavoritesInitialTab(requestedTab = 2, readLaterTabIndex = 2, hasReadLater = false))
+        assertEquals(2, defaultFavoritesInitialTab(requestedTab = 9, readLaterTabIndex = 2, hasReadLater = false))
+        assertEquals(0, defaultFavoritesInitialTab(requestedTab = -1, readLaterTabIndex = 2, hasReadLater = true))
     }
 }

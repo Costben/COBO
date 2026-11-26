@@ -108,13 +108,23 @@ import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
 
+internal fun defaultFavoritesInitialTab(
+    requestedTab: Int?,
+    readLaterTabIndex: Int,
+    hasReadLater: Boolean,
+): Int {
+    val target = requestedTab ?: if (hasReadLater) readLaterTabIndex else 0
+    return target.coerceIn(0, readLaterTabIndex.coerceAtLeast(0))
+}
+
 /**
  * 收藏页面：已登录账号提供「微博」「本地」「稍后再看」三栏，纯本地模式提供「本地收藏」「稍后再看」两栏。
+ * 若外部未指定初始标签且当前存在稍后再看条目，优先默认定位到「稍后再看」。
  */
 @Composable
 fun FavoritesScreen(
     nav: NavState,
-    initialTab: Int = 0,
+    initialTab: Int? = null,
 ) {
     val guest = remember { App.repo.guest }
     val localStore = remember {
@@ -136,9 +146,16 @@ fun FavoritesScreen(
         if (guest) listOf<FeedStore?>(localStore, null) else listOf(cloudStore, localStore, null)
     }
     val readLaterTabIndex = tabs.lastIndex
+    val startPage = remember(tabs.size, initialTab) {
+        defaultFavoritesInitialTab(
+            requestedTab = initialTab,
+            readLaterTabIndex = readLaterTabIndex,
+            hasReadLater = ReadLater.all().isNotEmpty(),
+        )
+    }
     val listStates = remember(tabs.size) { List(tabs.size) { LazyListState() } }
     val pagerState = rememberPagerState(
-        initialPage = initialTab.coerceIn(0, tabs.lastIndex),
+        initialPage = startPage,
         pageCount = { tabs.size },
     )
     val backdrop = rememberLayerBackdrop()
