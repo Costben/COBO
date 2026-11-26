@@ -309,4 +309,107 @@ class LongTextFoldTest {
         assertEquals("A &amp; B 截断内容...<a href=\"/status/5370000000001006\">全文</a>", status.textHtml)
         assertNull(status.foldedTextHtml)
     }
+
+    @Test
+    fun parseReadsLongTextContentFieldForRepostDetailWithHasExtraText() {
+        val truncated = "根据美国司法部文件（1:26-cv-04150）目前的情况是被盗的币被冻结，Circle 表示自愿发行和被盗数额等量的新币，并在收到法院的没收令后将这些币转移给美国政府。//@tombkeeper:昨天币安被入侵，然后 Circle、Tether 等币圈公司紧急冻结了价值几十亿美元的加密货币。如果真的“匿名”“去中心化”，怎么"
+        val full = truncated + "还能冻结呢？如果真的“匿名”“去中心化”，那这钱丢了就是丢了。"
+        val json = JSONObject(
+            """
+            {
+              "id": "5369483103309260",
+              "mid": "5369483103309260",
+              "text": ${JSONObject.quote(truncated)},
+              "created_at": "Thu Nov 26 12:39:55 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": false,
+              "truncated": false,
+              "has_extra_text": true,
+              "longText": {
+                "content": ${JSONObject.quote(full)}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val detailStatus = Status.from(json, fullText = true)!!
+        assertTrue(detailStatus.isLongText)
+        assertEquals(full, detailStatus.plainText)
+        assertEquals(truncated, stripHtml(detailStatus.foldedTextHtml))
+        assertFalse(isServerTruncatedHtml(detailStatus.textHtml))
+    }
+
+    @Test
+    fun parseMarksHasExtraTextWithoutLongTextAsServerTruncatedWhenNotFullText() {
+        val json = JSONObject(
+            """
+            {
+              "id": "5369483103309261",
+              "mid": "5369483103309261",
+              "text": "转发超长链截断正文",
+              "created_at": "Thu Nov 26 12:39:55 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": false,
+              "truncated": false,
+              "has_extra_text": true
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json, fullText = false)!!
+        assertTrue(status.isLongText)
+        assertNull(status.foldedTextHtml)
+        assertTrue(isServerTruncatedHtml(status.textHtml))
+        assertTrue(status.textHtml.endsWith("...<a href=\"/status/5369483103309261\">全文</a>"))
+    }
+
+    @Test
+    fun mergeDetailStatusWithSeededKeepsFullSeededTextWhenDetailRemainsTruncated() {
+        val fullBody = "完整正文内容".repeat(40)
+        val seeded = Status.from(
+            JSONObject(
+                """
+                {
+                  "id": "5370000000001009",
+                  "mid": "5370000000001009",
+                  "text": "截断版本",
+                  "isLongText": true,
+                  "longText": {"longTextContent": ${JSONObject.quote(fullBody)}}
+                }
+                """.trimIndent(),
+            ),
+        )!!
+        val truncatedDetail = Status.from(
+            JSONObject(
+                """
+                {
+                  "id": "5370000000001009",
+                  "mid": "5370000000001009",
+                  "text": "截断版本",
+                  "has_extra_text": true
+                }
+                """.trimIndent(),
+            ),
+            fullText = false,
+        )!!
+        val merged = mergeDetailStatusWithSeeded(truncatedDetail, seeded)!!
+        assertEquals(fullBody, merged.plainText)
+        assertNotNull(merged.foldedTextHtml)
+
+        val shorterEditedDetail = Status.from(
+            JSONObject(
+                """
+                {
+                  "id": "5370000000001009",
+                  "mid": "5370000000001009",
+                  "text": "作者编辑后的短正文",
+                  "isLongText": false
+                }
+                """.trimIndent(),
+            ),
+            fullText = true,
+        )!!
+        val mergedEdited = mergeDetailStatusWithSeeded(shorterEditedDetail, seeded)!!
+        assertEquals("作者编辑后的短正文", mergedEdited.plainText)
+    }
 }

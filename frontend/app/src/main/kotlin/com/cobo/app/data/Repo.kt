@@ -1062,8 +1062,8 @@ class Repo(private val context: Context, private val store: Store) {
         val payload = ext.optJSONObject("data") ?: ext
         return payload.str("longTextContent")
             .ifBlank { ext.str("longTextContent") }
-            .ifBlank { payload.optJSONObject("longText")?.str("longTextContent").orEmpty() }
-            .ifBlank { ext.optJSONObject("longText")?.str("longTextContent").orEmpty() }
+            .ifBlank { extractLongTextContent(payload).orEmpty() }
+            .ifBlank { extractLongTextContent(ext).orEmpty() }
     }
 
     private fun applyExtendPayload(target: JSONObject, ext: JSONObject) {
@@ -1153,8 +1153,8 @@ class Repo(private val context: Context, private val store: Store) {
         fun collect(obj: JSONObject?) {
             if (obj == null || obj.isPromotedStatus()) return
             val id = obj.str("idstr").ifBlank { obj.str("id") }.ifBlank { obj.str("mid") }
-            val needsExtend = (obj.optBoolean("isLongText") || obj.optBoolean("truncated")) &&
-                obj.optJSONObject("longText")?.str("longTextContent").isNullOrBlank()
+            val needsExtend = hasLongTextFlag(obj) &&
+                extractLongTextContent(obj).isNullOrBlank()
             if (id.isNotBlank() && needsExtend && seenIds.add(id)) {
                 val cached = longTextCache[id]
                 if (cached != null) {
@@ -1990,18 +1990,56 @@ class Repo(private val context: Context, private val store: Store) {
         return items
     }
 
+    private suspend fun enrichMobileDetailLongText(id: String, data: JSONObject) {
+        suspend fun fill(target: JSONObject?, fallbackId: String) {
+            if (target == null) return
+            if (!extractLongTextContent(target).isNullOrBlank()) return
+            val rawText = target.str("text")
+            val needs = hasServerTruncationMarker(rawText) ||
+                (hasLongTextFlag(target) && foldWeiboHtml(stripTrailingFullTextMarker(rawText)) == null)
+            if (!needs) return
+            val targetId = target.str("idstr").ifBlank { target.str("id") }.ifBlank { fallbackId }
+            if (targetId.isBlank()) return
+            val cached = longTextCache[targetId]
+            if (cached != null) {
+                applyExtendPayload(target, cached)
+                return
+            }
+            val mid = target.str("mid").ifBlank { target.str("mblogid") }
+            val ext = fetchLongTextExtend(targetId, mid)
+            if (ext != null) {
+                if (extractExtendLongContent(ext).isNotBlank()) {
+                    if (longTextCache.size > 200) longTextCache.clear()
+                    longTextCache[targetId] = ext
+                }
+                applyExtendPayload(target, ext)
+            }
+        }
+        fill(data, id)
+        fill(data.optJSONObject("retweeted_status"), "")
+    }
+
     suspend fun detail(id: String, force: Boolean = false): Status? {
-        var parsed: Status? = if (isClientChannel()) {
+        val parsed: Status? = if (isClientChannel()) {
             val root = containerGet("statuses/show", mapOf("id" to id, "isGetLongText" to "1"))
             enrichContainerLongTextObjects(listOf(root))
-            val clientStatus = Status.from(root, fullText = true)
-            val stillTruncated = (root.optBoolean("isLongText") || root.optBoolean("truncated")) &&
-                root.optJSONObject("longText")?.str("longTextContent").isNullOrBlank()
+            val stillTruncated = hasLongTextFlag(root) && extractLongTextContent(root).isNullOrBlank()
+            val clientStatus = Status.from(root, fullText = !stillTruncated)
             if (stillTruncated && !cookie().isNullOrBlank()) {
                 val mobileRoot = runCatching {
                     get(Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)), cookie(), force)
                 }.getOrNull()
-                Status.from(mobileRoot?.optJSONObject("data"), fullText = true) ?: clientStatus
+                val mobileData = mobileRoot?.optJSONObject("data")
+                if (mobileData != null) {
+                    enrichMobileDetailLongText(id, mobileData)
+                    val mobileStillTruncated = extractLongTextContent(mobileData).isNullOrBlank() &&
+                        hasLongTextFlag(mobileData) &&
+                        hasServerTruncationMarker(mobileData.str("text")) &&
+                        foldWeiboHtml(stripTrailingFullTextMarker(mobileData.str("text"))) == null
+                    Status.from(mobileData, fullText = !mobileStillTruncated) ?: clientStatus
+                } else {
+                    clientStatus
+                }
             } else {
                 clientStatus
             }
@@ -2011,9 +2049,18 @@ class Repo(private val context: Context, private val store: Store) {
                 cookie(),
                 force,
             )
-            Status.from(root.optJSONObject("data"), fullText = true)
+            val data = root.optJSONObject("data")
+            if (data != null) {
+                enrichMobileDetailLongText(id, data)
+                val mobileStillTruncated = extractLongTextContent(data).isNullOrBlank() &&
+                    hasLongTextFlag(data) &&
+                    hasServerTruncationMarker(data.str("text")) &&
+                    foldWeiboHtml(stripTrailingFullTextMarker(data.str("text"))) == null
+                Status.from(data, fullText = !mobileStillTruncated)
+            } else {
+                null
+            }
         }
-        if (parsed == null) return null
         return parsed
     }
 

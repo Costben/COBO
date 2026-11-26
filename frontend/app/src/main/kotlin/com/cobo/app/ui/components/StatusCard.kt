@@ -154,6 +154,8 @@ fun StatusCard(
     foldLongText: Boolean = App.settings.foldLongText,
     /** 是否处于详情页主帖：为 true 时剥离主帖正文末尾残留的「全文」跳转标签（不影响转发原博）。 */
     isDetail: Boolean = false,
+    /** 详情页正文若仍处于服务端截断态，点击尾部「展开全文」时触发的重试补全回调。 */
+    onExpandTruncated: (() -> Unit)? = null,
 ) {
     val displayStatus = App.repo.editedStatus(status.id, status.mid) ?: status
     if (App.repo.isDeleted(displayStatus.id)) return
@@ -263,6 +265,7 @@ fun StatusCard(
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 20.sp else 22.sp,
                 stripTrailingFullText = isDetail,
+                onExpandTruncated = onExpandTruncated,
             )
         }
         val showOuterVote = displayStatus.isVote && (
@@ -1313,14 +1316,23 @@ private fun FoldableWeiboText(
     fontSize: TextUnit,
     lineHeight: TextUnit,
     stripTrailingFullText: Boolean = false,
+    onExpandTruncated: (() -> Unit)? = null,
 ) {
-    val fullHtml = remember(status.textHtml, stripTrailingFullText) {
-        if (stripTrailingFullText) stripTrailingFullTextMarker(status.textHtml) else status.textHtml
+    val serverTruncated = remember(status.textHtml, status.foldedTextHtml) {
+        status.foldedTextHtml == null && isServerTruncatedHtml(status.textHtml)
     }
-    val folded = remember(status.id, fullHtml, status.foldedTextHtml) {
-        status.foldedTextHtml ?: fullHtml
-            .takeIf { it.isNotBlank() && !isServerTruncatedHtml(it) }
-            ?.let { foldWeiboHtml(it) }
+    val canRetryExpand = !fold && serverTruncated && onExpandTruncated != null
+    val fullHtml = remember(status.textHtml, stripTrailingFullText, canRetryExpand) {
+        if (stripTrailingFullText || canRetryExpand) stripTrailingFullTextMarker(status.textHtml) else status.textHtml
+    }
+    val folded = remember(status.id, fullHtml, status.foldedTextHtml, canRetryExpand) {
+        if (canRetryExpand) {
+            null
+        } else {
+            status.foldedTextHtml ?: fullHtml
+                .takeIf { it.isNotBlank() && !isServerTruncatedHtml(it) }
+                ?.let { foldWeiboHtml(it) }
+        }
     }
     val canFold = fold && !folded.isNullOrBlank() && folded != fullHtml
     var expanded by remember(status.id) { mutableStateOf(false) }
@@ -1330,12 +1342,17 @@ private fun FoldableWeiboText(
         expanded -> stripTrailingFullTextMarker(fullHtml)
         else -> fullHtml
     }
+    val showExpand = folding || canRetryExpand
     WeiboText(
         html = displayHtml,
         fontSize = fontSize,
         lineHeight = lineHeight,
-        expandLabel = if (folding) "展开全文" else null,
-        onExpand = if (folding) ({ expanded = true }) else null,
+        expandLabel = if (showExpand) "展开全文" else null,
+        onExpand = when {
+            folding -> ({ expanded = true })
+            canRetryExpand -> onExpandTruncated
+            else -> null
+        },
     )
 }
 

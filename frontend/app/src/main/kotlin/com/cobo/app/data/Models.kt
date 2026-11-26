@@ -929,8 +929,8 @@ data class Status(
             var retweeted = if (depth < 2) parse(retweetedObj, depth + 1, fullText = false) else null
 
             val longTextObj = o.optJSONObject("longText")
-            val longContent = longTextObj?.str("longTextContent")?.takeIf { it.isNotBlank() }
-            val longTextFlag = o.optBoolean("isLongText") || o.optBoolean("truncated")
+            val longContent = extractLongTextContent(o)
+            val longTextFlag = hasLongTextFlag(o)
             val hasFullText = fullText || longContent != null
             val serverText = o.str("text")
             // 服务端自己截断的长文尾部带「…展开」标记；正文一旦补上自己的入口，这个尾巴要先去干净。
@@ -1519,6 +1519,54 @@ private val TrailingExpandSpanRegex = Regex(
 /** 服务端已截断并附带「全文」详情跳转链接的正文，避免再叠加一次本地「展开全文」。 */
 internal fun isServerTruncatedHtml(html: String): Boolean =
     TrailingFullTextLinkRegex.containsMatchIn(html)
+
+/** 服务端原始或格式化正文尾部带「全文」链接或「展开」标记，说明正文本身仍处于截断态。 */
+internal fun hasServerTruncationMarker(html: String): Boolean =
+    TrailingFullTextLinkRegex.containsMatchIn(html) || TrailingExpandSpanRegex.containsMatchIn(html)
+
+/**
+ * 提取服务端 `longText` 对象中的完整正文：
+ * 信息流与 `statuses/extend` 常用 `longText.longTextContent`，而客户端 `statuses/show`
+ * 对转发长链（`has_extra_text=true`）则把完整正文放在 `longText.content`。
+ */
+internal fun extractLongTextContent(o: JSONObject?): String? {
+    val longTextObj = o?.optJSONObject("longText") ?: return null
+    return longTextObj.str("longTextContent")
+        .ifBlank { longTextObj.str("content") }
+        .takeIf { it.isNotBlank() }
+}
+
+/** 服务端标记存在超长/扩展正文：除 `isLongText` / `truncated` 外，转发超长链会标记 `has_extra_text`。 */
+internal fun hasLongTextFlag(o: JSONObject?): Boolean =
+    o != null && (o.optBoolean("isLongText") || o.optBoolean("truncated") || o.optBoolean("has_extra_text"))
+
+/**
+ * 详情接口若偶发仍返回服务端截断版（无本地折叠版且尾部带「全文」截断标记），
+ * 不要用截断版覆盖掉列表页已经拿到的完整正文（含转发外层与被转发原博）。
+ */
+internal fun mergeDetailStatusWithSeeded(loaded: Status?, seeded: Status?): Status? {
+    if (loaded == null) return seeded
+    if (seeded == null || loaded.id != seeded.id) return loaded
+    val loadedTruncated = loaded.foldedTextHtml == null && isServerTruncatedHtml(loaded.textHtml)
+    val seededFull = !isServerTruncatedHtml(seeded.textHtml) && seeded.plainText.length > loaded.plainText.length
+    val mergedRetweet = if (loaded.retweeted != null && seeded.retweeted != null && loaded.retweeted.id == seeded.retweeted.id) {
+        mergeDetailStatusWithSeeded(loaded.retweeted, seeded.retweeted)
+    } else {
+        loaded.retweeted
+    }
+    return if (loadedTruncated && seededFull) {
+        loaded.copy(
+            textHtml = seeded.textHtml,
+            foldedTextHtml = seeded.foldedTextHtml,
+            isLongText = loaded.isLongText || seeded.isLongText,
+            retweeted = mergedRetweet,
+        )
+    } else if (mergedRetweet != loaded.retweeted) {
+        loaded.copy(retweeted = mergedRetweet)
+    } else {
+        loaded
+    }
+}
 
 /**
  * 把微博正文截到 [budget] 个半角宽度或最多 [maxNewlines] 个换行（约 7 行）：
@@ -2343,7 +2391,7 @@ private fun outerOwnsPageMedia(
     retweetedObj: JSONObject?,
 ): Boolean {
     if (retweetedObj == null) return true
-    val retweetText = retweetedObj.optJSONObject("longText")?.str("longTextContent")?.takeIf { it.isNotBlank() }
+    val retweetText = extractLongTextContent(retweetedObj)
         ?: retweetedObj.str("text")
     val outerHasUrl = outerRawText.contains("http://") || outerRawText.contains("https://")
     val retweetHasUrl = retweetText.contains("http://") || retweetText.contains("https://")

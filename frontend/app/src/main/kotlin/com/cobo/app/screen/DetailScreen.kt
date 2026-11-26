@@ -299,7 +299,10 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         val seeded = status
         if (seeded != null) scope.launch { loadComments(true, force = false) }
         try {
-            status = App.repo.detail(id, force = false)
+            status = com.cobo.app.data.mergeDetailStatusWithSeeded(
+                App.repo.detail(id, force = false),
+                seeded,
+            )
         } catch (t: Throwable) {
             detailError = t.message ?: "正文加载失败"
         }
@@ -429,6 +432,16 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             keepFrame = keepCardFrame,
                             foldLongText = false,
                             isDetail = true,
+                            onExpandTruncated = {
+                                val current = status
+                                scope.launch {
+                                    runCatching { App.repo.detail(id, force = true) }
+                                        .onSuccess { reloaded ->
+                                            status = com.cobo.app.data.mergeDetailStatusWithSeeded(reloaded, current)
+                                        }
+                                        .onFailure { App.toast(it.message ?: "展开全文失败") }
+                                }
+                            },
                         )
                     }
 
