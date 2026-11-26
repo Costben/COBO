@@ -74,6 +74,7 @@ import com.cobo.app.data.VoteInfo
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.foldWeiboHtml
 import com.cobo.app.data.isServerTruncatedHtml
+import com.cobo.app.data.stripTrailingFullTextMarker
 import com.cobo.app.data.superTopicId
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.ExpandOrigin
@@ -151,6 +152,8 @@ fun StatusCard(
     showBottomDivider: Boolean = false,
     /** 信息流按官方 140 字规则折叠长文；详情页传 false，始终显示全文。 */
     foldLongText: Boolean = App.settings.foldLongText,
+    /** 是否处于详情页主帖：为 true 时剥离主帖正文末尾残留的「全文」跳转标签（不影响转发原博）。 */
+    isDetail: Boolean = false,
 ) {
     val displayStatus = App.repo.editedStatus(status.id, status.mid) ?: status
     if (App.repo.isDeleted(displayStatus.id)) return
@@ -259,6 +262,7 @@ fun StatusCard(
                 fold = foldLongText,
                 fontSize = if (compact) 14.sp else 15.sp,
                 lineHeight = if (compact) 20.sp else 22.sp,
+                stripTrailingFullText = isDetail,
             )
         }
         val showOuterVote = displayStatus.isVote && (
@@ -1308,17 +1312,26 @@ private fun FoldableWeiboText(
     fold: Boolean,
     fontSize: TextUnit,
     lineHeight: TextUnit,
+    stripTrailingFullText: Boolean = false,
 ) {
-    val folded = remember(status.id, status.textHtml, status.foldedTextHtml) {
-        status.foldedTextHtml ?: status.textHtml
+    val fullHtml = remember(status.textHtml, stripTrailingFullText) {
+        if (stripTrailingFullText) stripTrailingFullTextMarker(status.textHtml) else status.textHtml
+    }
+    val folded = remember(status.id, fullHtml, status.foldedTextHtml) {
+        status.foldedTextHtml ?: fullHtml
             .takeIf { it.isNotBlank() && !isServerTruncatedHtml(it) }
             ?.let { foldWeiboHtml(it) }
     }
-    val canFold = fold && !folded.isNullOrBlank() && folded != status.textHtml
+    val canFold = fold && !folded.isNullOrBlank() && folded != fullHtml
     var expanded by remember(status.id) { mutableStateOf(false) }
     val folding = canFold && !expanded
+    val displayHtml = when {
+        folding -> folded.orEmpty()
+        expanded -> stripTrailingFullTextMarker(fullHtml)
+        else -> fullHtml
+    }
     WeiboText(
-        html = if (folding && folded != null) folded else status.textHtml,
+        html = displayHtml,
         fontSize = fontSize,
         lineHeight = lineHeight,
         expandLabel = if (folding) "展开全文" else null,

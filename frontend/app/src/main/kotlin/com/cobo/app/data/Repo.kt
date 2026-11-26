@@ -1994,14 +1994,14 @@ class Repo(private val context: Context, private val store: Store) {
         var parsed: Status? = if (isClientChannel()) {
             val root = containerGet("statuses/show", mapOf("id" to id, "isGetLongText" to "1"))
             enrichContainerLongTextObjects(listOf(root))
-            val clientStatus = Status.from(root)
+            val clientStatus = Status.from(root, fullText = true)
             val stillTruncated = (root.optBoolean("isLongText") || root.optBoolean("truncated")) &&
                 root.optJSONObject("longText")?.str("longTextContent").isNullOrBlank()
             if (stillTruncated && !cookie().isNullOrBlank()) {
                 val mobileRoot = runCatching {
                     get(Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)), cookie(), force)
                 }.getOrNull()
-                Status.from(mobileRoot?.optJSONObject("data")) ?: clientStatus
+                Status.from(mobileRoot?.optJSONObject("data"), fullText = true) ?: clientStatus
             } else {
                 clientStatus
             }
@@ -2011,7 +2011,7 @@ class Repo(private val context: Context, private val store: Store) {
                 cookie(),
                 force,
             )
-            Status.from(root.optJSONObject("data"))
+            Status.from(root.optJSONObject("data"), fullText = true)
         }
         if (parsed == null) return null
         return parsed
@@ -3039,9 +3039,9 @@ class Repo(private val context: Context, private val store: Store) {
             containerPostMultipart("statuses/modify_weibo", parts = parts)
         }
         App.cache.clear()
-        val parsed = Status.from(resp)
-            ?: Status.from(resp.optJSONObject("status"))
-            ?: Status.from(resp.optJSONObject("data"))
+        val parsed = Status.from(resp, fullText = true)
+            ?: Status.from(resp.optJSONObject("status"), fullText = true)
+            ?: Status.from(resp.optJSONObject("data"), fullText = true)
             ?: runCatching { detail(status.id, force = true) }.getOrNull()
         val updated = if (parsed != null) {
             parsed.copy(

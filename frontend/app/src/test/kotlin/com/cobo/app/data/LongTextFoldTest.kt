@@ -188,4 +188,125 @@ class LongTextFoldTest {
         val shortIntro = "简短介绍"
         assertNull(foldWeiboText(shortIntro, budget = WeiboIntroFoldWidth, maxNewlines = WeiboIntroFoldMaxNewlines))
     }
+
+    @Test
+    fun detailFullTextDoesNotAppendFullTextLinkAndKeepsAuthorEllipsis() {
+        val fullBody = "完整正文内容，".repeat(30) + "未完待续……"
+        val json = JSONObject(
+            """
+            {
+              "id": "5370000000001001",
+              "mid": "5370000000001001",
+              "text": ${JSONObject.quote(fullBody)},
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": true
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json, fullText = true)!!
+        assertFalse(status.textHtml.contains(">全文</a>"))
+        assertFalse(isServerTruncatedHtml(status.textHtml))
+        assertTrue(status.plainText.endsWith("未完待续……"))
+        assertNotNull(status.foldedTextHtml)
+    }
+
+    @Test
+    fun detailFullTextStripsResidualTrailingFullTextLinkWithoutBreakingEntitiesOrRetweet() {
+        val detailHtml = "A &amp; B 完整正文内容，文中有「全文」二字，结尾在这里...<a href=\"/status/5370000000001002\">全文</a> "
+        val json = JSONObject(
+            """
+            {
+              "id": "5370000000001002",
+              "mid": "5370000000001002",
+              "text": ${JSONObject.quote(detailHtml)},
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": true,
+              "retweeted_status": {
+                "id": "5370000000001003",
+                "mid": "5370000000001003",
+                "text": "被转发的原博被服务端截断了",
+                "created_at": "Mon Nov 24 09:00:00 +0800 2026",
+                "source": "微博网页版",
+                "isLongText": true
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json, fullText = true)!!
+        assertFalse(status.textHtml.contains(">全文</a>"))
+        assertFalse(status.textHtml.contains("&amp;amp;"))
+        assertTrue(status.textHtml.contains("A &amp; B"))
+        assertTrue(status.textHtml.contains("文中有「全文」二字，结尾在这里"))
+        assertTrue(status.textHtml.endsWith("结尾在这里"))
+        // 详情接口不保证被转发原博返回全文，原博缺省 longText 时仍需保留跳往原博详情页的「全文」入口。
+        val retweeted = status.retweeted!!
+        assertTrue(retweeted.textHtml.endsWith("...<a href=\"/status/5370000000001003\">全文</a>"))
+    }
+
+    @Test
+    fun longTextContentStripsResidualTrailingFullTextMarker() {
+        val longHtml = "长文正文内容".repeat(40) + "…<a href=\"https://m.weibo.cn/status/5370000000001004\"> 全文 </a><br/>"
+        val json = JSONObject(
+            """
+            {
+              "id": "5370000000001004",
+              "mid": "5370000000001004",
+              "text": "截断版本",
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": true,
+              "longText": {"longTextContent": ${JSONObject.quote(longHtml)}}
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json)!!
+        assertFalse(status.textHtml.contains("全文"))
+        assertFalse(isServerTruncatedHtml(status.textHtml))
+        assertNotNull(status.foldedTextHtml)
+    }
+
+    @Test
+    fun truncatedFeedStatusStillAppendsLinkWhenBodyMentionsFullTextWord() {
+        val json = JSONObject(
+            """
+            {
+              "id": "5370000000001005",
+              "mid": "5370000000001005",
+              "text": "这篇文章我读了全文，下面总结要点...",
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": true
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json)!!
+        assertTrue(status.textHtml.endsWith("...<a href=\"/status/5370000000001005\">全文</a>"))
+        assertNull(status.foldedTextHtml)
+    }
+
+    @Test
+    fun truncatedFeedStatusPreservesExistingFullTextLinkAndHtmlEntities() {
+        val json = JSONObject(
+            """
+            {
+              "id": "5370000000001006",
+              "mid": "5370000000001006",
+              "text": "A &amp; B 截断内容...<a href=\"/status/5370000000001006\">全文</a>",
+              "created_at": "Mon Nov 24 10:00:00 +0800 2026",
+              "source": "微博网页版",
+              "isLongText": true
+            }
+            """.trimIndent(),
+        )
+
+        val status = Status.from(json)!!
+        assertEquals("A &amp; B 截断内容...<a href=\"/status/5370000000001006\">全文</a>", status.textHtml)
+        assertNull(status.foldedTextHtml)
+    }
 }

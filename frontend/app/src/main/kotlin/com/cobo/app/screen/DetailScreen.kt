@@ -428,6 +428,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             },
                             keepFrame = keepCardFrame,
                             foldLongText = false,
+                            isDetail = true,
                         )
                     }
 

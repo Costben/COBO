@@ -861,9 +861,9 @@ data class Status(
     val plainText: String get() = stripHtml(textHtml)
 
     companion object {
-        fun from(o: JSONObject?): Status? = parse(o, 0)
+        fun from(o: JSONObject?, fullText: Boolean = false): Status? = parse(o, 0, fullText)
 
-        private fun parse(o: JSONObject?, depth: Int): Status? {
+        private fun parse(o: JSONObject?, depth: Int, fullText: Boolean = false): Status? {
             if (o == null) return null
             val id = o.str("idstr").ifBlank { o.str("id") }.ifBlank { o.str("mid") }
             if (id.isBlank()) return null
@@ -926,15 +926,22 @@ data class Status(
             }
 
             val retweetedObj = o.optJSONObject("retweeted_status")
-            var retweeted = if (depth < 2) parse(retweetedObj, depth + 1) else null
+            var retweeted = if (depth < 2) parse(retweetedObj, depth + 1, fullText = false) else null
 
             val longTextObj = o.optJSONObject("longText")
             val longContent = longTextObj?.str("longTextContent")?.takeIf { it.isNotBlank() }
             val longTextFlag = o.optBoolean("isLongText") || o.optBoolean("truncated")
+            val hasFullText = fullText || longContent != null
             val serverText = o.str("text")
             // 服务端自己截断的长文尾部带「…展开」标记；正文一旦补上自己的入口，这个尾巴要先去干净。
-            val rawText = longContent
-                ?: if (longTextFlag) stripServerTruncationMarker(serverText) else serverText
+            // 已有完整正文时保留原文本结构交由 formatContainerTextToHtml 处理，避免误拆 HTML 后二次转义实体，
+            // 尾部残留的「…全文 / …展开」在格式化后统一剥离。
+            val rawText = when {
+                longContent != null -> longContent
+                fullText -> serverText
+                longTextFlag -> stripServerTruncationMarker(serverText)
+                else -> serverText
+            }
             val mergedUrlStruct = mergeJsonArrays(
                 o.optJSONArray("url_struct"),
                 longTextObj?.optJSONArray("url_struct"),
@@ -1038,17 +1045,22 @@ data class Status(
                 mergedUrlStruct,
                 mergedTopicStruct,
             )
-            val truncatedWithoutLink = longTextFlag &&
-                longContent == null &&
-                !htmlTextBase.contains("全文")
-            val htmlText = if (truncatedWithoutLink) {
-                "$htmlTextBase...<a href=\"/status/${escapeHtmlAttr(id)}\">全文</a>"
+            val cleanedHtmlBase = if (hasFullText) {
+                stripTrailingFullTextMarker(htmlTextBase)
             } else {
                 htmlTextBase
             }
+            val truncatedWithoutLink = longTextFlag &&
+                !hasFullText &&
+                !isServerTruncatedHtml(cleanedHtmlBase)
+            val htmlText = if (truncatedWithoutLink) {
+                "$cleanedHtmlBase...<a href=\"/status/${escapeHtmlAttr(id)}\">全文</a>"
+            } else {
+                cleanedHtmlBase
+            }
             val finalHtml = enrichSuperTopicLinks(htmlText, mergedUrlStruct)
             val isServerTruncated = truncatedWithoutLink ||
-                (longTextFlag && longContent == null && isServerTruncatedHtml(finalHtml))
+                (!hasFullText && isServerTruncatedHtml(finalHtml))
             // 官方信息流在 280 个半角宽度（约 140 个汉字）或超过 7 行处截断长正文；有全文时另存一份折叠版，
             // 列表（含搜索结果、热搜/话题、超话与各信息流）按开关决定显示哪一份，详情页始终用 [finalHtml]。
             // 仅有服务端截断版（尾部带「全文」跳详情页）时不再叠加本地折叠。
@@ -1491,9 +1503,22 @@ private val FoldTrailingBrRegex = Regex("""(?:<br\s*/?>|\s)+$""", RegexOption.IG
 private val FoldVoidTags = setOf("br", "img", "hr", "input", "meta", "link", "wbr")
 private const val FoldUrlTrailing = ".,;:!?)]}）】》〉」』\"'"
 
+private val TrailingFullTextLinkRegex = Regex(
+    """(?:[\s\u200b.…]|&nbsp;)*<a\b[^>]*>\s*全文\s*</a>(?:[\s\u200b]|<br\s*/?>|&nbsp;)*$""",
+    RegexOption.IGNORE_CASE,
+)
+private val ServerExpandSpanRegex = Regex(
+    """<span[^>]*class=["']?expand["']?[^>]*>.*?</span>""",
+    RegexOption.IGNORE_CASE,
+)
+private val TrailingExpandSpanRegex = Regex(
+    """(?:[\s\u200b.…]|&nbsp;)*<span[^>]*class=["']?expand["']?[^>]*>.*?</span>(?:[\s\u200b]|<br\s*/?>|&nbsp;)*$""",
+    RegexOption.IGNORE_CASE,
+)
+
 /** 服务端已截断并附带「全文」详情跳转链接的正文，避免再叠加一次本地「展开全文」。 */
 internal fun isServerTruncatedHtml(html: String): Boolean =
-    html.contains(">全文</a>")
+    TrailingFullTextLinkRegex.containsMatchIn(html)
 
 /**
  * 把微博正文截到 [budget] 个半角宽度或最多 [maxNewlines] 个换行（约 7 行）：
@@ -1788,14 +1813,31 @@ private fun isWideCodePoint(codePoint: Int): Boolean = when (codePoint) {
 }
 
 /**
+ * 剥离完整正文或详情页正文末尾残留的「...全文」跳转标签或「...展开」标记，
+ * 仅在尾部确实存在对应截断标签时一并清理紧邻的省略号与空白，避免误伤作者原文末尾的省略号。
+ */
+internal fun stripTrailingFullTextMarker(html: String): String {
+    if (html.isBlank()) return html
+    var current = html
+    while (true) {
+        val next = current
+            .replace(TrailingFullTextLinkRegex, "")
+            .replace(TrailingExpandSpanRegex, "")
+        if (next == current) break
+        current = next
+    }
+    return current
+}
+
+/**
  * 服务端截断的长文尾部是 ` \u200b ...<span class="expand">展开</span>`，把这段标记去掉，
- * 免得后面再补「全文」入口时出现「…展开…全文」。
+ * 免得后面再补「全文」入口时出现「…展开…全文」。若已带尾部 `<a ...>全文</a>` 则保留给后续识别。
  */
 private fun stripServerTruncationMarker(html: String): String {
-    val withoutExpand = html.replace(
-        Regex("""<span[^>]*class="expand"[^>]*>.*?</span>""", RegexOption.IGNORE_CASE),
-        "",
-    )
+    val withoutExpand = html.replace(ServerExpandSpanRegex, "")
+    if (TrailingFullTextLinkRegex.containsMatchIn(withoutExpand)) {
+        return withoutExpand.trimEnd { it == '\u200b' || it.isWhitespace() }
+    }
     return withoutExpand.trimEnd { it == '\u200b' || it == '.' || it == '…' || it.isWhitespace() }
 }
 
