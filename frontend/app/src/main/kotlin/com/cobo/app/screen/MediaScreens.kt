@@ -594,6 +594,7 @@ fun ImageViewerScreen(
 
     var chrome by remember { mutableStateOf(true) }
     var chromeInteractionTick by remember { mutableIntStateOf(0) }
+    var inlineVideoScrubbing by remember { mutableStateOf(false) }
     var original by remember { mutableStateOf(App.settings.imageBrowseQuality == ImageBrowseQuality.Original) }
     var menu by remember { mutableStateOf(false) }
     var avatarMoreOpen by remember { mutableStateOf(false) }
@@ -660,6 +661,7 @@ fun ImageViewerScreen(
         avatarFallbackMessage != null,
         uploadingAvatar,
         saver.saving,
+        inlineVideoScrubbing,
         frame.dismiss.dragging,
         frame.dismiss.exiting,
     ) {
@@ -672,7 +674,7 @@ fun ImageViewerScreen(
                 fallbackDialogOpen = avatarFallbackMessage != null,
                 uploadingAvatar = uploadingAvatar,
                 saving = saver.saving,
-                dismissDragging = frame.dismiss.dragging,
+                dismissDragging = frame.dismiss.dragging || inlineVideoScrubbing,
                 dismissExiting = frame.dismiss.exiting,
             )
         ) {
@@ -762,6 +764,8 @@ fun ImageViewerScreen(
                     frame = frame,
                     chromeVisible = chrome && !frame.dismiss.dragging && !frame.dismiss.exiting,
                     onTap = { if (!frame.dismiss.exiting) chrome = !chrome },
+                    onChromeInteraction = { chromeInteractionTick++ },
+                    onInlineScrubbingChange = { inlineVideoScrubbing = it },
                     onLongPress = {
                         if (!pagePic.isVideo && !saver.saving && !frame.dismiss.exiting && !frame.dismiss.active) {
                             menu = true
@@ -1180,6 +1184,8 @@ private fun ZoomableImage(
     frame: ViewerFrame,
     chromeVisible: Boolean,
     onTap: () -> Unit,
+    onChromeInteraction: () -> Unit = {},
+    onInlineScrubbingChange: (Boolean) -> Unit = {},
     onLongPress: () -> Unit,
     onFeedback: (String) -> Unit = {},
     onFallbackVideoRoute: () -> Unit = {},
@@ -1514,18 +1520,28 @@ private fun ZoomableImage(
     }
     fun handleVideoPageTap() {
         val player = inlinePlayer
+        if (!inlineVideoActive) {
+            inlineVideoActive = true
+            onChromeInteraction()
+            return
+        }
+        if (!chromeVisible) {
+            onTap()
+            return
+        }
         when {
-            !inlineVideoActive -> inlineVideoActive = true
             player == null -> onTap()
             inlineIsLive -> onTap()
             player.isPlaying -> {
                 player.pause()
                 inlineVideoPlaying = false
+                onChromeInteraction()
             }
             else -> {
                 if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
                 player.play()
                 inlineVideoPlaying = true
+                onChromeInteraction()
             }
         }
     }
@@ -2182,7 +2198,10 @@ private fun ZoomableImage(
             ) {
                 HighlightedIconButton(
                     size = MediaControlHeight,
-                    onClick = { inlineVideoMuted = !inlineVideoMuted },
+                    onClick = {
+                        onChromeInteraction()
+                        inlineVideoMuted = !inlineVideoMuted
+                    },
                 ) {
                     Icon(
                         imageVector = if (inlineVideoMuted) CoboIcons.VolumeOff else CoboIcons.VolumeOn,
@@ -2200,6 +2219,7 @@ private fun ZoomableImage(
                     IntentSlider(
                         value = displayPos.coerceIn(0L, effectiveDur).toFloat(),
                         onValueChange = { next ->
+                            if (!inlineScrubbing) onInlineScrubbingChange(true)
                             inlineScrubbing = true
                             inlineScrubMs = next.roundToLong()
                         },
@@ -2207,6 +2227,8 @@ private fun ZoomableImage(
                             inlinePlayer.seekTo(inlineScrubMs)
                             inlineVideoPosMs = inlineScrubMs
                             inlineScrubbing = false
+                            onInlineScrubbingChange(false)
+                            onChromeInteraction()
                         },
                         valueRange = 0f..effectiveDur.toFloat(),
                         enabled = inlineVideoDurationMs > 0L,
