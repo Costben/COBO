@@ -35,6 +35,7 @@ import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.RelationKind
 import com.cobo.app.screen.SettingsGroup
+import com.cobo.app.screen.SettingsSubPage
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.utils.PredictiveBackMotionDefaults
 import kotlinx.coroutines.CoroutineScope
@@ -224,6 +225,7 @@ sealed interface Route {
     data object MyLikes : Route
     data object Settings : Route
     data class SettingsDetail(val group: SettingsGroup) : Route
+    data class SettingsSubDetail(val page: SettingsSubPage) : Route
     data object PredictiveBackSettings : Route
     data object MediaTopBarSettings : Route
     data object About : Route

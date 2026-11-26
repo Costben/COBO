@@ -92,6 +92,7 @@ import com.cobo.app.screen.ProfileScreen
 import com.cobo.app.screen.PublishScreen
 import com.cobo.app.screen.RelationsScreen
 import com.cobo.app.screen.SettingsGroupScreen
+import com.cobo.app.screen.SettingsSubPageScreen
 import com.cobo.app.screen.SettingsScreen
 import com.cobo.app.screen.SmsLoginScreen
 import com.cobo.app.screen.TopicFeedScreen
@@ -922,6 +923,7 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.MyLikes -> MyLikesScreen(nav)
         Route.Settings -> SettingsScreen(nav)
         is Route.SettingsDetail -> SettingsGroupScreen(nav, route.group)
+        is Route.SettingsSubDetail -> SettingsSubPageScreen(nav, route.page)
         Route.PredictiveBackSettings -> PredictiveBackSettingsScreen(nav)
         Route.MediaTopBarSettings -> MediaTopBarSettingsScreen(nav)
         Route.About -> AboutScreen(nav)

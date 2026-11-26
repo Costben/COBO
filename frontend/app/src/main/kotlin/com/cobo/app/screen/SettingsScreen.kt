@@ -136,11 +136,27 @@ import kotlinx.coroutines.launch
  * 设置页分组定义，用于在「我」一级页面展示分组目录，并跳转到对应的二级设置页。
  */
 enum class SettingsGroup(val title: String, val summary: String) {
-    Display("显示与交互", "深色模式、强调色、字号、手势与「我」页布局"),
-    Feed("微博浏览", "主页分栏、卡片外框、倒序浏览与热搜榜"),
-    AccountAndContent("账号与内容", "账号管理、快捷切号、底栏头像与本地关注"),
+    Display("显示与交互", "外观主题、栏位导航、手势动效与媒体播放"),
+    Feed("微博浏览", "主页分栏、卡片样式、用户标识与热搜榜"),
+    AccountAndContent("账号与内容", "账号管理、切号展示与本地数据同步"),
     Update("更新", "检查更新、更新日志与自动更新"),
     Other("其他", "清理缓存、关于与账号退出"),
+}
+
+/**
+ * 设置项二级专题页：把原本平铺在一级分组里的同类设置收纳进独立页面，保持主列表清爽。
+ */
+enum class SettingsSubPage(val title: String, val group: SettingsGroup) {
+    AppearanceLayout("外观与界面", SettingsGroup.Display),
+    BarsAndNavigation("栏位与导航", SettingsGroup.Display),
+    GesturesAndMotion("手势与动效", SettingsGroup.Display),
+    MediaPlayback("图片与视频", SettingsGroup.Display),
+    FeedTabs("主页分栏与分组", SettingsGroup.Feed),
+    FeedCardStyle("卡片与正文样式", SettingsGroup.Feed),
+    UserBadges("用户标识显示", SettingsGroup.Feed),
+    AccountBehavior("账号切换与展示", SettingsGroup.AccountAndContent),
+    LocalContentData("本地数据与同步", SettingsGroup.AccountAndContent),
+    ContentLibrary("内容与记录", SettingsGroup.AccountAndContent),
 }
 
 @Stable
@@ -219,12 +235,20 @@ fun SettingsScreen(nav: NavState) {
         context = context,
         includeLibraryShortcuts = true,
     )
+    val searchGroups = buildAllSearchableSettingsGroups(
+        nav = nav,
+        state = state,
+        scope = scope,
+        context = context,
+        includeLibraryShortcuts = true,
+    )
 
     SettingsScaffold(
         nav = nav,
         title = "设置",
         state = state,
         groups = groups,
+        searchGroups = searchGroups,
         showGroupHeaders = true,
         footerContent = {
             if (state.message.isNotBlank()) {
@@ -260,19 +284,12 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
     val state = rememberSettingsUiState()
 
     val groups = when (group) {
-        SettingsGroup.Display -> listOf(
-            SettingsGroupSection(
-                key = "display",
-                title = group.title,
-                entries = displaySettingsEntries(nav = nav, state = state),
-                group = group,
-            ),
-        )
+        SettingsGroup.Display -> displayOverviewSections(nav = nav, state = state)
         SettingsGroup.Feed -> listOf(
             SettingsGroupSection(
                 key = "feed",
                 title = group.title,
-                entries = feedSettingsEntries(state = state),
+                entries = feedOverviewEntries(nav = nav, state = state),
                 group = group,
             ),
         )
@@ -280,10 +297,9 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
             SettingsGroupSection(
                 key = "account",
                 title = group.title,
-                entries = accountSettingsEntries(
+                entries = accountOverviewEntries(
                     nav = nav,
                     state = state,
-                    scope = scope,
                     includeLibraryShortcuts = false,
                 ),
                 group = group,
@@ -314,11 +330,45 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
         )
     }
 
+    val searchGroups = when (group) {
+        SettingsGroup.Display -> listOf(
+            SettingsGroupSection(
+                key = "display_all",
+                title = group.title,
+                entries = displayAllSearchableEntries(nav = nav, state = state),
+                group = group,
+            ),
+        )
+        SettingsGroup.Feed -> listOf(
+            SettingsGroupSection(
+                key = "feed_all",
+                title = group.title,
+                entries = feedAllSearchableEntries(state = state),
+                group = group,
+            ),
+        )
+        SettingsGroup.AccountAndContent -> listOf(
+            SettingsGroupSection(
+                key = "account_all",
+                title = group.title,
+                entries = accountAllSearchableEntries(
+                    nav = nav,
+                    state = state,
+                    scope = scope,
+                    includeLibraryShortcuts = false,
+                ),
+                group = group,
+            ),
+        )
+        SettingsGroup.Update, SettingsGroup.Other -> groups
+    }
+
     SettingsScaffold(
         nav = nav,
         title = group.title,
         state = state,
         groups = groups,
+        searchGroups = searchGroups,
         showGroupHeaders = false,
         footerContent = {
             if (group == SettingsGroup.Other && state.message.isNotBlank()) {
@@ -335,8 +385,104 @@ fun SettingsGroupScreen(nav: NavState, group: SettingsGroup) {
     )
 }
 
+/**
+ * 专题子设置页：承接从「显示与交互」「微博浏览」「账号与内容」拆出的二级设置页面。
+ */
+@Composable
+fun SettingsSubPageScreen(nav: NavState, page: SettingsSubPage) {
+    val scope = rememberCoroutineScope()
+    val state = rememberSettingsUiState()
+
+    val entries = when (page) {
+        SettingsSubPage.AppearanceLayout -> displayAppearanceSubEntries(state = state)
+        SettingsSubPage.BarsAndNavigation -> displayBarsSubEntries(nav = nav, state = state)
+        SettingsSubPage.GesturesAndMotion -> displayGesturesSubEntries(nav = nav, state = state)
+        SettingsSubPage.MediaPlayback -> displayMediaSubEntries(state = state)
+        SettingsSubPage.FeedTabs -> feedTabsSubEntries(state = state)
+        SettingsSubPage.FeedCardStyle -> feedCardStyleSubEntries(state = state)
+        SettingsSubPage.UserBadges -> feedUserBadgesSubEntries(state = state)
+        SettingsSubPage.AccountBehavior -> accountBehaviorSubEntries(state = state)
+        SettingsSubPage.LocalContentData -> localContentDataSubEntries(state = state, scope = scope)
+        SettingsSubPage.ContentLibrary -> contentLibrarySubEntries(nav = nav, state = state)
+    }
+
+    val groups = listOf(
+        SettingsGroupSection(
+            key = "sub_${page.name}",
+            title = page.title,
+            entries = entries,
+            group = page.group,
+        ),
+    )
+
+    SettingsScaffold(
+        nav = nav,
+        title = page.title,
+        state = state,
+        groups = groups,
+        showGroupHeaders = false,
+    )
+}
+
 @Composable
 private fun buildAllSettingsGroups(
+    nav: NavState,
+    state: SettingsUiState,
+    scope: CoroutineScope,
+    context: Context,
+    includeLibraryShortcuts: Boolean,
+): List<SettingsGroupSection> = buildList {
+    addAll(displayOverviewSections(nav = nav, state = state))
+    add(
+        SettingsGroupSection(
+            key = "feed",
+            title = SettingsGroup.Feed.title,
+            entries = feedOverviewEntries(nav = nav, state = state),
+            group = SettingsGroup.Feed,
+        ),
+    )
+    add(
+        SettingsGroupSection(
+            key = "account",
+            title = SettingsGroup.AccountAndContent.title,
+            entries = accountOverviewEntries(
+                nav = nav,
+                state = state,
+                includeLibraryShortcuts = includeLibraryShortcuts,
+            ),
+            group = SettingsGroup.AccountAndContent,
+        ),
+    )
+    add(
+        SettingsGroupSection(
+            key = "update",
+            title = SettingsGroup.Update.title,
+            entries = updateSettingsEntries(nav = nav, state = state, scope = scope),
+            group = SettingsGroup.Update,
+        ),
+    )
+    add(
+        SettingsGroupSection(
+            key = "other",
+            title = SettingsGroup.Other.title,
+            entries = otherSettingsEntries(nav = nav, state = state, context = context),
+            group = SettingsGroup.Other,
+        ),
+    )
+    // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起；搜索结果态按 headerGroupKey 合并到「其他」卡片。
+    add(
+        SettingsGroupSection(
+            key = "other_logout",
+            title = SettingsGroup.Other.title,
+            entries = logoutSettingsEntries(nav = nav, state = state),
+            headerGroupKey = "other",
+            group = SettingsGroup.Other,
+        ),
+    )
+}
+
+@Composable
+private fun buildAllSearchableSettingsGroups(
     nav: NavState,
     state: SettingsUiState,
     scope: CoroutineScope,
@@ -346,19 +492,19 @@ private fun buildAllSettingsGroups(
     SettingsGroupSection(
         key = "display",
         title = SettingsGroup.Display.title,
-        entries = displaySettingsEntries(nav = nav, state = state),
+        entries = displayAllSearchableEntries(nav = nav, state = state),
         group = SettingsGroup.Display,
     ),
     SettingsGroupSection(
         key = "feed",
         title = SettingsGroup.Feed.title,
-        entries = feedSettingsEntries(state = state),
+        entries = feedAllSearchableEntries(state = state),
         group = SettingsGroup.Feed,
     ),
     SettingsGroupSection(
         key = "account",
         title = SettingsGroup.AccountAndContent.title,
-        entries = accountSettingsEntries(
+        entries = accountAllSearchableEntries(
             nav = nav,
             state = state,
             scope = scope,
@@ -378,7 +524,6 @@ private fun buildAllSettingsGroups(
         entries = otherSettingsEntries(nav = nav, state = state, context = context),
         group = SettingsGroup.Other,
     ),
-    // 退出是破坏性操作，单独一张卡，不和其他条目挤在一起；搜索结果态按 headerGroupKey 合并到「其他」卡片。
     SettingsGroupSection(
         key = "other_logout",
         title = SettingsGroup.Other.title,
@@ -394,6 +539,7 @@ private fun SettingsScaffold(
     title: String,
     state: SettingsUiState,
     groups: List<SettingsGroupSection>,
+    searchGroups: List<SettingsGroupSection> = groups,
     showGroupHeaders: Boolean,
     footerContent: LazyListScope.() -> Unit = {},
 ) {
@@ -409,7 +555,7 @@ private fun SettingsScaffold(
     val trimmedQuery = searchQuery.trim()
     val inSearchResults = trimmedQuery.isNotEmpty()
     val searchTerms = remember(trimmedQuery) { parseSettingsSearchTerms(trimmedQuery) }
-    val filteredGroups = filterSettingsGroups(groups, searchTerms)
+    val filteredGroups = filterSettingsGroups(searchGroups, searchTerms)
     val searchTransition = rememberTopAppBarSearchState(active = inSearchResults)
 
     val activeListState = if (inSearchResults) searchListState else mainListState
@@ -497,8 +643,7 @@ private fun SettingsScaffold(
 }
 
 @Composable
-private fun displaySettingsEntries(
-    nav: NavState,
+private fun displayCoreEntries(
     state: SettingsUiState,
 ): List<SettingsEntry> {
     val darkSummary = when (state.darkMode) {
@@ -508,12 +653,6 @@ private fun displaySettingsEntries(
     }
     val accentSummary = accentColorSummary(state.accentColor)
     val fontSummary = "${(state.fontScale * 100).toInt()}%"
-    val predictiveSummary = if (App.settings.predictiveBack) "已开启" else "已关闭"
-    val profileStatusesSummary = if (state.profileShowStatuses) {
-        "开启后在「我」标签页直接展开我的全部微博"
-    } else {
-        "关闭后「我」标签页作为互动中心与设置一级入口"
-    }
     return listOf(
         SettingsEntry(
             id = "dark_mode",
@@ -554,6 +693,33 @@ private fun displaySettingsEntries(
             )
         },
         SettingsEntry(
+            id = "font_scale",
+            title = "字号",
+            summary = fontSummary,
+            keywords = "字体 大小 缩放 font size scale",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "字号",
+                modifier = Modifier.testTag("settings_font"),
+                summary = fontSummary,
+                cardListPosition = pos,
+                onClick = { state.fontScale = App.settings.cycleFontScale() },
+            )
+        },
+    )
+}
+
+@Composable
+private fun displayAppearanceSubEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> {
+    val profileStatusesSummary = if (state.profileShowStatuses) {
+        "开启后在「我」标签页直接展开我的全部微博"
+    } else {
+        "关闭后「我」标签页作为互动中心与设置一级入口"
+    }
+    return listOf(
+        SettingsEntry(
             id = "me_icon_style",
             title = "「我」页图标样式",
             summary = state.meIconStyle.label,
@@ -569,53 +735,6 @@ private fun displaySettingsEntries(
                     val picked = MeIconStyle.entries.getOrElse(index) { MeIconStyle.Colorful }
                     state.meIconStyle = picked
                     App.settings.applyMeIconStyle(picked)
-                },
-            )
-        },
-        SettingsEntry(
-            id = "font_scale",
-            title = "字号",
-            summary = fontSummary,
-            keywords = "字体 大小 缩放 font size scale",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "字号",
-                modifier = Modifier.testTag("settings_font"),
-                summary = fontSummary,
-                cardListPosition = pos,
-                onClick = { state.fontScale = App.settings.cycleFontScale() },
-            )
-        },
-        SettingsEntry(
-            id = "predictive_back",
-            title = "预测性返回手势设置",
-            summary = predictiveSummary,
-            keywords = "侧滑 返回 手势 轨迹 模糊 跟手 predictive back gesture",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "预测性返回手势设置",
-                summary = predictiveSummary,
-                modifier = Modifier.testTag("settings_predictive_back_entry"),
-                cardListPosition = pos,
-                onClick = { nav.push(Route.PredictiveBackSettings) },
-            )
-        },
-        SettingsEntry(
-            id = "animation_speed",
-            title = "动画速度",
-            summary = "调节微博展开、看图与页面切换的动画快慢",
-            keywords = "快慢 动效 展开 切换 速度 animation speed",
-        ) { pos ->
-            SettingsDropdownRow(
-                items = AnimationSpeed.entries.map { it.label },
-                selectedIndex = App.settings.animationSpeed.ordinal,
-                title = "动画速度",
-                summary = "调节微博展开、看图与页面切换的动画快慢",
-                modifier = Modifier.testTag("settings_animation_speed"),
-                cardListPosition = pos,
-                onSelectedIndexChange = { index ->
-                    val picked = AnimationSpeed.entries.getOrElse(index) { AnimationSpeed.Standard }
-                    App.settings.applyAnimationSpeed(picked)
                 },
             )
         },
@@ -673,6 +792,120 @@ private fun displaySettingsEntries(
                 cardListPosition = pos,
             )
         },
+    )
+}
+
+@Composable
+private fun displayBarsSubEntries(
+    nav: NavState,
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "media_top_bar",
+        title = "顶栏",
+        summary = "自定义视频播放与看图页顶栏按钮显示与排序",
+        keywords = "顶栏 按钮 排序 视频 看图 原图 保存 分享 小窗 画中画 倍速 浏览器 topbar",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "顶栏",
+            modifier = Modifier.testTag("settings_media_top_bar"),
+            summary = "视频 ${App.settings.videoTopBarButtons.size} 项 · 看图 ${App.settings.imageTopBarButtons.size} 项",
+            cardListPosition = pos,
+            onClick = { nav.push(Route.MediaTopBarSettings) },
+        )
+    },
+    SettingsEntry(
+        id = "bottom_left_action",
+        title = "底栏左下角按钮",
+        summary = App.settings.bottomLeftAction.label,
+        keywords = "底部 悬浮栏 快捷 按钮 搜索 刷新 bottom",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "底栏左下角按钮",
+            modifier = Modifier.testTag("settings_bottom_left_action"),
+            summary = App.settings.bottomLeftAction.label,
+            cardListPosition = pos,
+            onClick = { state.pickBottomLeftAction = true },
+        )
+    },
+    SettingsEntry(
+        id = "auto_hide_floating_bars",
+        title = "滑动自动隐藏浮动栏",
+        summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
+        keywords = "顶栏 底栏 工具栏 沉浸 隐藏 收起 float bar",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.autoHideFloatingBars,
+            onCheckedChange = {
+                state.autoHideFloatingBars = it
+                App.settings.applyAutoHideFloatingBars(it)
+            },
+            title = "滑动自动隐藏浮动栏",
+            summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
+            modifier = Modifier.testTag("settings_auto_hide_floating_bars"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "feed_tab_tap_to_top_and_return",
+        title = "底栏「微博」单击回顶与返回",
+        summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
+        keywords = "回到顶部 刷新 原位置 双击 top return",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.feedTabTapToTopAndReturn,
+            onCheckedChange = {
+                state.feedTabTapToTopAndReturn = it
+                App.settings.applyFeedTabTapToTopAndReturn(it)
+            },
+            title = "底栏「微博」单击回顶与返回",
+            summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
+            modifier = Modifier.testTag("settings_feed_tab_tap_to_top_and_return"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun displayGesturesSubEntries(
+    nav: NavState,
+    state: SettingsUiState,
+): List<SettingsEntry> {
+    val predictiveSummary = if (App.settings.predictiveBack) "已开启" else "已关闭"
+    return listOf(
+        SettingsEntry(
+            id = "predictive_back",
+            title = "预测性返回手势设置",
+            summary = predictiveSummary,
+            keywords = "侧滑 返回 手势 轨迹 模糊 跟手 predictive back gesture",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "预测性返回手势设置",
+                summary = predictiveSummary,
+                modifier = Modifier.testTag("settings_predictive_back_entry"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.PredictiveBackSettings) },
+            )
+        },
+        SettingsEntry(
+            id = "animation_speed",
+            title = "动画速度",
+            summary = "调节微博展开、看图与页面切换的动画快慢",
+            keywords = "快慢 动效 展开 切换 速度 animation speed",
+        ) { pos ->
+            SettingsDropdownRow(
+                items = AnimationSpeed.entries.map { it.label },
+                selectedIndex = App.settings.animationSpeed.ordinal,
+                title = "动画速度",
+                summary = "调节微博展开、看图与页面切换的动画快慢",
+                modifier = Modifier.testTag("settings_animation_speed"),
+                cardListPosition = pos,
+                onSelectedIndexChange = { index ->
+                    val picked = AnimationSpeed.entries.getOrElse(index) { AnimationSpeed.Standard }
+                    App.settings.applyAnimationSpeed(picked)
+                },
+            )
+        },
         SettingsEntry(
             id = "search_panel_animation",
             title = "搜索面板动画",
@@ -687,207 +920,308 @@ private fun displaySettingsEntries(
                 onClick = { state.pickSearchPanelAnimation = true },
             )
         },
-        SettingsEntry(
-            id = "bottom_left_action",
-            title = "底栏左下角按钮",
-            summary = App.settings.bottomLeftAction.label,
-            keywords = "底部 悬浮栏 快捷 按钮 搜索 刷新 bottom",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "底栏左下角按钮",
-                modifier = Modifier.testTag("settings_bottom_left_action"),
-                summary = App.settings.bottomLeftAction.label,
-                cardListPosition = pos,
-                onClick = { state.pickBottomLeftAction = true },
-            )
-        },
-        SettingsEntry(
-            id = "media_top_bar",
-            title = "顶栏",
-            summary = "自定义视频播放与看图页顶栏按钮显示与排序",
-            keywords = "顶栏 按钮 排序 视频 看图 原图 保存 分享 小窗 画中画 倍速 浏览器 topbar",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "顶栏",
-                modifier = Modifier.testTag("settings_media_top_bar"),
-                summary = "视频 ${App.settings.videoTopBarButtons.size} 项 · 看图 ${App.settings.imageTopBarButtons.size} 项",
-                cardListPosition = pos,
-                onClick = { nav.push(Route.MediaTopBarSettings) },
-            )
-        },
-        SettingsEntry(
-            id = "auto_hide_floating_bars",
-            title = "滑动自动隐藏浮动栏",
-            summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
-            keywords = "顶栏 底栏 工具栏 沉浸 隐藏 收起 float bar",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.autoHideFloatingBars,
-                onCheckedChange = {
-                    state.autoHideFloatingBars = it
-                    App.settings.applyAutoHideFloatingBars(it)
-                },
-                title = "滑动自动隐藏浮动栏",
-                summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
-                modifier = Modifier.testTag("settings_auto_hide_floating_bars"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "feed_tab_tap_to_top_and_return",
-            title = "底栏「微博」单击回顶与返回",
-            summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
-            keywords = "回到顶部 刷新 原位置 双击 top return",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.feedTabTapToTopAndReturn,
-                onCheckedChange = {
-                    state.feedTabTapToTopAndReturn = it
-                    App.settings.applyFeedTabTapToTopAndReturn(it)
-                },
-                title = "底栏「微博」单击回顶与返回",
-                summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
-                modifier = Modifier.testTag("settings_feed_tab_tap_to_top_and_return"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "image_browse_quality",
-            title = "浏览图片",
-            summary = App.settings.imageBrowseQuality.label,
-            keywords = "画质 原图 高清 缩略图 流量 省流 看图 image quality",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "浏览图片",
-                modifier = Modifier.testTag("settings_image_browse_quality"),
-                summary = App.settings.imageBrowseQuality.label,
-                cardListPosition = pos,
-                onClick = { state.pickImageBrowseQuality = true },
-            )
-        },
-        SettingsEntry(
-            id = "live_photo_auto_play",
-            title = "实况图自动播放",
-            summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
-            keywords = "实况 动态图 播放 live photo livephoto",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = App.settings.livePhotoAutoPlay,
-                onCheckedChange = { App.settings.applyLivePhotoAutoPlay(it) },
-                title = "实况图自动播放",
-                summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
-                modifier = Modifier.testTag("settings_live_photo_auto_play"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "live_photo_sound",
-            title = "实况图播放声音",
-            summary = "播放实况图时同步播放附带的视频声音",
-            keywords = "实况 静音 音频 音量 声音 live photo sound",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = App.settings.livePhotoSound,
-                onCheckedChange = { App.settings.applyLivePhotoSound(it) },
-                title = "实况图播放声音",
-                summary = "播放实况图时同步播放附带的视频声音",
-                modifier = Modifier.testTag("settings_live_photo_sound"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "video_auto_float_on_back",
-            title = "视频播放时返回自动悬浮",
-            summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
-            keywords = "小窗 画中画 悬浮窗 后台 播放 video pip",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = App.settings.videoAutoFloatOnBack,
-                onCheckedChange = { App.settings.applyVideoAutoFloatOnBack(it) },
-                title = "视频播放时返回自动悬浮",
-                summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
-                modifier = Modifier.testTag("settings_video_auto_float_on_back"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "video_auto_close_on_complete",
-            title = "视频播完自动返回",
-            summary = "非直播视频播放结束后自动关闭并返回上一页",
-            keywords = "播放结束 自动关闭 退出 video",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = App.settings.videoAutoCloseOnComplete,
-                onCheckedChange = { App.settings.applyVideoAutoCloseOnComplete(it) },
-                title = "视频播完自动返回",
-                summary = "非直播视频播放结束后自动关闭并返回上一页",
-                modifier = Modifier.testTag("settings_video_auto_close_on_complete"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "video_center_swipe_actions",
-            title = "视频中区滑动手势",
-            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
-            keywords = "小窗 画中画 上滑 下滑 手势 video pip gesture",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = App.settings.videoCenterSwipeActions,
-                onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
-                title = "视频中区滑动手势",
-                summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
-                modifier = Modifier.testTag("settings_video_center_swipe_actions"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "in_app_browser",
-            title = "使用内置浏览器打开外部网页",
-            summary = "关闭后点击外部链接将直接调用系统浏览器打开",
-            keywords = "外链 网页 浏览器 系统浏览器 web browser",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.inAppBrowser,
-                onCheckedChange = {
-                    state.inAppBrowser = it
-                    App.settings.applyInAppBrowser(it)
-                },
-                title = "使用内置浏览器打开外部网页",
-                summary = "关闭后点击外部链接将直接调用系统浏览器打开",
-                modifier = Modifier.testTag("settings_in_app_browser"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "confirm_like",
-            title = "点赞前确认",
-            keywords = "误触 确认 弹窗 红心 喜欢 like confirm",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.confirmLike,
-                onCheckedChange = {
-                    state.confirmLike = it
-                    App.settings.applyConfirmLike(it)
-                },
-                title = "点赞前确认",
-                modifier = Modifier.testTag("settings_confirm_like"),
-                cardListPosition = pos,
-            )
-        },
     )
 }
 
 @Composable
-private fun feedSettingsEntries(
+private fun displayMediaSubEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "image_browse_quality",
+        title = "浏览图片",
+        summary = App.settings.imageBrowseQuality.label,
+        keywords = "画质 原图 高清 缩略图 流量 省流 看图 image quality",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "浏览图片",
+            modifier = Modifier.testTag("settings_image_browse_quality"),
+            summary = App.settings.imageBrowseQuality.label,
+            cardListPosition = pos,
+            onClick = { state.pickImageBrowseQuality = true },
+        )
+    },
+    SettingsEntry(
+        id = "live_photo_auto_play",
+        title = "实况图自动播放",
+        summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
+        keywords = "实况 动态图 播放 live photo livephoto",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.livePhotoAutoPlay,
+            onCheckedChange = { App.settings.applyLivePhotoAutoPlay(it) },
+            title = "实况图自动播放",
+            summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",
+            modifier = Modifier.testTag("settings_live_photo_auto_play"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "live_photo_sound",
+        title = "实况图播放声音",
+        summary = "播放实况图时同步播放附带的视频声音",
+        keywords = "实况 静音 音频 音量 声音 live photo sound",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.livePhotoSound,
+            onCheckedChange = { App.settings.applyLivePhotoSound(it) },
+            title = "实况图播放声音",
+            summary = "播放实况图时同步播放附带的视频声音",
+            modifier = Modifier.testTag("settings_live_photo_sound"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "video_auto_float_on_back",
+        title = "视频播放时返回自动悬浮",
+        summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
+        keywords = "小窗 画中画 悬浮窗 后台 播放 video pip",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.videoAutoFloatOnBack,
+            onCheckedChange = { App.settings.applyVideoAutoFloatOnBack(it) },
+            title = "视频播放时返回自动悬浮",
+            summary = "播放中按返回自动切换应用内小窗，切至后台自动进入系统画中画",
+            modifier = Modifier.testTag("settings_video_auto_float_on_back"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "video_auto_close_on_complete",
+        title = "视频播完自动返回",
+        summary = "非直播视频播放结束后自动关闭并返回上一页",
+        keywords = "播放结束 自动关闭 退出 video",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.videoAutoCloseOnComplete,
+            onCheckedChange = { App.settings.applyVideoAutoCloseOnComplete(it) },
+            title = "视频播完自动返回",
+            summary = "非直播视频播放结束后自动关闭并返回上一页",
+            modifier = Modifier.testTag("settings_video_auto_close_on_complete"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "video_center_swipe_actions",
+        title = "视频中区滑动手势",
+        summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
+        keywords = "小窗 画中画 上滑 下滑 手势 video pip gesture",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.videoCenterSwipeActions,
+            onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
+            title = "视频中区滑动手势",
+            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
+            modifier = Modifier.testTag("settings_video_center_swipe_actions"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun displayGeneralInteractionEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "in_app_browser",
+        title = "使用内置浏览器打开外部网页",
+        summary = "关闭后点击外部链接将直接调用系统浏览器打开",
+        keywords = "外链 网页 浏览器 系统浏览器 web browser",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.inAppBrowser,
+            onCheckedChange = {
+                state.inAppBrowser = it
+                App.settings.applyInAppBrowser(it)
+            },
+            title = "使用内置浏览器打开外部网页",
+            summary = "关闭后点击外部链接将直接调用系统浏览器打开",
+            modifier = Modifier.testTag("settings_in_app_browser"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "confirm_like",
+        title = "点赞前确认",
+        keywords = "误触 确认 弹窗 红心 喜欢 like confirm",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.confirmLike,
+            onCheckedChange = {
+                state.confirmLike = it
+                App.settings.applyConfirmLike(it)
+            },
+            title = "点赞前确认",
+            modifier = Modifier.testTag("settings_confirm_like"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun displayOverviewSections(
+    nav: NavState,
+    state: SettingsUiState,
+): List<SettingsGroupSection> {
+    val visualEntries = displayCoreEntries(state) + SettingsEntry(
+        id = "sub_appearance_layout",
+        title = SettingsSubPage.AppearanceLayout.title,
+        summary = "图标样式、模糊效果、横屏与「我」页布局",
+        keywords = "外观 图标 模糊 毛玻璃 横屏 布局",
+    ) { pos ->
+        SettingsArrowRow(
+            title = SettingsSubPage.AppearanceLayout.title,
+            summary = "图标样式、模糊效果、横屏与「我」页布局",
+            modifier = Modifier.testTag("settings_sub_appearance_layout"),
+            cardListPosition = pos,
+            onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.AppearanceLayout)) },
+        )
+    }
+    val interactionEntries = listOf(
+        SettingsEntry(
+            id = "sub_bars_navigation",
+            title = SettingsSubPage.BarsAndNavigation.title,
+            summary = "顶栏、底栏按钮、自动隐藏浮动栏与单击回顶",
+            keywords = "顶栏 底栏 导航 浮动栏 回顶",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.BarsAndNavigation.title,
+                summary = "顶栏、底栏按钮、自动隐藏浮动栏与单击回顶",
+                modifier = Modifier.testTag("settings_sub_bars_navigation"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.BarsAndNavigation)) },
+            )
+        },
+        SettingsEntry(
+            id = "sub_gestures_motion",
+            title = SettingsSubPage.GesturesAndMotion.title,
+            summary = "预测性返回、动画速度与搜索面板动画",
+            keywords = "手势 返回 动画 速度 搜索",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.GesturesAndMotion.title,
+                summary = "预测性返回、动画速度与搜索面板动画",
+                modifier = Modifier.testTag("settings_sub_gestures_motion"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.GesturesAndMotion)) },
+            )
+        },
+        SettingsEntry(
+            id = "sub_media_playback",
+            title = SettingsSubPage.MediaPlayback.title,
+            summary = "图片画质、实况图与视频播放交互",
+            keywords = "图片 原图 实况 视频 小窗 画中画",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.MediaPlayback.title,
+                summary = "图片画质、实况图与视频播放交互",
+                modifier = Modifier.testTag("settings_sub_media_playback"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.MediaPlayback)) },
+            )
+        },
+    ) + displayGeneralInteractionEntries(state)
+
+    return listOf(
+        SettingsGroupSection(
+            key = "display_visual",
+            title = SettingsGroup.Display.title,
+            entries = visualEntries,
+            headerGroupKey = "display",
+            group = SettingsGroup.Display,
+        ),
+        SettingsGroupSection(
+            key = "display_interaction",
+            title = SettingsGroup.Display.title,
+            entries = interactionEntries,
+            headerGroupKey = "display",
+            group = SettingsGroup.Display,
+        ),
+    )
+}
+
+@Composable
+private fun displayAllSearchableEntries(
+    nav: NavState,
+    state: SettingsUiState,
+): List<SettingsEntry> =
+    displayCoreEntries(state) +
+        displayAppearanceSubEntries(state) +
+        displayBarsSubEntries(nav, state) +
+        displayGesturesSubEntries(nav, state) +
+        displayMediaSubEntries(state) +
+        displayGeneralInteractionEntries(state)
+
+@Composable
+private fun feedTabsSubEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "feed_left_tab",
+        title = "微博左侧栏",
+        summary = state.feedLeftTab.label,
+        keywords = "主页 分栏 顶栏 标签 关注 推荐 好友圈 tab",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "微博左侧栏",
+            modifier = Modifier.testTag("settings_feed_left_tab"),
+            summary = state.feedLeftTab.label,
+            cardListPosition = pos,
+            onClick = { state.pickFeedLeft = true },
+        )
+    },
+    SettingsEntry(
+        id = "feed_center_tab",
+        title = "微博中间栏",
+        summary = state.feedCenterTab.label,
+        keywords = "主页 分栏 顶栏 标签 关注 推荐 全部 tab",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "微博中间栏",
+            modifier = Modifier.testTag("settings_feed_center_tab"),
+            summary = state.feedCenterTab.label,
+            cardListPosition = pos,
+            onClick = { state.pickFeedCenter = true },
+        )
+    },
+    SettingsEntry(
+        id = "feed_right_tab",
+        title = "微博右侧栏",
+        summary = state.feedRightTab.label,
+        keywords = "主页 分栏 顶栏 标签 关注 推荐 附近 tab",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "微博右侧栏",
+            modifier = Modifier.testTag("settings_feed_right_tab"),
+            summary = state.feedRightTab.label,
+            cardListPosition = pos,
+            onClick = { state.pickFeedRight = true },
+        )
+    },
+    SettingsEntry(
+        id = "collapse_follow_groups",
+        title = "收纳关注分组",
+        summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
+        keywords = "分组 折叠 二级菜单 菜单 group",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.collapseFollowGroups,
+            onCheckedChange = {
+                state.collapseFollowGroups = it
+                App.settings.applyCollapseFollowGroups(it)
+            },
+            title = "收纳关注分组",
+            summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
+            modifier = Modifier.testTag("settings_collapse_follow_groups"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun feedCardStyleSubEntries(
     state: SettingsUiState,
 ): List<SettingsEntry> {
-    val hotBoardsSummary = App.settings.hotBoards.let { picked ->
-        when {
-            picked.isEmpty() -> "已隐藏"
-            picked.size == HotBoard.entries.size -> "全部"
-            else -> HotBoard.entries.filter { it in picked }.joinToString("、") { it.label }
-        }
-    }
     val feedFrameSummary = if (state.feedCardFrame) {
         "关闭后去掉卡片底色与圆角，正文横向与顶栏按钮对齐"
     } else {
@@ -904,98 +1238,6 @@ private fun feedSettingsEntries(
         "信息流、搜索结果与超话/话题里的长微博和简介直接展开显示"
     }
     return listOf(
-        SettingsEntry(
-            id = "feed_left_tab",
-            title = "微博左侧栏",
-            summary = state.feedLeftTab.label,
-            keywords = "主页 分栏 顶栏 标签 关注 推荐 好友圈 tab",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "微博左侧栏",
-                modifier = Modifier.testTag("settings_feed_left_tab"),
-                summary = state.feedLeftTab.label,
-                cardListPosition = pos,
-                onClick = { state.pickFeedLeft = true },
-            )
-        },
-        SettingsEntry(
-            id = "feed_center_tab",
-            title = "微博中间栏",
-            summary = state.feedCenterTab.label,
-            keywords = "主页 分栏 顶栏 标签 关注 推荐 全部 tab",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "微博中间栏",
-                modifier = Modifier.testTag("settings_feed_center_tab"),
-                summary = state.feedCenterTab.label,
-                cardListPosition = pos,
-                onClick = { state.pickFeedCenter = true },
-            )
-        },
-        SettingsEntry(
-            id = "feed_right_tab",
-            title = "微博右侧栏",
-            summary = state.feedRightTab.label,
-            keywords = "主页 分栏 顶栏 标签 关注 推荐 附近 tab",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "微博右侧栏",
-                modifier = Modifier.testTag("settings_feed_right_tab"),
-                summary = state.feedRightTab.label,
-                cardListPosition = pos,
-                onClick = { state.pickFeedRight = true },
-            )
-        },
-        SettingsEntry(
-            id = "collapse_follow_groups",
-            title = "收纳关注分组",
-            summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
-            keywords = "分组 折叠 二级菜单 菜单 group",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.collapseFollowGroups,
-                onCheckedChange = {
-                    state.collapseFollowGroups = it
-                    App.settings.applyCollapseFollowGroups(it)
-                },
-                title = "收纳关注分组",
-                summary = "开启后收进中间栏二级菜单，关闭后直接全部展开",
-                modifier = Modifier.testTag("settings_collapse_follow_groups"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "hot_boards",
-            title = "搜索页热搜榜单",
-            summary = hotBoardsSummary,
-            keywords = "热搜 榜单 实时 文娱 隐藏 hot board",
-        ) { pos ->
-            SettingsArrowRow(
-                title = "搜索页热搜榜单",
-                modifier = Modifier.testTag("settings_hot_boards"),
-                summary = hotBoardsSummary,
-                cardListPosition = pos,
-                onClick = { state.pickHotBoards = true },
-            )
-        },
-        SettingsEntry(
-            id = "reverse_browse",
-            title = "倒序浏览",
-            summary = "刷新不回顶，从当前位置往上补看新微博",
-            keywords = "时间线 不回顶 补看 新微博 reverse",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.reverseBrowse,
-                onCheckedChange = {
-                    state.reverseBrowse = it
-                    App.settings.applyReverseBrowse(it)
-                },
-                title = "倒序浏览",
-                summary = "刷新不回顶，从当前位置往上补看新微博",
-                modifier = Modifier.testTag("settings_reverse_browse"),
-                cardListPosition = pos,
-            )
-        },
         SettingsEntry(
             id = "feed_card_frame",
             title = "首页卡片外框",
@@ -1050,57 +1292,110 @@ private fun feedSettingsEntries(
                 cardListPosition = pos,
             )
         },
-        SettingsEntry(
-            id = "show_vip_level",
+    )
+}
+
+@Composable
+private fun feedUserBadgesSubEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "show_vip_level",
+        title = "显示 VIP 等级",
+        summary = "开启后在昵称旁显示 VIP / SVIP / VVIP 及等级标识",
+        keywords = "会员 svip vvip 标识 勋章 badge",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.showVipLevel,
+            onCheckedChange = {
+                state.showVipLevel = it
+                App.settings.applyShowVipLevel(it)
+            },
             title = "显示 VIP 等级",
             summary = "开启后在昵称旁显示 VIP / SVIP / VVIP 及等级标识",
-            keywords = "会员 svip vvip 标识 勋章 badge",
-        ) { pos ->
-            SettingsSwitchRow(
-                checked = state.showVipLevel,
-                onCheckedChange = {
-                    state.showVipLevel = it
-                    App.settings.applyShowVipLevel(it)
-                },
-                title = "显示 VIP 等级",
-                summary = "开启后在昵称旁显示 VIP / SVIP / VVIP 及等级标识",
-                modifier = Modifier.testTag("settings_show_vip_level"),
-                cardListPosition = pos,
-            )
-        },
-        SettingsEntry(
-            id = "show_fan_level",
+            modifier = Modifier.testTag("settings_show_vip_level"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "show_fan_level",
+        title = "显示粉丝等级",
+        summary = "开启后在评论区昵称旁显示铁粉、金粉、钻粉等粉丝标识",
+        keywords = "铁粉 金粉 钻粉 挚爱粉 评论 标识 fan",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.showFanLevel,
+            onCheckedChange = {
+                state.showFanLevel = it
+                App.settings.applyShowFanLevel(it)
+            },
             title = "显示粉丝等级",
             summary = "开启后在评论区昵称旁显示铁粉、金粉、钻粉等粉丝标识",
-            keywords = "铁粉 金粉 钻粉 挚爱粉 评论 标识 fan",
+            modifier = Modifier.testTag("settings_show_fan_level"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "show_verified_badge",
+        title = "显示认证 V 标",
+        summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
+        keywords = "金v 蓝v 黄v 认证 头像 verified",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.showVerifiedBadge,
+            onCheckedChange = {
+                state.showVerifiedBadge = it
+                App.settings.applyShowVerifiedBadge(it)
+            },
+            title = "显示认证 V 标",
+            summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
+            modifier = Modifier.testTag("settings_show_verified_badge"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun feedGeneralEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> {
+    val hotBoardsSummary = App.settings.hotBoards.let { picked ->
+        when {
+            picked.isEmpty() -> "已隐藏"
+            picked.size == HotBoard.entries.size -> "全部"
+            else -> HotBoard.entries.filter { it in picked }.joinToString("、") { it.label }
+        }
+    }
+    return listOf(
+        SettingsEntry(
+            id = "hot_boards",
+            title = "搜索页热搜榜单",
+            summary = hotBoardsSummary,
+            keywords = "热搜 榜单 实时 文娱 隐藏 hot board",
         ) { pos ->
-            SettingsSwitchRow(
-                checked = state.showFanLevel,
-                onCheckedChange = {
-                    state.showFanLevel = it
-                    App.settings.applyShowFanLevel(it)
-                },
-                title = "显示粉丝等级",
-                summary = "开启后在评论区昵称旁显示铁粉、金粉、钻粉等粉丝标识",
-                modifier = Modifier.testTag("settings_show_fan_level"),
+            SettingsArrowRow(
+                title = "搜索页热搜榜单",
+                modifier = Modifier.testTag("settings_hot_boards"),
+                summary = hotBoardsSummary,
                 cardListPosition = pos,
+                onClick = { state.pickHotBoards = true },
             )
         },
         SettingsEntry(
-            id = "show_verified_badge",
-            title = "显示认证 V 标",
-            summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
-            keywords = "金v 蓝v 黄v 认证 头像 verified",
+            id = "reverse_browse",
+            title = "倒序浏览",
+            summary = "刷新不回顶，从当前位置往上补看新微博",
+            keywords = "时间线 不回顶 补看 新微博 reverse",
         ) { pos ->
             SettingsSwitchRow(
-                checked = state.showVerifiedBadge,
+                checked = state.reverseBrowse,
                 onCheckedChange = {
-                    state.showVerifiedBadge = it
-                    App.settings.applyShowVerifiedBadge(it)
+                    state.reverseBrowse = it
+                    App.settings.applyReverseBrowse(it)
                 },
-                title = "显示认证 V 标",
-                summary = "开启后在认证用户头像右下角显示金 V / 蓝 V 标识",
-                modifier = Modifier.testTag("settings_show_verified_badge"),
+                title = "倒序浏览",
+                summary = "刷新不回顶，从当前位置往上补看新微博",
+                modifier = Modifier.testTag("settings_reverse_browse"),
                 cardListPosition = pos,
             )
         },
@@ -1108,11 +1403,117 @@ private fun feedSettingsEntries(
 }
 
 @Composable
-private fun accountSettingsEntries(
+private fun feedOverviewEntries(
     nav: NavState,
     state: SettingsUiState,
+): List<SettingsEntry> {
+    val tabsSummary = "${App.settings.feedLeftTab.label} · ${App.settings.feedCenterTab.label} · ${App.settings.feedRightTab.label}"
+    val badgeCount = listOf(
+        App.settings.showVipLevel,
+        App.settings.showFanLevel,
+        App.settings.showVerifiedBadge,
+    ).count { it }
+    return listOf(
+        SettingsEntry(
+            id = "sub_feed_tabs",
+            title = SettingsSubPage.FeedTabs.title,
+            summary = tabsSummary,
+            keywords = "分栏 左侧 中间 右侧 关注分组 tab",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.FeedTabs.title,
+                summary = tabsSummary,
+                modifier = Modifier.testTag("settings_sub_feed_tabs"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.FeedTabs)) },
+            )
+        },
+        SettingsEntry(
+            id = "sub_feed_card_style",
+            title = SettingsSubPage.FeedCardStyle.title,
+            summary = "首页卡片外框、详情页外框与长文折叠",
+            keywords = "卡片 外框 长文 折叠 样式",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.FeedCardStyle.title,
+                summary = "首页卡片外框、详情页外框与长文折叠",
+                modifier = Modifier.testTag("settings_sub_feed_card_style"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.FeedCardStyle)) },
+            )
+        },
+        SettingsEntry(
+            id = "sub_user_badges",
+            title = SettingsSubPage.UserBadges.title,
+            summary = "VIP、粉丝等级与认证 V 标（已开启 $badgeCount/3）",
+            keywords = "VIP 会员 铁粉 认证 V标 标识",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.UserBadges.title,
+                summary = "VIP、粉丝等级与认证 V 标（已开启 $badgeCount/3）",
+                modifier = Modifier.testTag("settings_sub_user_badges"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.UserBadges)) },
+            )
+        },
+    ) + feedGeneralEntries(state)
+}
+
+@Composable
+private fun feedAllSearchableEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> =
+    feedTabsSubEntries(state) +
+        feedGeneralEntries(state) +
+        feedCardStyleSubEntries(state) +
+        feedUserBadgesSubEntries(state)
+
+@Composable
+private fun accountBehaviorSubEntries(
+    state: SettingsUiState,
+): List<SettingsEntry> = listOf(
+    SettingsEntry(
+        id = "quick_switch_account",
+        title = "长按「我」切换账号",
+        summary = "长按悬浮底栏的「我」快速切换已保存账号",
+        keywords = "快捷 切号 多账号 switch account",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.quickSwitchAccount,
+            onCheckedChange = {
+                state.quickSwitchAccount = it
+                App.settings.applyQuickSwitchAccount(it)
+            },
+            title = "长按「我」切换账号",
+            summary = "长按悬浮底栏的「我」快速切换已保存账号",
+            modifier = Modifier.testTag("settings_quick_switch_account"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "profile_tab_avatar",
+        title = "底栏「我」显示头像",
+        summary = "在悬浮底栏的「我」位置显示当前账号头像",
+        keywords = "头像 底栏 个人 avatar",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = state.profileTabAvatar,
+            onCheckedChange = {
+                state.profileTabAvatar = it
+                App.settings.applyProfileTabAvatar(it)
+            },
+            title = "底栏「我」显示头像",
+            summary = "在悬浮底栏的「我」位置显示当前账号头像",
+            modifier = Modifier.testTag("settings_profile_tab_avatar"),
+            cardListPosition = pos,
+        )
+    },
+)
+
+@Composable
+private fun localContentDataSubEntries(
+    state: SettingsUiState,
     scope: CoroutineScope,
-    includeLibraryShortcuts: Boolean,
 ): List<SettingsEntry> {
     val accounts = remember(state.localFollowUid) { App.store.accounts() }
     val localFollowAccount = accounts.firstOrNull { it.uid == state.localFollowUid }
@@ -1126,190 +1527,239 @@ private fun accountSettingsEntries(
     } else {
         "将微博收藏复制到本地收藏"
     }
+    if (state.guest) return emptyList()
+    return listOf(
+        SettingsEntry(
+            id = "local_follow",
+            title = "本地关注使用账号",
+            summary = localFollowSummary,
+            keywords = "本地关注 特别关注 悄悄关注 取数 follow",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "本地关注使用账号",
+                modifier = Modifier.testTag("settings_local_follow"),
+                summary = localFollowSummary,
+                cardListPosition = pos,
+                onClick = { state.pickLocalFollow = true },
+            )
+        },
+        SettingsEntry(
+            id = "sync_local_favorites",
+            title = "同步本地收藏",
+            summary = syncFavSummary,
+            keywords = "云端收藏 微博收藏 复制 同步 favorite sync",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "同步本地收藏",
+                summary = syncFavSummary,
+                modifier = Modifier.testTag("settings_sync_local_favorites"),
+                cardListPosition = pos,
+                onClick = {
+                    if (!state.syncingLocalFavorites) {
+                        state.syncingLocalFavorites = true
+                        scope.launch {
+                            runCatching { App.repo.syncLocalFavorites() }
+                                .onSuccess { count -> App.toast("已同步 $count 条微博到本地收藏") }
+                                .onFailure { App.toast(it.message ?: "同步失败") }
+                            state.syncingLocalFavorites = false
+                        }
+                    }
+                },
+            )
+        },
+    )
+}
+
+@Composable
+private fun contentLibrarySubEntries(
+    nav: NavState,
+    state: SettingsUiState,
+): List<SettingsEntry> {
+    val draftsSummary = "${App.store.drafts().size} 条草稿"
+    val historySummary = "${App.store.history().size} 条记录"
+    val favoritesSummary = "${App.repo.localFavoriteIds.size} 条收藏"
     return buildList {
         add(
             SettingsEntry(
-                id = "accounts",
-                title = "账号管理",
-                keywords = "切号 多账号 添加 登录 account",
+                id = "drafts",
+                title = "草稿箱",
+                summary = draftsSummary,
+                keywords = "草稿 未发布 draft",
             ) { pos ->
                 SettingsArrowRow(
-                    title = "账号管理",
-                    modifier = Modifier.testTag("settings_accounts"),
+                    title = "草稿箱",
+                    modifier = Modifier.testTag("settings_drafts"),
+                    summary = draftsSummary,
                     cardListPosition = pos,
-                    onClick = { nav.push(Route.Accounts) },
+                    onClick = { nav.push(Route.Drafts) },
                 )
             },
         )
         add(
             SettingsEntry(
-                id = "quick_switch_account",
-                title = "长按「我」切换账号",
-                summary = "长按悬浮底栏的「我」快速切换已保存账号",
-                keywords = "快捷 切号 多账号 switch account",
+                id = "history",
+                title = "浏览历史",
+                summary = historySummary,
+                keywords = "历史记录 看过 history",
             ) { pos ->
-                SettingsSwitchRow(
-                    checked = state.quickSwitchAccount,
-                    onCheckedChange = {
-                        state.quickSwitchAccount = it
-                        App.settings.applyQuickSwitchAccount(it)
-                    },
-                    title = "长按「我」切换账号",
-                    summary = "长按悬浮底栏的「我」快速切换已保存账号",
-                    modifier = Modifier.testTag("settings_quick_switch_account"),
+                SettingsArrowRow(
+                    title = "浏览历史",
+                    modifier = Modifier.testTag("settings_history"),
+                    summary = historySummary,
                     cardListPosition = pos,
+                    onClick = { nav.push(Route.History) },
+                )
+            },
+        )
+        // 本地收藏全局共用，纯本地模式下同样可直接打开。
+        add(
+            SettingsEntry(
+                id = "favorites",
+                title = "收藏",
+                summary = favoritesSummary,
+                keywords = "本地收藏 书签 favorite",
+            ) { pos ->
+                SettingsArrowRow(
+                    title = "收藏",
+                    modifier = Modifier.testTag("settings_favorites"),
+                    summary = favoritesSummary,
+                    cardListPosition = pos,
+                    onClick = { nav.push(Route.Favorites) },
                 )
             },
         )
         add(
             SettingsEntry(
-                id = "profile_tab_avatar",
-                title = "底栏「我」显示头像",
-                summary = "在悬浮底栏的「我」位置显示当前账号头像",
-                keywords = "头像 底栏 个人 avatar",
+                id = "topic",
+                title = "话题 / 超话",
+                keywords = "超话 话题 广场 topic supertopic",
             ) { pos ->
-                SettingsSwitchRow(
-                    checked = state.profileTabAvatar,
-                    onCheckedChange = {
-                        state.profileTabAvatar = it
-                        App.settings.applyProfileTabAvatar(it)
-                    },
-                    title = "底栏「我」显示头像",
-                    summary = "在悬浮底栏的「我」位置显示当前账号头像",
-                    modifier = Modifier.testTag("settings_profile_tab_avatar"),
+                SettingsArrowRow(
+                    title = "话题 / 超话",
+                    modifier = Modifier.testTag("settings_topic"),
                     cardListPosition = pos,
+                    onClick = { nav.push(Route.Topic()) },
                 )
             },
         )
-        // 纯本地模式一律用访客身份取数，没有账号可选。
         if (!state.guest) {
             add(
                 SettingsEntry(
-                    id = "local_follow",
-                    title = "本地关注使用账号",
-                    summary = localFollowSummary,
-                    keywords = "本地关注 特别关注 悄悄关注 取数 follow",
+                    id = "nearby",
+                    title = "附近",
+                    keywords = "同城 定位 位置 nearby location",
                 ) { pos ->
                     SettingsArrowRow(
-                        title = "本地关注使用账号",
-                        modifier = Modifier.testTag("settings_local_follow"),
-                        summary = localFollowSummary,
-                        cardListPosition = pos,
-                        onClick = { state.pickLocalFollow = true },
-                    )
-                },
-            )
-            add(
-                SettingsEntry(
-                    id = "sync_local_favorites",
-                    title = "同步本地收藏",
-                    summary = syncFavSummary,
-                    keywords = "云端收藏 微博收藏 复制 同步 favorite sync",
-                ) { pos ->
-                    SettingsArrowRow(
-                        title = "同步本地收藏",
-                        summary = syncFavSummary,
-                        modifier = Modifier.testTag("settings_sync_local_favorites"),
-                        cardListPosition = pos,
-                        onClick = {
-                            if (!state.syncingLocalFavorites) {
-                                state.syncingLocalFavorites = true
-                                scope.launch {
-                                    runCatching { App.repo.syncLocalFavorites() }
-                                        .onSuccess { count -> App.toast("已同步 $count 条微博到本地收藏") }
-                                        .onFailure { App.toast(it.message ?: "同步失败") }
-                                    state.syncingLocalFavorites = false
-                                }
-                            }
-                        },
-                    )
-                },
-            )
-        }
-        if (includeLibraryShortcuts) {
-            val draftsSummary = "${App.store.drafts().size} 条草稿"
-            val historySummary = "${App.store.history().size} 条记录"
-            val favoritesSummary = "${App.repo.localFavoriteIds.size} 条收藏"
-            add(
-                SettingsEntry(
-                    id = "drafts",
-                    title = "草稿箱",
-                    summary = draftsSummary,
-                    keywords = "草稿 未发布 draft",
-                ) { pos ->
-                    SettingsArrowRow(
-                        title = "草稿箱",
-                        modifier = Modifier.testTag("settings_drafts"),
-                        summary = draftsSummary,
-                        cardListPosition = pos,
-                        onClick = { nav.push(Route.Drafts) },
-                    )
-                },
-            )
-            add(
-                SettingsEntry(
-                    id = "history",
-                    title = "浏览历史",
-                    summary = historySummary,
-                    keywords = "历史记录 看过 history",
-                ) { pos ->
-                    SettingsArrowRow(
-                        title = "浏览历史",
-                        modifier = Modifier.testTag("settings_history"),
-                        summary = historySummary,
-                        cardListPosition = pos,
-                        onClick = { nav.push(Route.History) },
-                    )
-                },
-            )
-            // 本地收藏全局共用，纯本地模式下同样可直接打开。
-            add(
-                SettingsEntry(
-                    id = "favorites",
-                    title = "收藏",
-                    summary = favoritesSummary,
-                    keywords = "本地收藏 书签 favorite",
-                ) { pos ->
-                    SettingsArrowRow(
-                        title = "收藏",
-                        modifier = Modifier.testTag("settings_favorites"),
-                        summary = favoritesSummary,
-                        cardListPosition = pos,
-                        onClick = { nav.push(Route.Favorites) },
-                    )
-                },
-            )
-            add(
-                SettingsEntry(
-                    id = "topic",
-                    title = "话题 / 超话",
-                    keywords = "超话 话题 广场 topic supertopic",
-                ) { pos ->
-                    SettingsArrowRow(
-                        title = "话题 / 超话",
-                        modifier = Modifier.testTag("settings_topic"),
-                        cardListPosition = pos,
-                        onClick = { nav.push(Route.Topic()) },
-                    )
-                },
-            )
-            if (!state.guest) {
-                add(
-                    SettingsEntry(
-                        id = "nearby",
                         title = "附近",
-                        keywords = "同城 定位 位置 nearby location",
-                    ) { pos ->
-                        SettingsArrowRow(
-                            title = "附近",
-                            modifier = Modifier.testTag("settings_nearby"),
-                            cardListPosition = pos,
-                            onClick = { nav.push(Route.Nearby) },
-                        )
-                    },
-                )
-            }
+                        modifier = Modifier.testTag("settings_nearby"),
+                        cardListPosition = pos,
+                        onClick = { nav.push(Route.Nearby) },
+                    )
+                },
+            )
         }
+    }
+}
+
+@Composable
+private fun accountOverviewEntries(
+    nav: NavState,
+    state: SettingsUiState,
+    includeLibraryShortcuts: Boolean,
+): List<SettingsEntry> = buildList {
+    add(
+        SettingsEntry(
+            id = "accounts",
+            title = "账号管理",
+            keywords = "切号 多账号 添加 登录 account",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "账号管理",
+                modifier = Modifier.testTag("settings_accounts"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.Accounts) },
+            )
+        },
+    )
+    add(
+        SettingsEntry(
+            id = "sub_account_behavior",
+            title = SettingsSubPage.AccountBehavior.title,
+            summary = "长按切号与底栏「我」头像显示",
+            keywords = "切号 长按 头像 底栏",
+        ) { pos ->
+            SettingsArrowRow(
+                title = SettingsSubPage.AccountBehavior.title,
+                summary = "长按切号与底栏「我」头像显示",
+                modifier = Modifier.testTag("settings_sub_account_behavior"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.AccountBehavior)) },
+            )
+        },
+    )
+    if (!state.guest) {
+        add(
+            SettingsEntry(
+                id = "sub_local_content_data",
+                title = SettingsSubPage.LocalContentData.title,
+                summary = "本地关注取数账号与本地收藏同步",
+                keywords = "本地关注 同步 本地收藏 取数",
+            ) { pos ->
+                SettingsArrowRow(
+                    title = SettingsSubPage.LocalContentData.title,
+                    summary = "本地关注取数账号与本地收藏同步",
+                    modifier = Modifier.testTag("settings_sub_local_content_data"),
+                    cardListPosition = pos,
+                    onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.LocalContentData)) },
+                )
+            },
+        )
+    }
+    if (includeLibraryShortcuts) {
+        add(
+            SettingsEntry(
+                id = "sub_content_library",
+                title = SettingsSubPage.ContentLibrary.title,
+                summary = "草稿箱、浏览历史、收藏与话题广场",
+                keywords = "草稿 历史 收藏 话题 超话 附近",
+            ) { pos ->
+                SettingsArrowRow(
+                    title = SettingsSubPage.ContentLibrary.title,
+                    summary = "草稿箱、浏览历史、收藏与话题广场",
+                    modifier = Modifier.testTag("settings_sub_content_library"),
+                    cardListPosition = pos,
+                    onClick = { nav.push(Route.SettingsSubDetail(SettingsSubPage.ContentLibrary)) },
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun accountAllSearchableEntries(
+    nav: NavState,
+    state: SettingsUiState,
+    scope: CoroutineScope,
+    includeLibraryShortcuts: Boolean,
+): List<SettingsEntry> = buildList {
+    add(
+        SettingsEntry(
+            id = "accounts",
+            title = "账号管理",
+            keywords = "切号 多账号 添加 登录 account",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "账号管理",
+                modifier = Modifier.testTag("settings_accounts"),
+                cardListPosition = pos,
+                onClick = { nav.push(Route.Accounts) },
+            )
+        },
+    )
+    addAll(accountBehaviorSubEntries(state))
+    addAll(localContentDataSubEntries(state, scope))
+    if (includeLibraryShortcuts) {
+        addAll(contentLibrarySubEntries(nav, state))
     }
 }
 
