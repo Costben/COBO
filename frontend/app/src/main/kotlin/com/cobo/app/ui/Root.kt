@@ -111,14 +111,12 @@ import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
 import com.cobo.app.ui.components.rememberImageSaveState
-import io.github.suqi8.coui.kmp.basic.NotificationSnackBarHost
-import io.github.suqi8.coui.kmp.basic.NotificationSnackBarHostState
-import io.github.suqi8.coui.kmp.basic.NotificationSnackBarResult
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SnackbarDuration
 import io.github.suqi8.coui.kmp.basic.SnackbarHost
 import io.github.suqi8.coui.kmp.basic.SnackbarHostState
+import io.github.suqi8.coui.kmp.basic.SnackbarResult
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
@@ -367,14 +365,13 @@ fun CoboRoot(
             popupHost = {
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
-                    ClipboardNotificationHost(
+                    // 使用 COUI 组件库统一的 SnackbarHost（胶囊形态、连续曲率圆角、系统级阴影与弹簧动效），
+                    // 放在 popupHost 顶层保证在弹窗与软键盘之上可见，并在带底栏页面自动避让底栏。
+                    AppSnackbarHost(
                         nav = nav,
-                        onOpen = { link -> linkHandler(link.rawUrl) },
+                        onOpenClipboardLink = { link -> linkHandler(link.rawUrl) },
                     )
                 }
-                // 使用 COUI 组件库统一的 SnackbarHost（连续曲率圆角、系统级阴影与弹簧动效），
-                // 放在 popupHost 顶层保证在弹窗与软键盘之上可见，并在带底栏页面自动避让底栏。
-                AppSnackbarHost(nav = nav)
             },
         ) {
             BoxWithConstraints(
@@ -523,10 +520,14 @@ fun CoboRoot(
     }
 }
 
-/** 全局统一提示：直接复用 COUI 组件库的 [SnackbarHost] 与 [io.github.suqi8.coui.kmp.basic.Snackbar]。 */
+/** 全局统一提示与剪贴板识别：直接复用 COUI 组件库的 [SnackbarHost] 与原生胶囊 [io.github.suqi8.coui.kmp.basic.Snackbar]。 */
 @Composable
-private fun AppSnackbarHost(nav: NavState) {
+private fun AppSnackbarHost(
+    nav: NavState,
+    onOpenClipboardLink: (DetectedWeiboLink) -> Unit,
+) {
     val hostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(hostState) {
         App.toastEvents.collect { message ->
             hostState.newestSnackbarData()?.dismiss()
@@ -538,29 +539,7 @@ private fun AppSnackbarHost(nav: NavState) {
             }
         }
     }
-    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
-    val density = LocalDensity.current
-    val imeOpen = WindowInsets.ime.getBottom(density) > 0
-    val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(bottom = if (hasFloatingBottomBar) 64.dp else 0.dp),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        SnackbarHost(state = hostState)
-    }
-}
 
-@Composable
-private fun ClipboardNotificationHost(
-    nav: NavState,
-    onOpen: (DetectedWeiboLink) -> Unit,
-) {
-    val hostState = remember { NotificationSnackBarHostState() }
-    val scope = rememberCoroutineScope()
     val detected = App.pendingClipboardLink
     val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
     val suppressed = topRoute is Route.Login ||
@@ -575,14 +554,15 @@ private fun ClipboardNotificationHost(
         App.dismissClipboardLink()
         if (suppressed) return@LaunchedEffect
         scope.launch {
-            val result = hostState.showNotification(
-                title = "剪贴板发现${link.kind.label}",
-                subtitle = link.displayText,
-                actionText = "打开",
-                durationMillis = 6_000L,
+            hostState.newestSnackbarData()?.dismiss()
+            val result = hostState.showSnackbar(
+                message = "剪贴板发现${link.kind.label}",
+                actionLabel = "打开",
+                withDismissAction = true,
+                duration = SnackbarDuration.Custom(6_000L),
             )
-            if (result == NotificationSnackBarResult.ActionPerformed) {
-                onOpen(link)
+            if (result == SnackbarResult.ActionPerformed) {
+                onOpenClipboardLink(link)
             }
         }
     }
@@ -590,7 +570,6 @@ private fun ClipboardNotificationHost(
     val density = LocalDensity.current
     val imeOpen = WindowInsets.ime.getBottom(density) > 0
     val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -599,7 +578,7 @@ private fun ClipboardNotificationHost(
             .padding(bottom = if (hasFloatingBottomBar) 64.dp else 0.dp),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        NotificationSnackBarHost(state = hostState)
+        SnackbarHost(state = hostState)
     }
 }
 
