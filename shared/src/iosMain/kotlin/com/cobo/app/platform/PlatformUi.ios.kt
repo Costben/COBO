@@ -1034,16 +1034,14 @@ actual fun rememberJsonImportLauncher(
                 val result = runCatching {
                     val accessed = url.startAccessingSecurityScopedResource()
                     try {
-                        val data = platform.Foundation.NSData.dataWithContentsOfURL(url)
-                            ?: error("无法读取所选文件")
-                        if (data.length.toLong() > maxBytes) {
+                        val filePath = url.path ?: error("无法读取所选文件路径")
+                        val file = PlatformFile(filePath)
+                        if (file.length() > maxBytes) {
                             throw IllegalArgumentException("备份文件过大，已取消读取")
                         }
-                        val bytes = ByteArray(data.length.toInt())
-                        if (bytes.isNotEmpty()) {
-                            bytes.usePinned { pinned ->
-                                platform.posix.memcpy(pinned.addressOf(0), data.bytes, data.length)
-                            }
+                        val bytes = file.readBytesOrNull() ?: error("无法读取所选文件")
+                        if (bytes.size.toLong() > maxBytes) {
+                            throw IllegalArgumentException("备份文件过大，已取消读取")
                         }
                         bytes.decodeToString()
                     } finally {

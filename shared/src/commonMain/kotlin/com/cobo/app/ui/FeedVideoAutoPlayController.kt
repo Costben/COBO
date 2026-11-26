@@ -16,7 +16,6 @@ import com.cobo.app.data.FeedVideoCandidate
 import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.pickBestFeedVideoCandidate
 import com.cobo.app.data.shouldAutoPlayFeedVideo
-import com.cobo.app.platform.appCacheDir
 import com.cobo.app.screen.ResolvedVideo
 import com.cobo.app.screen.defaultRefererFor
 import com.cobo.app.screen.isDirectVideoStream
@@ -225,11 +224,9 @@ internal fun FeedInlineVideoPreview(
         if (resolved != null) return@LaunchedEffect
         val result = resolvePlayableVideo(
             rawUrl = video.url,
-            cacheDir = appCacheDir(),
-            isLiveHint = false,
+            isLive = false,
             fid = video.fid,
             statusId = video.statusId,
-            titleHint = video.title,
         )
         if (result is ResolvedVideo.DirectStream && !result.isLive && result.url.isNotBlank()) {
             resolved = result
