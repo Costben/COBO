@@ -161,7 +161,7 @@ internal fun shouldAutoCloseVideoOnComplete(
     hasPlayed: Boolean,
 ): Boolean = !isLive && autoCloseSetting && hasPlayed
 
-internal fun clampPipAspectRatio(rawRatio: Float): Float {
+fun clampPipAspectRatio(rawRatio: Float): Float {
     if (!rawRatio.isFinite() || rawRatio <= 0f) return 16f / 9f
     return rawRatio.coerceIn(MinPipAspectRatio, MaxPipAspectRatio)
 }
@@ -172,11 +172,12 @@ internal fun shouldAutoFloatVideoOnBack(
     hasError: Boolean,
 ): Boolean = settingEnabled && isPlaying && !hasError
 
-internal fun shouldAutoEnterSystemPip(
+fun shouldAutoEnterSystemPip(
     settingEnabled: Boolean,
     hasActiveVideo: Boolean,
     isPlaying: Boolean,
-): Boolean = settingEnabled && hasActiveVideo && isPlaying
+    isLive: Boolean = false,
+): Boolean = settingEnabled && hasActiveVideo && isPlaying && !isLive
 
 internal fun computeFloatingMiniSizeDp(aspectRatio: Float): Pair<Float, Float> {
     val safe = aspectRatio.takeIf { it.isFinite() && it > 0.2f } ?: (16f / 9f)
@@ -222,15 +223,28 @@ class FloatingVideoSession(
 
 @Stable
 class FloatingVideoController {
-    internal var activeSession by mutableStateOf<FloatingVideoSession?>(null)
+    var activeSession by mutableStateOf<FloatingVideoSession?>(null)
         private set
 
-    internal var fullscreenSession by mutableStateOf<FloatingVideoSession?>(null)
+    var fullscreenSession by mutableStateOf<FloatingVideoSession?>(null)
 
     var systemPipActive by mutableStateOf(false)
-        internal set
 
-    internal var requestSystemPipCallback: ((Float) -> Boolean)? = null
+    var requestSystemPipCallback: ((Float) -> Boolean)? = null
+
+    fun activePipSession(): FloatingVideoSession? = fullscreenSession ?: activeSession
+
+    fun pauseActiveIfNotPip() {
+        if (systemPipActive) return
+        activeSession?.player?.let { if (it.isPlaying) it.pause() }
+        fullscreenSession?.player?.let { if (it.isPlaying) it.pause() }
+    }
+
+    fun releaseAll() {
+        activeSession?.player?.release()
+        activeSession = null
+        fullscreenSession = null
+    }
 
     internal fun startFloating(session: FloatingVideoSession) {
         val prev = activeSession
@@ -313,6 +327,16 @@ fun FloatingVideoOverlay(
     }
 
     val (widthDp, heightDp) = remember(session.aspectRatio) { computeFloatingMiniSizeDp(session.aspectRatio) }
+    if (controller.systemPipActive) {
+        Box(modifier.fillMaxSize().background(Color.Black)) {
+            PlatformVideoSurface(
+                player = player,
+                fillCrop = false,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        return
+    }
     var controlsVisible by remember(session) { mutableStateOf(true) }
     LaunchedEffect(controlsVisible, session.isPlaying) {
         if (controlsVisible && session.isPlaying) {

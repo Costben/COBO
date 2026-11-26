@@ -1,5 +1,6 @@
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.compose")
@@ -8,6 +9,20 @@ plugins {
 kotlin {
     compilerOptions {
         freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    android {
+        compileSdk {
+            version = release(37) {
+                minorApiLevel = 0
+            }
+        }
+        minSdk = 26
+        namespace = "com.cobo.app.shared"
+        androidResources.enable = true
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
     }
 
     listOf(
@@ -40,6 +55,17 @@ kotlin {
             api(libs.lifecycle.runtime.compose)
             api(libs.lifecycle.viewmodel.compose)
             api(libs.navigationevent.compose)
+        }
+        androidMain.dependencies {
+            api(libs.okhttp)
+            implementation(libs.coil.network.okhttp)
+            implementation(libs.kotlinx.coroutines.android)
+            implementation(libs.androidx.core.ktx)
+            implementation(libs.androidx.activity.compose)
+            api(libs.media3.exoplayer)
+            api(libs.media3.exoplayer.hls)
+            api(libs.media3.ui)
+            implementation(libs.zxing.core)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)

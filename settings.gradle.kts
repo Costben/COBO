@@ -51,3 +51,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Cobo"
 include(":shared")
+include(":app")
