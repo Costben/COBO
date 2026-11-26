@@ -656,6 +656,10 @@ fun ImageViewerScreen(
 
     ViewerSystemBars(visible = chrome)
 
+    LaunchedEffect(pagerState.currentPage) {
+        inlineVideoScrubbing = false
+    }
+
     // 刻意不将 pagerState.currentPage 纳入依赖键，确保左右滑动翻页或缩放不触发也不重置自动隐藏，仅由点击图片唤出。
     LaunchedEffect(
         chrome,
@@ -852,6 +856,7 @@ fun ImageViewerScreen(
                     Box(Modifier.align(Alignment.CenterStart)) {
                         HighlightedIconButton(
                             size = MediaControlHeight,
+                            enabled = chrome,
                             onClick = {
                                 if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
                                     frame.dismiss.cancelActive()
@@ -881,12 +886,16 @@ fun ImageViewerScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             MediaMaterialPill(
-                                onClick = {
-                                    if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                        chromeInteractionTick++
-                                        original = !original
-                                        saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                                onClick = if (chrome) {
+                                    {
+                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                            chromeInteractionTick++
+                                            original = !original
+                                            saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                                        }
                                     }
+                                } else {
+                                    null
                                 },
                             ) {
                                 Text(
@@ -902,6 +911,7 @@ fun ImageViewerScreen(
                                 Box {
                                     HighlightedIconButton(
                                         size = MediaControlHeight,
+                                        enabled = chrome,
                                         onClick = {
                                             if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
                                                 chromeInteractionTick++
@@ -986,6 +996,7 @@ fun ImageViewerScreen(
                             } else {
                                 HighlightedIconButton(
                                     size = MediaControlHeight,
+                                    enabled = chrome,
                                     onClick = {
                                         if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
                                             chromeInteractionTick++
@@ -1039,6 +1050,7 @@ fun ImageViewerScreen(
                     ) {
                         HighlightedIconButton(
                             size = MediaControlHeight,
+                            enabled = chrome,
                             modifier = Modifier.testTag("live_photo_sound_toggle"),
                             onClick = {
                                 if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
@@ -1212,6 +1224,10 @@ private fun ZoomableImage(
     val currentIsPagerScrolling by rememberUpdatedState(isPagerScrolling)
     val currentCanStartDismiss by rememberUpdatedState(canStartDismiss)
     val currentOnDismissRelease by rememberUpdatedState(onDismissRelease)
+    val currentChromeVisible by rememberUpdatedState(chromeVisible)
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnChromeInteraction by rememberUpdatedState(onChromeInteraction)
+    val currentOnInlineScrubbingChange by rememberUpdatedState(onInlineScrubbingChange)
     var box by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -1532,30 +1548,44 @@ private fun ZoomableImage(
             inlineVideoPlaying = false
         }
     }
+    LaunchedEffect(isCurrent, inlineVideoActive, chromeVisible) {
+        if ((!isCurrent || !inlineVideoActive || !chromeVisible) && inlineScrubbing) {
+            inlineScrubbing = false
+            currentOnInlineScrubbingChange(false)
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (inlineScrubbing) {
+                inlineScrubbing = false
+                currentOnInlineScrubbingChange(false)
+            }
+        }
+    }
     fun handleVideoPageTap() {
         val player = inlinePlayer
         if (!inlineVideoActive) {
             inlineVideoActive = true
-            onChromeInteraction()
+            currentOnChromeInteraction()
             return
         }
-        if (!chromeVisible) {
-            onTap()
+        if (!currentChromeVisible) {
+            currentOnTap()
             return
         }
         when {
-            player == null -> onTap()
-            inlineIsLive -> onTap()
+            player == null -> currentOnTap()
+            inlineIsLive -> currentOnTap()
             player.isPlaying -> {
                 player.pause()
                 inlineVideoPlaying = false
-                onChromeInteraction()
+                currentOnChromeInteraction()
             }
             else -> {
                 if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
                 player.play()
                 inlineVideoPlaying = true
-                onChromeInteraction()
+                currentOnChromeInteraction()
             }
         }
     }
@@ -2061,7 +2091,7 @@ private fun ZoomableImage(
                         detectTapGestures(
                             onTap = {
                                 if (!frame.dismiss.active && !frame.dismiss.exiting) {
-                                    if (hasInlineVideo) handleVideoPageTap() else onTap()
+                                    if (hasInlineVideo) handleVideoPageTap() else currentOnTap()
                                 }
                             },
                             onDoubleTap = {
@@ -2073,7 +2103,7 @@ private fun ZoomableImage(
                         )
                     } else {
                         detectLivePress(
-                            onTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) onTap() },
+                            onTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) currentOnTap() },
                             onDoubleTap = { if (!frame.dismiss.active && !frame.dismiss.exiting) toggleZoom(it) },
                             onPlay = {
                                 if (!frame.dismiss.active && !frame.dismiss.exiting) {
@@ -2224,8 +2254,10 @@ private fun ZoomableImage(
             ) {
                 HighlightedIconButton(
                     size = MediaControlHeight,
+                    enabled = chromeVisible,
                     onClick = {
-                        onChromeInteraction()
+                        if (!chromeVisible) return@HighlightedIconButton
+                        currentOnChromeInteraction()
                         inlineVideoMuted = !inlineVideoMuted
                     },
                 ) {
@@ -2245,7 +2277,8 @@ private fun ZoomableImage(
                     IntentSlider(
                         value = displayPos.coerceIn(0L, effectiveDur).toFloat(),
                         onValueChange = { next ->
-                            if (!inlineScrubbing) onInlineScrubbingChange(true)
+                            if (!chromeVisible) return@IntentSlider
+                            if (!inlineScrubbing) currentOnInlineScrubbingChange(true)
                             inlineScrubbing = true
                             inlineScrubMs = next.roundToLong()
                         },
@@ -2253,11 +2286,11 @@ private fun ZoomableImage(
                             inlinePlayer?.seekTo(inlineScrubMs)
                             inlineVideoPosMs = inlineScrubMs
                             inlineScrubbing = false
-                            onInlineScrubbingChange(false)
-                            onChromeInteraction()
+                            currentOnInlineScrubbingChange(false)
+                            currentOnChromeInteraction()
                         },
                         valueRange = 0f..effectiveDur.toFloat(),
-                        enabled = inlineVideoDurationMs > 0L,
+                        enabled = chromeVisible && inlineVideoDurationMs > 0L,
                         followSystemTheme = false,
                         materialBackdrop = false,
                         conicLight = true,
