@@ -61,6 +61,8 @@ class SettingsE2eTest : UiE2eTest() {
             "settings_prerelease",
             "settings_in_app_update",
             "settings_clear_cache",
+            "settings_backup_export",
+            "settings_backup_import",
             "settings_about",
             "settings_logout",
         ).forEach { scrollToTag(it) }

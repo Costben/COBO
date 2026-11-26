@@ -983,3 +983,85 @@ actual object WebCookieBridge {
         }
     }
 }
+
+@Composable
+actual fun rememberJsonExportLauncher(
+    onResult: (Result<String>?) -> Unit,
+): (suggestedFileName: String, content: String, summaryLabel: String) -> Unit {
+    val currentOnResult = rememberUpdatedState(onResult)
+    return { suggestedFileName, content, summaryLabel ->
+        dispatch_async(dispatch_get_main_queue()) {
+            val result = runCatching {
+                val safeName = suggestedFileName.substringAfterLast('/').ifBlank { "cobo-backup.json" }
+                val outFile = appCacheDir().child("backup_export").apply { mkdirs() }.child(safeName)
+                if (!outFile.writeTextAtomic(content)) error("无法写入备份文件")
+                val fileUrl = platform.Foundation.NSURL.fileURLWithPath(outFile.path)
+                val vc = platform.UIKit.UIActivityViewController(
+                    activityItems = listOf(fileUrl),
+                    applicationActivities = null,
+                )
+                topViewController()?.presentViewController(vc, animated = true, completion = null)
+                    ?: error("无法打开系统分享面板")
+                summaryLabel
+            }
+            currentOnResult.value(result)
+        }
+    }
+}
+
+@Composable
+actual fun rememberJsonImportLauncher(
+    maxBytes: Long,
+    onResult: (Result<String>?) -> Unit,
+): () -> Unit {
+    val currentOnResult = rememberUpdatedState(onResult)
+    val delegate = remember {
+        object : platform.darwin.NSObject(), platform.UIKit.UIDocumentPickerDelegateProtocol {
+            override fun documentPickerWasCancelled(
+                controller: platform.UIKit.UIDocumentPickerViewController,
+            ) {
+                currentOnResult.value(null)
+            }
+
+            override fun documentPicker(
+                controller: platform.UIKit.UIDocumentPickerViewController,
+                didPickDocumentsAtURLs: List<*>,
+            ) {
+                val url = didPickDocumentsAtURLs.firstOrNull() as? platform.Foundation.NSURL ?: run {
+                    currentOnResult.value(null)
+                    return
+                }
+                val result = runCatching {
+                    val accessed = url.startAccessingSecurityScopedResource()
+                    try {
+                        val data = platform.Foundation.NSData.dataWithContentsOfURL(url)
+                            ?: error("无法读取所选文件")
+                        if (data.length.toLong() > maxBytes) {
+                            throw IllegalArgumentException("备份文件过大，已取消读取")
+                        }
+                        val bytes = ByteArray(data.length.toInt())
+                        if (bytes.isNotEmpty()) {
+                            bytes.usePinned { pinned ->
+                                platform.posix.memcpy(pinned.addressOf(0), data.bytes, data.length)
+                            }
+                        }
+                        bytes.decodeToString()
+                    } finally {
+                        if (accessed) url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                currentOnResult.value(result)
+            }
+        }
+    }
+    return {
+        dispatch_async(dispatch_get_main_queue()) {
+            val picker = platform.UIKit.UIDocumentPickerViewController(
+                documentTypes = listOf("public.json", "public.plain-text", "public.item"),
+                inMode = platform.UIKit.UIDocumentPickerMode.UIDocumentPickerModeImport,
+            )
+            picker.delegate = delegate
+            topViewController()?.presentViewController(picker, animated = true, completion = null)
+        }
+    }
+}

@@ -305,6 +305,14 @@ class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext =
         write("drafts.json", out)
     }
 
+    fun mergeDrafts(incoming: List<Draft>): Int {
+        val merged = mergeBackupDrafts(drafts(), incoming)
+        val out = JSONArray()
+        merged.forEach { d -> out.put(JSONObject().put("text", d.text).put("time", d.time)) }
+        write("drafts.json", out)
+        return merged.size
+    }
+
     fun history(): List<HistoryItem> {
         val arr = readArray("history.json")
         val out = ArrayList<HistoryItem>()
@@ -348,6 +356,24 @@ class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext =
     }
 
     fun clearHistory() = write("history.json", JSONArray())
+
+    fun mergeHistory(incoming: List<HistoryItem>): Int {
+        val merged = mergeBackupHistory(history(), incoming)
+        val out = JSONArray()
+        merged.forEach { item ->
+            out.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("mid", item.mid)
+                    .put("text", item.text)
+                    .put("user", item.user)
+                    .put("html", item.html)
+                    .put("time", item.time),
+            )
+        }
+        write("history.json", out)
+        return merged.size
+    }
 
     /**
      * 本地收藏：全局共用一份 `favorites.json`，跨多账号和纯本地模式共享，切号与退出登录都不清空。
@@ -407,6 +433,14 @@ class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext =
         }
     }
 
+    fun mergeFavorites(incoming: List<Status>): Int {
+        val merged = mergeBackupFavorites(favorites(), incoming)
+        val out = JSONArray()
+        merged.forEach { out.put(statusToSnapshot(it)) }
+        write("favorites.json", out)
+        return merged.size
+    }
+
     /** uid -> 关注标记 key。存空串表示「明确清掉」，和「没记过」要分开，否则服务端值会一直补回来。 */
     private fun readFollowTags(): JSONObject {
         val f = file("follows.json")
@@ -429,6 +463,15 @@ class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext =
         val o = readFollowTags()
         o.put(uid, tag?.key ?: "")
         write("follows.json", o)
+    }
+
+    fun mergeFollowTags(incoming: Map<String, FollowTag>): Int {
+        val existingObj = readFollowTags()
+        val existing = followTags()
+        val merged = mergeBackupFollowTags(existing, incoming)
+        merged.forEach { (uid, tag) -> existingObj.put(uid, tag.key) }
+        write("follows.json", existingObj)
+        return merged.size
     }
 
     /**

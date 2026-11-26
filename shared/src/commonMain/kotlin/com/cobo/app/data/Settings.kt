@@ -474,6 +474,12 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         saveSearchHistory()
     }
 
+    internal fun replaceSearchHistory(items: List<String>) {
+        searchHistory.clear()
+        searchHistory.addAll(items.take(SearchHistoryLimit))
+        saveSearchHistory()
+    }
+
     private fun saveSearchHistory() {
         sp.edit().putString("search_history", encodeSearchHistoryJson(searchHistory)).apply()
     }
@@ -853,6 +859,137 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         val next = (darkMode + 1) % 3
         applyDarkMode(next)
         return next
+    }
+
+    /** 导出显式白名单内的偏好设置；关注分组绑定账号 gid，不写入跨账号备份。 */
+    internal fun exportBackup(): SettingsBackup = SettingsBackup(
+        darkMode = darkMode,
+        fontScale = fontScale,
+        accentColor = accentColor,
+        meIconStyleKey = meIconStyle.key,
+        blurEffects = blurEffects,
+        allowLandscape = allowLandscape,
+        animationSpeedKey = animationSpeed.key,
+        searchPanelAnimationKey = searchPanelAnimation.key,
+        predictiveBack = predictiveBack,
+        predictiveBackCardFling = predictiveBackCardFling,
+        predictiveBackImageFling = predictiveBackImageFling,
+        predictiveBackBlur = predictiveBackBlur,
+        autoHideFloatingBars = autoHideFloatingBars,
+        feedTabTapToTopAndReturn = feedTabTapToTopAndReturn,
+        bottomLeftActionKey = bottomLeftAction.key,
+        feedLeftTabKey = feedLeftTab.takeIf { !it.isGroup }?.item?.key,
+        feedCenterTabKey = feedCenterTab.takeIf { !it.isGroup }?.item?.key,
+        feedRightTabKey = feedRightTab.takeIf { !it.isGroup }?.item?.key,
+        collapseFollowGroups = collapseFollowGroups,
+        hotBoardKeys = HotBoard.entries.filter { it in hotBoards }.map { it.filterType },
+        reverseBrowse = reverseBrowse,
+        feedCardFrame = feedCardFrame,
+        detailCardFrame = detailCardFrame,
+        foldLongText = foldLongText,
+        showVipLevel = showVipLevel,
+        showFanLevel = showFanLevel,
+        showVerifiedBadge = showVerifiedBadge,
+        confirmLike = confirmLike,
+        inAppBrowser = inAppBrowser,
+        quickSwitchAccount = quickSwitchAccount,
+        profileTabAvatar = profileTabAvatar,
+        profileShowStatuses = profileShowStatuses,
+        imageBrowseQualityKey = imageBrowseQuality.key,
+        livePhotoAutoPlay = livePhotoAutoPlay,
+        livePhotoSound = livePhotoSound,
+        videoAutoFloatOnBack = videoAutoFloatOnBack,
+        videoAutoCloseOnComplete = videoAutoCloseOnComplete,
+        videoCenterSwipeActions = videoCenterSwipeActions,
+        localMode = localMode,
+        localFollowUid = localFollowUid,
+        nearbyCustom = nearbyCustom,
+        nearbyPlaceName = nearbyPlaceName,
+        nearbyPlaceLat = nearbyPlaceLat,
+        nearbyPlaceLon = nearbyPlaceLon,
+        autoCheckUpdate = autoCheckUpdate,
+        acceptPrerelease = acceptPrerelease,
+        inAppUpdate = inAppUpdate,
+    )
+
+    /** 仅恢复备份中存在且合法的偏好键，未知或非法字段自动跳过。 */
+    internal fun applyBackup(backup: SettingsBackup) {
+        backup.darkMode?.let { applyDarkMode(it.coerceIn(0, 2)) }
+        backup.fontScale?.takeIf { it.isFinite() && it in 0.5f..2.0f }?.let(::applyFontScale)
+        backup.accentColor?.let(::applyAccentColor)
+        backup.meIconStyleKey?.let { key ->
+            MeIconStyle.entries.firstOrNull { it.key == key }?.let(::applyMeIconStyle)
+        }
+        backup.blurEffects?.let(::applyBlurEffects)
+        backup.allowLandscape?.let(::applyAllowLandscape)
+        backup.animationSpeedKey?.let { key ->
+            AnimationSpeed.entries.firstOrNull { it.key == key }?.let(::applyAnimationSpeed)
+        }
+        backup.searchPanelAnimationKey?.let { key ->
+            SearchPanelAnimation.entries.firstOrNull { it.key == key }?.let(::applySearchPanelAnimation)
+        }
+        backup.predictiveBack?.let(::applyPredictiveBack)
+        backup.predictiveBackCardFling?.let(::applyPredictiveBackCardFling)
+        backup.predictiveBackImageFling?.let(::applyPredictiveBackImageFling)
+        backup.predictiveBackBlur?.let(::applyPredictiveBackBlur)
+        backup.autoHideFloatingBars?.let(::applyAutoHideFloatingBars)
+        backup.feedTabTapToTopAndReturn?.let(::applyFeedTabTapToTopAndReturn)
+        backup.bottomLeftActionKey?.let { key ->
+            BottomLeftAction.entries.firstOrNull { it.key == key }?.let(::applyBottomLeftAction)
+        }
+        backup.feedLeftTabKey?.let { key ->
+            FeedTabItem.entries.firstOrNull { it.key == key && it != FeedTabItem.Group }
+                ?.let { applyFeedLeftTab(FeedTabSelection(it)) }
+        }
+        backup.feedCenterTabKey?.let { key ->
+            FeedTabItem.entries.firstOrNull {
+                it.key == key && it != FeedTabItem.Group && it != FeedTabItem.None
+            }?.let { applyFeedCenterTab(FeedTabSelection(it)) }
+        }
+        backup.feedRightTabKey?.let { key ->
+            FeedTabItem.entries.firstOrNull { it.key == key && it != FeedTabItem.Group }
+                ?.let { applyFeedRightTab(FeedTabSelection(it)) }
+        }
+        backup.collapseFollowGroups?.let(::applyCollapseFollowGroups)
+        backup.hotBoardKeys?.let { keys ->
+            val keySet = keys.toSet()
+            applyHotBoards(HotBoard.entries.filter { it.filterType in keySet }.toSet())
+        }
+        backup.reverseBrowse?.let(::applyReverseBrowse)
+        backup.feedCardFrame?.let(::applyFeedCardFrame)
+        backup.detailCardFrame?.let(::applyDetailCardFrame)
+        backup.foldLongText?.let(::applyFoldLongText)
+        backup.showVipLevel?.let(::applyShowVipLevel)
+        backup.showFanLevel?.let(::applyShowFanLevel)
+        backup.showVerifiedBadge?.let(::applyShowVerifiedBadge)
+        backup.confirmLike?.let(::applyConfirmLike)
+        backup.inAppBrowser?.let(::applyInAppBrowser)
+        backup.quickSwitchAccount?.let(::applyQuickSwitchAccount)
+        backup.profileTabAvatar?.let(::applyProfileTabAvatar)
+        backup.profileShowStatuses?.let(::applyProfileShowStatuses)
+        backup.imageBrowseQualityKey?.let { key ->
+            ImageBrowseQuality.entries.firstOrNull { it.key == key }?.let(::applyImageBrowseQuality)
+        }
+        backup.livePhotoAutoPlay?.let(::applyLivePhotoAutoPlay)
+        backup.livePhotoSound?.let(::applyLivePhotoSound)
+        backup.videoAutoFloatOnBack?.let(::applyVideoAutoFloatOnBack)
+        backup.videoAutoCloseOnComplete?.let(::applyVideoAutoCloseOnComplete)
+        backup.videoCenterSwipeActions?.let(::applyVideoCenterSwipeActions)
+        backup.localMode?.let(::applyLocalMode)
+        backup.localFollowUid?.let(::applyLocalFollowUid)
+        if (backup.nearbyCustom == false) {
+            applyNearbyDevice()
+        } else if (backup.nearbyCustom == true) {
+            val place = backup.nearbyPlaceName
+            val lat = backup.nearbyPlaceLat
+            val lon = backup.nearbyPlaceLon
+            if (!place.isNullOrBlank() && lat != null && lon != null && lat.isFinite() && lon.isFinite()) {
+                applyNearbyPlace(place, lat.toDouble(), lon.toDouble())
+            }
+        }
+        backup.autoCheckUpdate?.let(::applyAutoCheckUpdate)
+        backup.acceptPrerelease?.let(::applyAcceptPrerelease)
+        backup.inAppUpdate?.let(::applyInAppUpdate)
     }
 }
 

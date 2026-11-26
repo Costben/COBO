@@ -91,6 +91,17 @@ expect fun rememberPhotoPicker(
     onPicked: (List<PickedMedia>) -> Unit,
 ): () -> Unit
 
+@Composable
+expect fun rememberJsonExportLauncher(
+    onResult: (Result<String>?) -> Unit,
+): (suggestedFileName: String, content: String, summaryLabel: String) -> Unit
+
+@Composable
+expect fun rememberJsonImportLauncher(
+    maxBytes: Long,
+    onResult: (Result<String>?) -> Unit,
+): () -> Unit
+
 expect fun setScreenOrientation(orientation: PlatformOrientation)
 expect fun setSystemBarsVisible(visible: Boolean)
 expect fun setStatusBarDarkIcons(darkIcons: Boolean?)

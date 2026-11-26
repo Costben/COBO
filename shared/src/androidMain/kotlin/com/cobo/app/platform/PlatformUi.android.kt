@@ -532,3 +532,88 @@ actual fun defaultWebUserAgent(): String {
         .replace(Regex("\\s{2,}"), " ")
         .trim()
 }
+
+@Composable
+actual fun rememberJsonExportLauncher(
+    onResult: (Result<String>?) -> Unit,
+): (suggestedFileName: String, content: String, summaryLabel: String) -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentOnResult = rememberUpdatedState(onResult)
+    val pending = remember {
+        object {
+            var content: String = ""
+            var summary: String = ""
+        }
+    }
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) {
+            currentOnResult.value(null)
+            return@rememberLauncherForActivityResult
+        }
+        val text = pending.content
+        val summary = pending.summary
+        scope.launch {
+            val result = runCatching {
+                withContext(ioDispatcher) {
+                    context.contentResolver.openOutputStream(uri)?.use { stream ->
+                        stream.write(text.toByteArray(Charsets.UTF_8))
+                        stream.flush()
+                    } ?: error("无法写入目标文件")
+                }
+                summary
+            }
+            currentOnResult.value(result)
+        }
+    }
+    return { suggestedFileName, content, summaryLabel ->
+        pending.content = content
+        pending.summary = summaryLabel
+        launcher.launch(suggestedFileName)
+    }
+}
+
+@Composable
+actual fun rememberJsonImportLauncher(
+    maxBytes: Long,
+    onResult: (Result<String>?) -> Unit,
+): () -> Unit {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentOnResult = rememberUpdatedState(onResult)
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) {
+            currentOnResult.value(null)
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            val result = runCatching {
+                withContext(ioDispatcher) {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val buffer = ByteArray(8192)
+                        val out = java.io.ByteArrayOutputStream()
+                        var total = 0L
+                        while (true) {
+                            val read = stream.read(buffer)
+                            if (read <= 0) break
+                            total += read
+                            if (total > maxBytes) {
+                                throw IllegalArgumentException("备份文件过大，已取消读取")
+                            }
+                            out.write(buffer, 0, read)
+                        }
+                        out.toString(Charsets.UTF_8.name())
+                    } ?: error("无法读取所选文件")
+                }
+            }
+            currentOnResult.value(result)
+        }
+    }
+    return {
+        launcher.launch(arrayOf("application/json", "text/plain", "*/*"))
+    }
+}
