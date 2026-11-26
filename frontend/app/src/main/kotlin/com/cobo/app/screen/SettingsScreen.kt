@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.webkit.CookieManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -66,10 +68,18 @@ import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
 import com.cobo.app.data.AnimationSpeed
+import com.cobo.app.data.LocalBackupBundle
 import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
+import com.cobo.app.data.applyLocalBackup
+import com.cobo.app.data.createLocalBackup
+import com.cobo.app.data.decodeLocalBackupJson
+import com.cobo.app.data.defaultBackupFileName
+import com.cobo.app.data.encodeLocalBackupJson
 import com.cobo.app.data.feedTabOptions
+import com.cobo.app.data.formatBackupSummary
+import com.cobo.app.data.summary
 import com.cobo.app.ui.AccentHueCycle
 import com.cobo.app.ui.AccentPresets
 import com.cobo.app.ui.AppBarSurface
@@ -127,7 +137,12 @@ import io.github.suqi8.coui.kmp.preference.SwitchPreference
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+
+private const val MaxBackupImportBytes = 20L * 1024L * 1024L
 
 /**
  * 设置页分组定义，用于在「我」一级页面展示分组目录，并跳转到对应的二级设置页。
@@ -137,7 +152,7 @@ enum class SettingsGroup(val title: String, val summary: String) {
     Feed("微博浏览", "主页分栏、卡片外框、倒序浏览与热搜榜"),
     AccountAndContent("账号与内容", "账号管理、快捷切号、底栏头像与本地关注"),
     Update("更新", "检查更新、更新日志与自动更新"),
-    Other("其他", "清理缓存、关于与账号退出"),
+    Other("其他", "清理缓存、本地备份、关于与账号退出"),
 }
 
 @Stable
@@ -187,6 +202,42 @@ private class SettingsUiState(context: Context) {
     var pickHotBoards by mutableStateOf(false)
     var pickAccentColor by mutableStateOf(false)
     var syncingLocalFavorites by mutableStateOf(false)
+    var backupBusy by mutableStateOf(false)
+    var pendingImportBackup by mutableStateOf<LocalBackupBundle?>(null)
+    var requestExportBackup by mutableStateOf(false)
+    var requestImportBackup by mutableStateOf(false)
+
+    fun syncFromSettings() {
+        darkMode = App.settings.darkMode
+        accentColor = App.settings.accentColor
+        meIconStyle = App.settings.meIconStyle
+        fontScale = App.settings.fontScale
+        autoCheckUpdate = App.settings.autoCheckUpdate
+        acceptPrerelease = App.settings.acceptPrerelease
+        inAppUpdate = App.settings.inAppUpdate
+        blurEffects = App.settings.blurEffects
+        autoHideFloatingBars = App.settings.autoHideFloatingBars
+        feedTabTapToTopAndReturn = App.settings.feedTabTapToTopAndReturn
+        allowLandscape = App.settings.allowLandscape
+        searchPanelAnimation = App.settings.searchPanelAnimation
+        confirmLike = App.settings.confirmLike
+        inAppBrowser = App.settings.inAppBrowser
+        quickSwitchAccount = App.settings.quickSwitchAccount
+        profileTabAvatar = App.settings.profileTabAvatar
+        profileShowStatuses = App.settings.profileShowStatuses
+        reverseBrowse = App.settings.reverseBrowse
+        collapseFollowGroups = App.settings.collapseFollowGroups
+        feedCardFrame = App.settings.feedCardFrame
+        detailCardFrame = App.settings.detailCardFrame
+        foldLongText = App.settings.foldLongText
+        showVipLevel = App.settings.showVipLevel
+        showFanLevel = App.settings.showFanLevel
+        showVerifiedBadge = App.settings.showVerifiedBadge
+        localFollowUid = App.settings.localFollowUid
+        feedLeftTab = App.settings.feedLeftTab
+        feedCenterTab = App.settings.feedCenterTab
+        feedRightTab = App.settings.feedRightTab
+    }
 }
 
 @Composable
@@ -394,6 +445,79 @@ private fun SettingsScaffold(
     showGroupHeaders: Boolean,
     footerContent: LazyListScope.() -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        state.backupBusy = true
+        scope.launch {
+            runCatching {
+                val (bundle, encoded) = withContext(Dispatchers.IO) {
+                    val b = createLocalBackup(App.settings, App.store, state.version)
+                    b to encodeLocalBackupJson(b)
+                }
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { stream ->
+                        stream.write(encoded.toByteArray(Charsets.UTF_8))
+                        stream.flush()
+                    } ?: error("无法写入目标文件")
+                }
+                bundle
+            }.onSuccess { bundle ->
+                val detail = formatBackupSummary(bundle.summary())
+                App.toast("已导出本地备份（$detail）")
+            }.onFailure { err ->
+                App.toast(err.message ?: "导出备份失败")
+            }
+            state.backupBusy = false
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        state.backupBusy = true
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val raw = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val buffer = ByteArray(8192)
+                        val out = ByteArrayOutputStream()
+                        var total = 0L
+                        while (true) {
+                            val read = stream.read(buffer)
+                            if (read <= 0) break
+                            total += read
+                            if (total > MaxBackupImportBytes) {
+                                throw IllegalArgumentException("备份文件过大，已取消读取")
+                            }
+                            out.write(buffer, 0, read)
+                        }
+                        out.toString(Charsets.UTF_8.name())
+                    } ?: error("无法读取所选文件")
+                    decodeLocalBackupJson(raw)
+                }
+            }.onSuccess { bundle ->
+                state.pendingImportBackup = bundle
+            }.onFailure { err ->
+                App.toast(err.message ?: "解析备份文件失败")
+            }
+            state.backupBusy = false
+        }
+    }
+    LaunchedEffect(state.requestExportBackup) {
+        if (!state.requestExportBackup) return@LaunchedEffect
+        state.requestExportBackup = false
+        exportLauncher.launch(defaultBackupFileName(System.currentTimeMillis()))
+    }
+    LaunchedEffect(state.requestImportBackup) {
+        if (!state.requestImportBackup) return@LaunchedEffect
+        state.requestImportBackup = false
+        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+    }
+
     val pageColor = pageContainerColor()
     // 顶栏玻璃要有东西可采样：把列表录进 backdrop，顶栏浮在上面做渐变模糊。
     val backdrop = rememberLayerBackdrop()
@@ -1412,6 +1536,34 @@ private fun otherSettingsEntries(
             )
         },
         SettingsEntry(
+            id = "backup_export",
+            title = "导出本地备份",
+            summary = "导出偏好设置、本地收藏、草稿、历史与关注标记（不含登录凭据）",
+            keywords = "备份 导出 json 数据 迁移 backup export",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "导出本地备份",
+                modifier = Modifier.testTag("settings_backup_export"),
+                summary = "导出偏好设置、本地收藏、草稿、历史与关注标记（不含登录凭据）",
+                cardListPosition = pos,
+                onClick = { if (!state.backupBusy) state.requestExportBackup = true },
+            )
+        },
+        SettingsEntry(
+            id = "backup_import",
+            title = "导入本地备份",
+            summary = "从 JSON 备份恢复偏好设置并合并本地数据",
+            keywords = "恢复 导入 json 数据 迁移 restore import",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "导入本地备份",
+                modifier = Modifier.testTag("settings_backup_import"),
+                summary = "从 JSON 备份恢复偏好设置并合并本地数据",
+                cardListPosition = pos,
+                onClick = { if (!state.backupBusy) state.requestImportBackup = true },
+            )
+        },
+        SettingsEntry(
             id = "about",
             title = "关于",
             summary = aboutSummary,
@@ -1480,6 +1632,21 @@ private fun SettingsDialogs(
     val leftOptions = feedTabOptions(state.feedGroups, allowNone = true, current = if (state.guest) null else state.feedLeftTab)
     val centerOptions = feedTabOptions(state.feedGroups, allowNone = false, current = if (state.guest) null else state.feedCenterTab)
     val rightOptions = feedTabOptions(state.feedGroups, allowNone = true, current = if (state.guest) null else state.feedRightTab)
+
+    state.pendingImportBackup?.let { bundle ->
+        ConfirmDialog(
+            title = "导入本地备份",
+            message = "检测到 ${formatBackupSummary(bundle.summary())}。导入将覆盖对应偏好设置并合并本地收藏、草稿、历史与关注标记，不影响当前登录账号。是否继续？",
+            confirmText = "确认导入",
+            onDismiss = { state.pendingImportBackup = null },
+            onConfirm = {
+                applyLocalBackup(bundle, App.settings, App.store, App.repo)
+                state.syncFromSettings()
+                state.pendingImportBackup = null
+                App.toast("已恢复本地备份")
+            },
+        )
+    }
 
     if (state.logout) {
         ConfirmDialog(

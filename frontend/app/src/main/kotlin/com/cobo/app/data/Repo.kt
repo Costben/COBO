@@ -504,6 +504,12 @@ class Repo(private val context: Context, private val store: Store) {
         return nowFavorited
     }
 
+    fun reloadLocalFavorites() {
+        localFavoriteIds.clear()
+        store.favorites().forEach { localFavoriteIds[it.id] = true }
+        favoritesVersion++
+    }
+
     /** 写操作只认登录账号的 cookie，访客身份发出去只会被拒。 */
     private fun loginCookie(): String =
         session?.takeIf { it.loggedIn }?.cookie ?: throw ApiException(LOGIN_REQUIRED)
