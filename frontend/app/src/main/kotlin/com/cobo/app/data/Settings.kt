@@ -419,6 +419,18 @@ class Settings(context: Context) {
     var videoCenterSwipeActions by mutableStateOf(sp.getBoolean("video_center_swipe_actions", true))
         private set
 
+    /** 视频播放页顶栏右侧按钮与顺序（空列表表示全部隐藏）。 */
+    var videoTopBarButtons by mutableStateOf(VideoTopBarButton.parse(sp.getString("video_top_bar_buttons", null)))
+        private set
+
+    /** 看图页顶栏右侧按钮与顺序（空列表表示全部隐藏）。 */
+    var imageTopBarButtons by mutableStateOf(ImageTopBarButton.parse(sp.getString("image_top_bar_buttons", null)))
+        private set
+
+    /** 看图页顶部居中页码胶囊（仅多图时显示，单图不显示 1/1）。 */
+    var imageTopBarShowCounter by mutableStateOf(sp.getBoolean("image_top_bar_show_counter", true))
+        private set
+
     /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
@@ -745,6 +757,29 @@ class Settings(context: Context) {
         sp.edit().putBoolean("video_center_swipe_actions", value).apply()
     }
 
+    fun applyVideoTopBarButtons(value: List<VideoTopBarButton>) {
+        val normalized = value.distinct()
+        videoTopBarButtons = normalized
+        sp.edit().putString("video_top_bar_buttons", VideoTopBarButton.encode(normalized)).apply()
+    }
+
+    fun applyImageTopBarButtons(value: List<ImageTopBarButton>) {
+        val normalized = value.distinct()
+        imageTopBarButtons = normalized
+        sp.edit().putString("image_top_bar_buttons", ImageTopBarButton.encode(normalized)).apply()
+    }
+
+    fun applyImageTopBarShowCounter(value: Boolean) {
+        imageTopBarShowCounter = value
+        sp.edit().putBoolean("image_top_bar_show_counter", value).apply()
+    }
+
+    fun resetMediaTopBarSettings() {
+        applyVideoTopBarButtons(VideoTopBarButton.DefaultOrder)
+        applyImageTopBarButtons(ImageTopBarButton.DefaultOrder)
+        applyImageTopBarShowCounter(true)
+    }
+
     /** [value] 为空时热搜区块整个隐藏，所以空集合也要落盘（存成空串），不能靠删键。 */
     fun applyHotBoards(value: Set<HotBoard>) {
         val ordered = HotBoard.entries.filter { it in value }.toSet()
@@ -860,3 +895,54 @@ internal fun removeSearchHistoryItem(
 
 internal fun scopedFeedScrollPrefKey(owner: String, key: String): String =
     "scroll_v2_${snapshotOwnerKey(owner)}_$key"
+
+enum class VideoTopBarButton(val key: String, val label: String) {
+    Speed("speed", "倍速"),
+    Download("download", "下载视频"),
+    FloatingWindow("floating", "小窗播放"),
+    PictureInPicture("pip", "画中画"),
+    Browser("browser", "浏览器打开");
+
+    companion object {
+        val DefaultOrder: List<VideoTopBarButton> = listOf(
+            Speed,
+            Download,
+            FloatingWindow,
+            PictureInPicture,
+            Browser,
+        )
+
+        fun parse(raw: String?): List<VideoTopBarButton> {
+            if (raw == null) return DefaultOrder
+            if (raw.isBlank()) return emptyList()
+            val byKey = entries.associateBy { it.key }
+            return raw.split(',').mapNotNull { byKey[it.trim()] }.distinct()
+        }
+
+        fun encode(list: List<VideoTopBarButton>): String =
+            list.distinct().joinToString(",") { it.key }
+    }
+}
+
+enum class ImageTopBarButton(val key: String, val label: String) {
+    Original("original", "原图"),
+    Save("save", "保存"),
+    Share("share", "分享");
+
+    companion object {
+        val DefaultOrder: List<ImageTopBarButton> = listOf(
+            Original,
+            Save,
+        )
+
+        fun parse(raw: String?): List<ImageTopBarButton> {
+            if (raw == null) return DefaultOrder
+            if (raw.isBlank()) return emptyList()
+            val byKey = entries.associateBy { it.key }
+            return raw.split(',').mapNotNull { byKey[it.trim()] }.distinct()
+        }
+
+        fun encode(list: List<ImageTopBarButton>): String =
+            list.distinct().joinToString(",") { it.key }
+    }
+}

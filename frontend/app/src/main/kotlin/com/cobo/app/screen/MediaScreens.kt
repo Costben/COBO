@@ -3,7 +3,9 @@ package com.cobo.app.screen
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.core.content.FileProvider
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
@@ -216,8 +218,10 @@ import coil3.size.Size
 import com.cobo.app.App
 import com.cobo.app.data.Api
 import com.cobo.app.data.ImageBrowseQuality
+import com.cobo.app.data.ImageTopBarButton
 import com.cobo.app.data.Pic
 import com.cobo.app.data.ProfileWebFallbackException
+import com.cobo.app.data.VideoTopBarButton
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.ui.CoboIcons
 import com.cobo.app.ui.CoboPredictiveBackHandler
@@ -275,6 +279,7 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.extended.Lock
+import io.github.suqi8.coui.kmp.icon.extended.Share
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.LocalContentColor
@@ -890,44 +895,50 @@ fun ImageViewerScreen(
                     }
 
                     // Centred on the screen rather than tucked against the close button.
-                    Box(Modifier.align(Alignment.Center)) {
-                        MediaMaterialPill {
-                            Text(
-                                "${pagerState.currentPage + 1} / ${urls.size}",
-                                color = LocalContentColor.current,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
-                    }
-
-                    if (currentPic?.isVideo != true) {
-                        Row(
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            MediaMaterialPill(
-                                onClick = if (chrome) {
-                                    {
-                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                            chromeInteractionTick++
-                                            original = !original
-                                            saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
-                                        }
-                                    }
-                                } else {
-                                    null
-                                },
-                            ) {
+                    // 仅在多图且开启「多图显示页码」时显示，单图不展示多余的 1 / 1。
+                    if (App.settings.imageTopBarShowCounter && urls.size > 1) {
+                        Box(Modifier.align(Alignment.Center)) {
+                            MediaMaterialPill {
                                 Text(
-                                    "原图",
-                                    color = if (original) COUITheme.colorScheme.primary else LocalContentColor.current,
+                                    "${pagerState.currentPage + 1} / ${urls.size}",
+                                    color = LocalContentColor.current,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
+                        }
+                    }
+
+                    if (currentPic?.isVideo != true) {
+                        val imageTopButtons = App.settings.imageTopBarButtons
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             if (editableAvatar) {
+                                if (ImageTopBarButton.Original in imageTopButtons) {
+                                    MediaMaterialPill(
+                                        onClick = if (chrome) {
+                                            {
+                                                if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                    chromeInteractionTick++
+                                                    original = !original
+                                                    saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                                                }
+                                            }
+                                        } else {
+                                            null
+                                        },
+                                    ) {
+                                        Text(
+                                            "原图",
+                                            color = if (original) COUITheme.colorScheme.primary else LocalContentColor.current,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                }
                                 val menuScheme = COUITheme.colorScheme
                                 Box {
                                     HighlightedIconButton(
@@ -1015,27 +1026,77 @@ fun ImageViewerScreen(
                                     )
                                 }
                             } else {
-                                HighlightedIconButton(
-                                    size = MediaControlHeight,
-                                    enabled = chrome,
-                                    onClick = {
-                                        if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
-                                            chromeInteractionTick++
-                                            saver.saveOne(
-                                                SaveImageItem(
-                                                    url = current,
-                                                    liveUrl = currentPic?.live.orEmpty(),
-                                                    preserveUrl = currentPic?.preserveUrl == true,
-                                                ),
-                                            )
+                                imageTopButtons.forEach { btn ->
+                                    when (btn) {
+                                        ImageTopBarButton.Original -> {
+                                            MediaMaterialPill(
+                                                onClick = if (chrome) {
+                                                    {
+                                                        if (!frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                            chromeInteractionTick++
+                                                            original = !original
+                                                            saver.flash(if (original) "已切换到原图" else "已切回标准尺寸")
+                                                        }
+                                                    }
+                                                } else {
+                                                    null
+                                                },
+                                            ) {
+                                                Text(
+                                                    "原图",
+                                                    color = if (original) COUITheme.colorScheme.primary else LocalContentColor.current,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                )
+                                            }
                                         }
-                                    },
-                                ) {
-                                    Icon(
-                                        COUIIcons.Download,
-                                        if (currentPic?.isLive == true) "保存实况图" else "保存原图",
-                                        Modifier.size(18.dp),
-                                    )
+                                        ImageTopBarButton.Save -> {
+                                            HighlightedIconButton(
+                                                size = MediaControlHeight,
+                                                enabled = chrome,
+                                                onClick = {
+                                                    if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                        chromeInteractionTick++
+                                                        saver.saveOne(
+                                                            SaveImageItem(
+                                                                url = current,
+                                                                liveUrl = currentPic?.live.orEmpty(),
+                                                                preserveUrl = currentPic?.preserveUrl == true,
+                                                            ),
+                                                        )
+                                                    }
+                                                },
+                                            ) {
+                                                Icon(
+                                                    COUIIcons.Download,
+                                                    if (currentPic?.isLive == true) "保存实况图" else "保存原图",
+                                                    Modifier.size(18.dp),
+                                                )
+                                            }
+                                        }
+                                        ImageTopBarButton.Share -> {
+                                            HighlightedIconButton(
+                                                size = MediaControlHeight,
+                                                enabled = chrome,
+                                                onClick = {
+                                                    if (chrome && !frame.dismiss.exiting && !frame.dismiss.dragging) {
+                                                        chromeInteractionTick++
+                                                        scope.launch {
+                                                            val target = if (currentPic?.preserveUrl == true) current else originalSize(current)
+                                                            val file = cacheImageFile(context, target)
+                                                            if (file != null && file.exists()) {
+                                                                shareCachedImageFile(context, file)
+                                                            } else {
+                                                                saver.flash("图片获取失败")
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                            ) {
+                                                Icon(COUIIcons.Share, "分享", Modifier.size(18.dp))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1177,6 +1238,21 @@ private fun LivePill() {
                 fontWeight = FontWeight.Medium,
             )
         }
+    }
+}
+
+private fun shareCachedImageFile(context: Context, file: File) {
+    runCatching {
+        val shareDir = File(context.cacheDir, "share").apply { mkdirs() }
+        val shareFile = File(shareDir, "cobo_share_${System.currentTimeMillis()}.jpg")
+        file.copyTo(shareFile, overwrite = true)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", shareFile)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "分享图片").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -4395,85 +4471,101 @@ private fun DirectVideoPlayer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(end = 8.dp),
                 )
-                if (!liveMode) {
-                    Box {
-                        VideoSpeedPill(
-                            text = speedLabel(effectivePlaybackSpeed),
-                            onClick = {
-                                controlsInteractionTick++
-                                speedMenu = !speedMenu
-                            },
-                        )
-                        OverlayListPopup(
-                            show = speedMenu,
-                            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
-                            onDismissRequest = { speedMenu = false },
-                        ) {
-                            val dismiss = LocalDismissState.current
-                            ListPopupColumn {
-                                Speeds.forEachIndexed { index, value ->
-                                    DropdownImpl(
-                                        item = DropdownItem(text = speedLabel(value)),
-                                        optionSize = Speeds.size,
-                                        isSelected = !longPressSpeedLocked && speed == value,
-                                        index = index,
-                                        groupKey = "video_speed",
-                                        onSelectedIndexChange = {
+                val videoTopButtons = App.settings.videoTopBarButtons
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    videoTopButtons.forEach { btn ->
+                        when (btn) {
+                            VideoTopBarButton.Speed -> {
+                                if (!liveMode) {
+                                    Box {
+                                        VideoSpeedPill(
+                                            text = speedLabel(effectivePlaybackSpeed),
+                                            onClick = {
+                                                controlsInteractionTick++
+                                                speedMenu = !speedMenu
+                                            },
+                                        )
+                                        OverlayListPopup(
+                                            show = speedMenu,
+                                            popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                                            onDismissRequest = { speedMenu = false },
+                                        ) {
+                                            val dismiss = LocalDismissState.current
+                                            ListPopupColumn {
+                                                Speeds.forEachIndexed { index, value ->
+                                                    DropdownImpl(
+                                                        item = DropdownItem(text = speedLabel(value)),
+                                                        optionSize = Speeds.size,
+                                                        isSelected = !longPressSpeedLocked && speed == value,
+                                                        index = index,
+                                                        groupKey = "video_speed",
+                                                        onSelectedIndexChange = {
+                                                            controlsInteractionTick++
+                                                            speed = value
+                                                            longPressSpeedLocked = false
+                                                            flash("${speedLabel(value)} 倍速")
+                                                            dismiss?.invoke()
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            VideoTopBarButton.Download -> {
+                                if (!liveMode) {
+                                    HighlightedIconButton(
+                                        onClick = {
                                             controlsInteractionTick++
-                                            speed = value
-                                            longPressSpeedLocked = false
-                                            flash("${speedLabel(value)} 倍速")
-                                            dismiss?.invoke()
+                                            onDownload()
                                         },
-                                    )
+                                        size = VideoTopBarButtonHeight,
+                                    ) {
+                                        Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                            VideoTopBarButton.FloatingWindow -> {
+                                HighlightedIconButton(
+                                    onClick = {
+                                        controlsInteractionTick++
+                                        enterInAppFloating()
+                                    },
+                                    size = VideoTopBarButtonHeight,
+                                ) {
+                                    Icon(CoboIcons.FloatingWindow, "小窗播放", Modifier.size(18.dp))
+                                }
+                            }
+                            VideoTopBarButton.PictureInPicture -> {
+                                HighlightedIconButton(
+                                    onClick = {
+                                        controlsInteractionTick++
+                                        if (!floatingController.requestSystemPip(videoAspectRatio)) {
+                                            flash("当前设备不支持画中画")
+                                        }
+                                    },
+                                    size = VideoTopBarButtonHeight,
+                                ) {
+                                    Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(18.dp))
+                                }
+                            }
+                            VideoTopBarButton.Browser -> {
+                                HighlightedIconButton(
+                                    onClick = {
+                                        controlsInteractionTick++
+                                        onOpenInBrowser()
+                                    },
+                                    size = VideoTopBarButtonHeight,
+                                ) {
+                                    Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                                 }
                             }
                         }
                     }
-                    Spacer(Modifier.width(6.dp))
-                    HighlightedIconButton(
-                        onClick = {
-                            controlsInteractionTick++
-                            onDownload()
-                        },
-                        size = VideoTopBarButtonHeight,
-                    ) {
-                        Icon(COUIIcons.Download, "下载视频", Modifier.size(18.dp))
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-                if (!centerSwipeEnabled) {
-                    HighlightedIconButton(
-                        onClick = {
-                            controlsInteractionTick++
-                            enterInAppFloating()
-                        },
-                        size = VideoTopBarButtonHeight,
-                    ) {
-                        Icon(CoboIcons.FloatingWindow, "小窗播放", Modifier.size(18.dp))
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    HighlightedIconButton(
-                        onClick = {
-                            controlsInteractionTick++
-                            if (!floatingController.requestSystemPip(videoAspectRatio)) {
-                                flash("当前设备不支持画中画")
-                            }
-                        },
-                        size = VideoTopBarButtonHeight,
-                    ) {
-                        Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(18.dp))
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-                HighlightedIconButton(
-                    onClick = {
-                        controlsInteractionTick++
-                        onOpenInBrowser()
-                    },
-                    size = VideoTopBarButtonHeight,
-                ) {
-                    Icon(CoboIcons.Globe, "用浏览器打开", Modifier.size(18.dp))
                 }
             }
         }
@@ -4654,29 +4746,24 @@ private fun DirectVideoPlayer(
                     null
                 },
             ) {
-                AnimatedContent(
-                    targetState = displayTopToastText to displayTopToastLocked,
-                    transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                    label = "videoUnifiedTopToast",
-                ) { (text, locked) ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (locked) {
-                            Icon(
-                                imageVector = COUIIcons.Lock,
-                                contentDescription = "已锁定倍速",
-                                tint = COUITheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.width(5.dp))
-                        }
-                        Text(
-                            text = text,
-                            color = if (locked) COUITheme.colorScheme.primary else LocalContentColor.current,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
+                // 亮度/音量/进度拖动时数字连续变化，原地更新文本避免 AnimatedContent 反复淡入淡出闪烁。
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (displayTopToastLocked) {
+                        Icon(
+                            imageVector = COUIIcons.Lock,
+                            contentDescription = "已锁定倍速",
+                            tint = COUITheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp),
                         )
+                        Spacer(Modifier.width(5.dp))
                     }
+                    Text(
+                        text = displayTopToastText,
+                        color = if (displayTopToastLocked) COUITheme.colorScheme.primary else LocalContentColor.current,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                    )
                 }
             }
         }

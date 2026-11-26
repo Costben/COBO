@@ -65,10 +65,12 @@ import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
+import com.cobo.app.data.ImageTopBarButton
 import com.cobo.app.data.AnimationSpeed
 import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
+import com.cobo.app.data.VideoTopBarButton
 import com.cobo.app.data.feedTabOptions
 import com.cobo.app.ui.AccentHueCycle
 import com.cobo.app.ui.AccentPresets
@@ -108,6 +110,7 @@ import io.github.suqi8.coui.kmp.basic.Slider
 import io.github.suqi8.coui.kmp.basic.SliderDefaults
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TextField
 import io.github.suqi8.coui.kmp.basic.TextFieldDefaults
 import io.github.suqi8.coui.kmp.basic.TextFieldMode
@@ -699,6 +702,20 @@ private fun displaySettingsEntries(
             )
         },
         SettingsEntry(
+            id = "media_top_bar",
+            title = "顶栏",
+            summary = "自定义视频播放与看图页顶栏按钮显示与排序",
+            keywords = "顶栏 按钮 排序 视频 看图 原图 保存 分享 小窗 画中画 倍速 浏览器 topbar",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "顶栏",
+                modifier = Modifier.testTag("settings_media_top_bar"),
+                summary = "视频 ${App.settings.videoTopBarButtons.size} 项 · 看图 ${App.settings.imageTopBarButtons.size} 项",
+                cardListPosition = pos,
+                onClick = { nav.push(Route.MediaTopBarSettings) },
+            )
+        },
+        SettingsEntry(
             id = "auto_hide_floating_bars",
             title = "滑动自动隐藏浮动栏",
             summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
@@ -811,14 +828,14 @@ private fun displaySettingsEntries(
         SettingsEntry(
             id = "video_center_swipe_actions",
             title = "视频中区滑动手势",
-            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；关闭后在顶栏显示小窗与画中画按钮",
+            summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
             keywords = "小窗 画中画 上滑 下滑 手势 video pip gesture",
         ) { pos ->
             SettingsSwitchRow(
                 checked = App.settings.videoCenterSwipeActions,
                 onCheckedChange = { App.settings.applyVideoCenterSwipeActions(it) },
                 title = "视频中区滑动手势",
-                summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；关闭后在顶栏显示小窗与画中画按钮",
+                summary = "开启后中区上滑呼出小窗与画中画、下滑关闭；顶栏按钮可在「顶栏」中自定义",
                 modifier = Modifier.testTag("settings_video_center_swipe_actions"),
                 cardListPosition = pos,
             )
@@ -2341,5 +2358,228 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun MediaTopBarSettingsScreen(nav: NavState) {
+    val blurEffects = blurEffectsEnabled()
+    val pageColor = pageContainerColor()
+    val backdrop = rememberLayerBackdrop()
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
+
+    val videoButtons = App.settings.videoTopBarButtons
+    val imageButtons = App.settings.imageTopBarButtons
+    val showCounter = App.settings.imageTopBarShowCounter
+
+    Box(Modifier.fillMaxSize().background(pageColor)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    top = glassBarContentTop(topBarHeight, 10.dp),
+                    end = 12.dp,
+                    bottom = 24.dp + navBottomPadding(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item {
+                    Text(
+                        text = "勾选需要显示的按钮，并通过「上移 / 下移」调整从左到右的排列顺序。",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+
+                item {
+                    SectionTitle("视频播放顶栏")
+                }
+
+                item {
+                    TopBarOrderEditorCard(
+                        allItems = VideoTopBarButton.entries,
+                        enabledItems = videoButtons,
+                        labelOf = { it.label },
+                        onUpdate = { App.settings.applyVideoTopBarButtons(it) },
+                    )
+                }
+
+                item {
+                    SectionTitle("看图页顶栏")
+                }
+
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = CardDefaults.GroupCornerRadius,
+                        insideMargin = PaddingValues(0.dp),
+                        weight = CardDefaults.GroupWeight,
+                    ) {
+                        SwitchPreference(
+                            checked = showCounter,
+                            onCheckedChange = { App.settings.applyImageTopBarShowCounter(it) },
+                            title = "多图显示页码",
+                            summary = "开启后多图顶部居中显示页码，单图自动隐藏",
+                            cardListPosition = CardListPosition.Full,
+                        )
+                    }
+                }
+
+                item {
+                    TopBarOrderEditorCard(
+                        allItems = ImageTopBarButton.entries,
+                        enabledItems = imageButtons,
+                        labelOf = { it.label },
+                        onUpdate = { App.settings.applyImageTopBarButtons(it) },
+                    )
+                }
+            }
+        }
+
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blurEffects) backdrop else null,
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "顶栏",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            TextButton(
+                                text = "重置",
+                                onClick = { App.settings.resetMediaTopBarSettings() },
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> TopBarOrderEditorCard(
+    allItems: List<T>,
+    enabledItems: List<T>,
+    labelOf: (T) -> String,
+    onUpdate: (List<T>) -> Unit,
+) {
+    val orderedRows = enabledItems + allItems.filter { it !in enabledItems }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(vertical = 4.dp),
+        weight = CardDefaults.GroupWeight,
+    ) {
+        orderedRows.forEach { item ->
+            val enabledIndex = enabledItems.indexOf(item)
+            val checked = enabledIndex >= 0
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val next = if (checked) enabledItems - item else enabledItems + item
+                        onUpdate(next)
+                    }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    state = if (checked) ToggleableState.On else ToggleableState.Off,
+                    onClick = null,
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = labelOf(item),
+                    fontSize = 15.sp,
+                    color = if (checked) COUITheme.colorScheme.onSurface else COUITheme.colorScheme.onSurfaceSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (checked) {
+                    val canMoveUp = enabledIndex > 0
+                    val canMoveDown = enabledIndex < enabledItems.lastIndex
+                    OrderStepChip(
+                        label = "上移",
+                        enabled = canMoveUp,
+                        onClick = {
+                            if (canMoveUp) {
+                                val mutable = enabledItems.toMutableList()
+                                val prev = mutable[enabledIndex - 1]
+                                mutable[enabledIndex - 1] = item
+                                mutable[enabledIndex] = prev
+                                onUpdate(mutable)
+                            }
+                        },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    OrderStepChip(
+                        label = "下移",
+                        enabled = canMoveDown,
+                        onClick = {
+                            if (canMoveDown) {
+                                val mutable = enabledItems.toMutableList()
+                                val nextItem = mutable[enabledIndex + 1]
+                                mutable[enabledIndex + 1] = item
+                                mutable[enabledIndex] = nextItem
+                                onUpdate(mutable)
+                            }
+                        },
+                    )
+                } else {
+                    Text(
+                        text = "已隐藏",
+                        fontSize = 12.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderStepChip(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val bg = if (enabled) {
+        COUITheme.colorScheme.primary.copy(alpha = 0.12f)
+    } else {
+        COUITheme.colorScheme.onSurface.copy(alpha = 0.05f)
+    }
+    val fg = if (enabled) {
+        COUITheme.colorScheme.primary
+    } else {
+        COUITheme.colorScheme.onSurfaceSecondary.copy(alpha = 0.4f)
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = fg,
+        )
     }
 }
