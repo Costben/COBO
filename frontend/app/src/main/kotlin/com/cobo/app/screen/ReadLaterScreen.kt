@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,7 @@ import io.github.suqi8.coui.kmp.basic.TabRowDefaults
 import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.rememberNotificationSwipeState
+import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.core.ExperimentalCOUIApi
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Delete
@@ -102,99 +104,104 @@ internal fun ReadLaterTabContent(
     var openId by remember { mutableStateOf<String?>(null) }
     val shown = filterReadLaterEntries(allEntries, filter, query)
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("read_later_page"),
-        contentPadding = PaddingValues(
-            start = 12.dp,
-            top = glassBarContentTop(topInset, 8.dp) + extraTopInset,
-            end = 12.dp,
-            bottom = 16.dp + navBottomPadding(),
-        ),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (allEntries.isNotEmpty()) {
-            item(key = "read_later_tabs") {
-                TabRowWithContour(
-                    tabs = ReadLaterFilter.entries.map { it.label },
-                    selectedTabIndex = filter.ordinal,
-                    onTabSelected = { idx -> onFilterChange(ReadLaterFilter.entries[idx]) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 2.dp)
-                        .testTag("read_later_tabs"),
-                    height = TabRowDefaults.TabRowWithContourTinyHeight,
-                    cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
-                    contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
-                    segmentPadding = 6.dp,
-                )
-            }
-        }
-
-        when {
-            allEntries.isEmpty() -> item(key = "empty") {
-                EmptyState("可在微博详情页收藏按钮或卡片右上角菜单加入稍后再看，离线也能查看正文与转发快照")
-            }
-            shown.isEmpty() -> item(key = "filtered_empty") {
-                EmptyState(
-                    when {
-                        query.isNotBlank() -> "没有匹配的离线快照"
-                        filter == ReadLaterFilter.Unread -> "没有未读的稍后再看微博"
-                        filter == ReadLaterFilter.Read -> "还没有已读记录"
-                        else -> "暂无记录"
-                    },
-                )
-            }
-            else -> {
-                itemsIndexed(shown, key = { _, e -> e.status.id }) { index, entry ->
-                    val swipe = rememberNotificationSwipeState()
-                    val scope = rememberCoroutineScope()
-                    LaunchedEffect(swipe.isRevealed) {
-                        if (swipe.isRevealed) openId = entry.status.id
-                    }
-                    LaunchedEffect(openId) {
-                        if (openId != entry.status.id && swipe.isRevealed) swipe.close()
-                    }
-                    NotificationSwipeBox(
-                        onSettings = null,
-                        onDismiss = {
-                            ReadLater.remove(entry.status.id)
-                            App.toast("已移出稍后再看")
-                        },
-                        settingsIcon = null,
-                        dismissIcon = null,
+    // 收藏页外层正处于 layerBackdrop 录制期间；此处必须隔离 LocalBackdrop 并关闭 NotificationSwipeBox 模糊，
+    // 防止 SwipeRevealBox / MetaBallSurfaceWithRim 对录制中的 GraphicsLayer 发生递归自采样闪退。
+    CompositionLocalProvider(LocalBackdrop provides null) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().scrollEndHaptic().testTag("read_later_page"),
+            contentPadding = PaddingValues(
+                start = 12.dp,
+                top = glassBarContentTop(topInset, 8.dp) + extraTopInset,
+                end = 12.dp,
+                bottom = 16.dp + navBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (allEntries.isNotEmpty()) {
+                item(key = "read_later_tabs") {
+                    TabRowWithContour(
+                        tabs = ReadLaterFilter.entries.map { it.label },
+                        selectedTabIndex = filter.ordinal,
+                        onTabSelected = { idx -> onFilterChange(ReadLaterFilter.entries[idx]) },
                         modifier = Modifier
-                            .animateItem(
-                                fadeInSpec = null,
-                                placementSpec = ReadLaterPlacementSpec,
-                                fadeOutSpec = null,
-                            )
-                            .testTag("read_later_row_$index"),
-                        state = swipe,
-                        minHeight = 0.dp,
-                        containerColor = CardDefaults.defaultColors().color,
-                        dismissOnFullSwipe = true,
-                        dismissDescription = "移出稍后再看",
-                    ) {
-                        ReadLaterRowBody(
-                            entry = entry,
-                            onOpen = {
-                                if (swipe.isRevealed) {
-                                    scope.launch { swipe.close() }
-                                } else {
-                                    StatusMemory.remember(entry.status)
-                                    ReadLater.setRead(entry.status.id, true)
-                                    nav.push(Route.Detail(entry.status.id, entry.status.mid))
-                                }
-                            },
-                            onToggleRead = {
-                                ReadLater.setRead(entry.status.id, !entry.read)
-                            },
-                            onDelete = {
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp)
+                            .testTag("read_later_tabs"),
+                        height = TabRowDefaults.TabRowWithContourTinyHeight,
+                        cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
+                        contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
+                        segmentPadding = 6.dp,
+                    )
+                }
+            }
+
+            when {
+                allEntries.isEmpty() -> item(key = "empty") {
+                    EmptyState("可在微博详情页收藏按钮或卡片右上角菜单加入稍后再看，离线也能查看正文与转发快照")
+                }
+                shown.isEmpty() -> item(key = "filtered_empty") {
+                    EmptyState(
+                        when {
+                            query.isNotBlank() -> "没有匹配的离线快照"
+                            filter == ReadLaterFilter.Unread -> "没有未读的稍后再看微博"
+                            filter == ReadLaterFilter.Read -> "还没有已读记录"
+                            else -> "暂无记录"
+                        },
+                    )
+                }
+                else -> {
+                    itemsIndexed(shown, key = { _, e -> e.status.id }) { index, entry ->
+                        val swipe = rememberNotificationSwipeState()
+                        val scope = rememberCoroutineScope()
+                        LaunchedEffect(swipe.isRevealed) {
+                            if (swipe.isRevealed) openId = entry.status.id
+                        }
+                        LaunchedEffect(openId) {
+                            if (openId != entry.status.id && swipe.isRevealed) swipe.close()
+                        }
+                        NotificationSwipeBox(
+                            onSettings = null,
+                            onDismiss = {
                                 ReadLater.remove(entry.status.id)
                                 App.toast("已移出稍后再看")
                             },
-                        )
+                            settingsIcon = null,
+                            dismissIcon = null,
+                            modifier = Modifier
+                                .animateItem(
+                                    fadeInSpec = null,
+                                    placementSpec = ReadLaterPlacementSpec,
+                                    fadeOutSpec = null,
+                                )
+                                .testTag("read_later_row_$index"),
+                            state = swipe,
+                            minHeight = 0.dp,
+                            containerColor = CardDefaults.defaultColors().color,
+                            dismissOnFullSwipe = true,
+                            dismissDescription = "移出稍后再看",
+                            enableBlur = false,
+                        ) {
+                            ReadLaterRowBody(
+                                entry = entry,
+                                onOpen = {
+                                    if (swipe.isRevealed) {
+                                        scope.launch { swipe.close() }
+                                    } else {
+                                        StatusMemory.remember(entry.status)
+                                        ReadLater.setRead(entry.status.id, true)
+                                        nav.push(Route.Detail(entry.status.id, entry.status.mid))
+                                    }
+                                },
+                                onToggleRead = {
+                                    ReadLater.setRead(entry.status.id, !entry.read)
+                                },
+                                onDelete = {
+                                    ReadLater.remove(entry.status.id)
+                                    App.toast("已移出稍后再看")
+                                },
+                            )
+                        }
                     }
                 }
             }
