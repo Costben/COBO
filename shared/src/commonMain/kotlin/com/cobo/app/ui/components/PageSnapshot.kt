@@ -7,4 +7,4 @@ import androidx.compose.ui.unit.IntSize
 data class PageSnapshot(val image: ImageBitmap, val windowSize: IntSize)
 
 @Composable
-fun rememberPageSnapshot(@Suppress("UNUSED_PARAMETER") active: Boolean): PageSnapshot? = null
+expect fun rememberPageSnapshot(active: Boolean): PageSnapshot?

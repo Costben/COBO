@@ -489,6 +489,33 @@ private const val LongImageShrinkStart = 0.18f
 private const val LiveHoldMillis = 280L
 private const val LiveFadeMillis = 600
 
+internal expect suspend fun platformTopBandIsLight(
+    url: String,
+    screenWidthDp: Int,
+    screenHeightDp: Int,
+): Boolean
+
+@Composable
+internal expect fun PlatformTiledLongImageOverlay(
+    url: String,
+    original: Boolean,
+    screenWidthPx: Int,
+    box: IntSize,
+    scale: Float,
+    offset: Offset,
+    rest: ComposeSize,
+    onAspect: (Float) -> Unit,
+)
+
+@Composable
+internal expect fun PlatformWebVideoPlayer(
+    nav: NavState,
+    pageUrl: String,
+    title: String,
+    onDownload: (String) -> Unit,
+    onFlash: (String) -> Unit,
+)
+
 @Composable
 fun ImageViewerScreen(
     nav: NavState,
@@ -567,6 +594,13 @@ fun ImageViewerScreen(
             origins.endViewing(viewerOwner)
             setStatusBarDarkIcons(null)
         }
+    }
+    LaunchedEffect(current, frame.dismiss.boxSize) {
+        val scaleDensity = density.coerceAtLeast(1f)
+        val wDp = (frame.dismiss.boxSize.width / scaleDensity).roundToInt().coerceAtLeast(1)
+        val hDp = (frame.dismiss.boxSize.height / scaleDensity).roundToInt().coerceAtLeast(1)
+        val lightTop = platformTopBandIsLight(current, wDp, hDp)
+        setStatusBarDarkIcons(lightTop)
     }
 
     LaunchedEffect(
@@ -1478,6 +1512,18 @@ private fun ZoomableImage(
                             }
                         },
                     )
+                    if (isCurrent && !frame.dismiss.active && !frame.dismiss.exiting && live.isBlank() && videoUrl.isBlank()) {
+                        PlatformTiledLongImageOverlay(
+                            url = targetUrl,
+                            original = original,
+                            screenWidthPx = box.width,
+                            box = box,
+                            scale = scale,
+                            offset = offset,
+                            rest = rest,
+                            onAspect = { aspect -> frame.aspects[url] = aspect },
+                        )
+                    }
                 }
             }
 
@@ -2279,7 +2325,20 @@ fun VideoScreen(
             }
         }
         is ResolvedVideo.WebPage -> {
-            WebScreen(nav = nav, url = state.url, title = state.title.ifBlank { title.ifBlank { "视频" } })
+            PlatformWebVideoPlayer(
+                nav = nav,
+                pageUrl = state.url,
+                title = state.title.ifBlank { title.ifBlank { "视频" } },
+                onDownload = { mediaUrl ->
+                    scope.launch {
+                        App.toast("正在下载视频…")
+                        downloadVideoToGallery(App.context, mediaUrl, referer = state.url)
+                            .onSuccess { App.toast("视频已保存到相册") }
+                            .onFailure { App.toast(it.message ?: "视频保存失败") }
+                    }
+                },
+                onFlash = { msg -> App.toast(msg) },
+            )
         }
         is ResolvedVideo.LiveUnavailable -> {
             Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {

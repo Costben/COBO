@@ -243,16 +243,13 @@ actual suspend fun saveVideoBytesToGallery(bytes: ByteArray, fileName: String): 
 
 actual suspend fun saveLivePhotoToGallery(imageBytes: ByteArray, videoBytes: ByteArray): Result<Unit> =
     withContext(ioDispatcher) {
-        // Step 4 will wire full Android MotionPhotoExporter + MotionPhotoRemuxer here.
-        val combined = androidMotionPhotoExportHook?.invoke(imageBytes, videoBytes)
+        val combined = com.cobo.app.data.exportAndroidMotionPhotoBytes(imageBytes, videoBytes)
         if (combined != null) {
             saveImageBytesToGallery(combined, "cobo_live_${currentTimeMillis()}.jpg", "image/jpeg")
         } else {
             saveImageBytesToGallery(imageBytes, "cobo_${currentTimeMillis()}.jpg", "image/jpeg")
         }
     }
-
-internal var androidMotionPhotoExportHook: (suspend (imageBytes: ByteArray, videoBytes: ByteArray) -> ByteArray?)? = null
 
 @Composable
 actual fun rememberPhotoPicker(

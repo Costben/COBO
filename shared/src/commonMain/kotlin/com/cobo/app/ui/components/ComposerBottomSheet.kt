@@ -782,6 +782,18 @@ fun WeiboEmojiPanel(
 }
 
 @Composable
+internal expect fun PlatformComposerEditText(
+    state: ComposerInputState,
+    modifier: Modifier = Modifier,
+    hint: String = "",
+    maxCount: Int = 500,
+    minLines: Int = 2,
+    maxLines: Int = 5,
+    textStyle: TextStyle = COUITheme.textStyles.body1,
+    onFocused: (() -> Unit)? = null,
+)
+
+@Composable
 private fun ComposerEditText(
     state: ComposerInputState,
     modifier: Modifier = Modifier,
@@ -792,55 +804,15 @@ private fun ComposerEditText(
     textStyle: TextStyle = COUITheme.textStyles.body1,
     onFocused: (() -> Unit)? = null,
 ) {
-    val focusManager = LocalFocusManager.current
-    val textColor = COUITheme.colorScheme.onSurface
-    val hintColor = COUITheme.colorScheme.onSurfaceSecondary
-    val primaryColor = COUITheme.colorScheme.primary
-    val currentOnFocused by rememberUpdatedState(onFocused)
-
-    DisposableEffect(state, focusManager) {
-        state.clearFocusAction = { focusManager.clearFocus() }
-        onDispose { state.clearFocusAction = null }
-    }
-
-    LaunchedEffect(state.text) {
-        if (state.value.text != state.text) {
-            state.value = TextFieldValue(state.text, TextRange(state.cursor.coerceIn(0, state.text.length)))
-        }
-    }
-
-    BasicTextField(
-        value = state.value,
-        onValueChange = { next ->
-            val clampedText = if (next.text.length > maxCount) next.text.take(maxCount) else next.text
-            val clampedSel = TextRange(
-                next.selection.start.coerceIn(0, clampedText.length),
-                next.selection.end.coerceIn(0, clampedText.length),
-            )
-            state.value = next.copy(text = clampedText, selection = clampedSel)
-            state.text = clampedText
-            state.cursor = clampedSel.end
-        },
-        modifier = modifier
-            .focusRequester(state.focusRequester)
-            .onFocusChanged { if (it.isFocused) currentOnFocused?.invoke() }
-            .padding(vertical = 10.dp),
-        textStyle = textStyle.copy(color = textColor),
-        cursorBrush = SolidColor(primaryColor),
+    PlatformComposerEditText(
+        state = state,
+        modifier = modifier,
+        hint = hint,
+        maxCount = maxCount,
         minLines = minLines,
         maxLines = maxLines,
-        decorationBox = { innerTextField ->
-            Box {
-                if (state.text.isEmpty() && hint.isNotEmpty()) {
-                    Text(
-                        text = hint,
-                        style = textStyle,
-                        color = hintColor,
-                    )
-                }
-                innerTextField()
-            }
-        },
+        textStyle = textStyle,
+        onFocused = onFocused,
     )
 }
 

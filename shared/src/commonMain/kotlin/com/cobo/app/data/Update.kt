@@ -5,10 +5,12 @@ import com.cobo.app.json.JSONObject
 import com.cobo.app.platform.PlatformContext
 import com.cobo.app.platform.PlatformFile
 import com.cobo.app.platform.PlatformHttp
+import com.cobo.app.platform.PlatformHttpResponse
 import com.cobo.app.platform.PlatformPrefs
 import com.cobo.app.platform.currentAppVersionName
+import com.cobo.app.platform.currentTimeMillis
 import com.cobo.app.platform.ioDispatcher
-import com.cobo.app.platform.openExternalUrl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 const val UpdateCheckInterval = 12 * 60 * 60 * 1000L
@@ -34,6 +36,23 @@ data class DownloadProgress(
 ) {
     val fraction: Float?
         get() = if (total > 0L) (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f) else null
+}
+
+internal expect object PlatformUpdater {
+    val userAgent: String
+    val preferIpaAsset: Boolean
+
+    fun openDownload(info: UpdateInfo)
+
+    suspend fun downloadPackage(
+        context: PlatformContext,
+        url: String,
+        version: String,
+        force: Boolean,
+        onProgress: (progress: Float, currentBytes: Long, totalBytes: Long) -> Unit,
+    ): PlatformFile
+
+    fun installPackage(context: PlatformContext, file: PlatformFile)
 }
 
 object Updater {
@@ -63,21 +82,24 @@ object Updater {
 
     private suspend fun fetchReleases(): Fetched {
         val sp = PlatformPrefs(CachePrefs)
-        val cachedBody = sp.getString(CacheBodyKey, null)
+        val cachedBody = sp.getString(CacheBodyKey, null)?.takeIf { it.isNotBlank() }
         val cachedEtag = sp.getString(CacheEtagKey, null)
         val headers = linkedMapOf(
             "Accept" to "application/vnd.github+json",
-            "User-Agent" to "Cobo-iOS",
+            "User-Agent" to PlatformUpdater.userAgent,
         )
-        if (!cachedEtag.isNullOrBlank() && !cachedBody.isNullOrBlank()) {
+        if (!cachedEtag.isNullOrBlank() && cachedBody != null) {
             headers["If-None-Match"] = cachedEtag
         }
-        val resp = runCatching { PlatformHttp.get(ReleasesUrl, headers = headers) }.getOrNull()
-        if (resp == null) {
-            if (!cachedBody.isNullOrBlank()) return Fetched(cachedBody, stale = true)
+        val resp = try {
+            PlatformHttp.get(ReleasesUrl, headers = headers)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            if (cachedBody != null) return Fetched(cachedBody, stale = true)
             throw ApiException("检查更新失败，请检查网络")
         }
-        if (resp.code == 304 && !cachedBody.isNullOrBlank()) {
+        if (resp.code == 304 && cachedBody != null) {
             return Fetched(cachedBody, stale = false)
         }
         if (resp.isSuccessful && resp.bodyText.isNotBlank()) {
@@ -87,37 +109,66 @@ object Updater {
             }.apply()
             return Fetched(resp.bodyText, stale = false)
         }
-        if (!cachedBody.isNullOrBlank()) return Fetched(cachedBody, stale = true)
-        throw ApiException("检查更新失败（HTTP ${resp.code}）")
+        if (cachedBody != null) return Fetched(cachedBody, stale = true)
+        throw ApiException(failureMessage(resp))
+    }
+
+    internal fun failureMessage(response: PlatformHttpResponse): String =
+        failureMessage(response.code, response.header("X-RateLimit-Reset"))
+
+    internal fun failureMessage(code: Int, rateLimitResetHeader: String?): String {
+        if (code == 403 || code == 429) {
+            val resetAt = rateLimitResetHeader?.toLongOrNull()
+            val now = currentTimeMillis() / 1000
+            if (resetAt != null && resetAt > now) {
+                val minutes = ((resetAt - now) / 60).coerceAtLeast(1)
+                return "GitHub 接口已限流，约 $minutes 分钟后恢复"
+            }
+            return "GitHub 接口已限流，请稍后再试"
+        }
+        return "检查更新失败：HTTP $code"
     }
 
     fun parseReleases(body: String, includePrerelease: Boolean = true): List<UpdateInfo> {
-        val array = runCatching { JSONArray(body) }.getOrNull() ?: return emptyList()
+        val text = body.trim()
+        if (!text.startsWith("[")) {
+            val message = runCatching { JSONObject(text).optString("message") }.getOrNull().orEmpty()
+            throw ApiException(message.ifBlank { "检查更新失败：接口返回异常" })
+        }
+        val array = JSONArray(text)
         val out = ArrayList<UpdateInfo>(array.length())
+        val preferIpa = PlatformUpdater.preferIpaAsset
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
             if (obj.optBoolean("draft", false)) continue
-            val prerelease = obj.optBoolean("prerelease", false)
-            if (!includePrerelease && prerelease) continue
             val tag = obj.optString("tag_name").trim()
             val version = tag.removePrefix("v").removePrefix("V")
             if (version.isBlank()) continue
+            val prerelease = obj.optBoolean("prerelease", false) || version.contains('-')
+            if (!includePrerelease && prerelease) continue
             val pageUrl = obj.optString("html_url").trim()
             val notes = obj.optString("body").trim()
             val publishedAt = obj.optString("published_at").trim()
             val assets = obj.optJSONArray("assets")
-            var ipaOrApkUrl: String? = null
+            var primaryUrl: String? = null
+            var fallbackUrl: String? = null
             if (assets != null) {
                 for (j in 0 until assets.length()) {
                     val asset = assets.optJSONObject(j) ?: continue
                     val name = asset.optString("name").lowercase()
                     val dl = asset.optString("browser_download_url").trim()
-                    if (name.endsWith(".ipa") && dl.isNotBlank()) {
-                        ipaOrApkUrl = dl
-                        break
-                    }
-                    if (ipaOrApkUrl == null && name.endsWith(".apk") && dl.isNotBlank()) {
-                        ipaOrApkUrl = dl
+                    if (dl.isBlank()) continue
+                    if (preferIpa) {
+                        if (name.endsWith(".ipa")) {
+                            primaryUrl = dl
+                            break
+                        }
+                        if (fallbackUrl == null && name.endsWith(".apk")) fallbackUrl = dl
+                    } else {
+                        if (name.endsWith(".apk")) {
+                            primaryUrl = dl
+                            break
+                        }
                     }
                 }
             }
@@ -125,7 +176,7 @@ object Updater {
                 UpdateInfo(
                     version = version,
                     notes = notes,
-                    apkUrl = ipaOrApkUrl,
+                    apkUrl = primaryUrl ?: fallbackUrl,
                     pageUrl = pageUrl,
                     prerelease = prerelease,
                     publishedAt = publishedAt,
@@ -137,11 +188,13 @@ object Updater {
 
     fun parseLatest(body: String, current: String, includePrerelease: Boolean = true): UpdateInfo? {
         val all = parseReleases(body, includePrerelease)
-        return all.filter { isNewer(it.version, current) }
-            .maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
+        return all.maxWithOrNull { a, b -> compareVersion(a.version, b.version) }
+            ?.takeIf { compareVersion(it.version, current) > 0 }
     }
 
-    fun isNewer(candidate: String, current: String): Boolean = compareVersions(candidate, current) > 0
+    fun isNewer(candidate: String, current: String): Boolean = compareVersion(candidate, current) > 0
+
+    fun compareVersion(a: String, b: String): Int = compareVersions(a, b)
 
     fun compareVersions(a: String, b: String): Int {
         val (aCore, aPre) = splitVersion(a)
@@ -152,9 +205,12 @@ object Updater {
             val bv = bCore.getOrElse(i) { 0 }
             if (av != bv) return av.compareTo(bv)
         }
-        if (aPre.isEmpty() && bPre.isNotEmpty()) return 1
-        if (aPre.isNotEmpty() && bPre.isEmpty()) return -1
-        return aPre.compareTo(bPre)
+        return when {
+            aPre == bPre -> 0
+            aPre.isEmpty() -> 1
+            bPre.isEmpty() -> -1
+            else -> aPre.compareTo(bPre)
+        }
     }
 
     private fun splitVersion(raw: String): Pair<List<Int>, String> {
@@ -162,44 +218,45 @@ object Updater {
         val dash = clean.indexOf('-')
         val core = if (dash >= 0) clean.substring(0, dash) else clean
         val pre = if (dash >= 0) clean.substring(dash + 1) else ""
-        val parts = core.split('.').map { it.toIntOrNull() ?: 0 }
+        val parts = core.split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
         return parts to pre
     }
 
-    /** iOS 端不支持应用内静默安装 APK，直接跳转 GitHub Release 页面。 */
     suspend fun download(
-        @Suppress("UNUSED_PARAMETER") context: PlatformContext,
+        context: PlatformContext,
         info: UpdateInfo,
-        @Suppress("UNUSED_PARAMETER") onProgress: (DownloadProgress) -> Unit = {},
+        onProgress: (DownloadProgress) -> Unit = {},
     ): PlatformFile? {
-        openExternalUrl(info.pageUrl.ifBlank { "https://github.com/Costben/COBO/releases" })
-        return null
+        val url = info.apkUrl ?: run {
+            PlatformUpdater.openDownload(info)
+            return null
+        }
+        return downloadApk(context, url, info.version, force = false) { _, current, total ->
+            onProgress(DownloadProgress(current, total))
+        }
     }
 
     suspend fun downloadApk(
-        @Suppress("UNUSED_PARAMETER") context: PlatformContext,
+        context: PlatformContext,
         url: String,
-        @Suppress("UNUSED_PARAMETER") version: String = "",
-        @Suppress("UNUSED_PARAMETER") force: Boolean = false,
-        @Suppress("UNUSED_PARAMETER") onProgress: (Float, Long, Long) -> Unit = { _, _, _ -> },
-    ): PlatformFile {
-        openExternalUrl(url.ifBlank { "https://github.com/Costben/COBO/releases" })
-        throw ApiException("iOS 请前往 GitHub Releases 获取 IPA 安装")
-    }
+        version: String = "",
+        force: Boolean = false,
+        onProgress: (Float, Long, Long) -> Unit = { _, _, _ -> },
+    ): PlatformFile = PlatformUpdater.downloadPackage(context, url, version, force, onProgress)
 
-    fun installApk(@Suppress("UNUSED_PARAMETER") context: PlatformContext, @Suppress("UNUSED_PARAMETER") file: PlatformFile) {
-        openExternalUrl("https://github.com/Costben/COBO/releases")
+    fun installApk(context: PlatformContext, file: PlatformFile) {
+        PlatformUpdater.installPackage(context, file)
     }
 
     fun openDownload(info: UpdateInfo) {
-        openExternalUrl(info.pageUrl.ifBlank { "https://github.com/Costben/COBO/releases" })
+        PlatformUpdater.openDownload(info)
     }
 
     fun openDownload(@Suppress("UNUSED_PARAMETER") context: PlatformContext, info: UpdateInfo) {
-        openExternalUrl(info.pageUrl.ifBlank { "https://github.com/Costben/COBO/releases" })
+        PlatformUpdater.openDownload(info)
     }
 
-    fun install(@Suppress("UNUSED_PARAMETER") context: PlatformContext, @Suppress("UNUSED_PARAMETER") file: PlatformFile?) {
-        openExternalUrl("https://github.com/Costben/COBO/releases")
+    fun install(context: PlatformContext, file: PlatformFile?) {
+        if (file != null) PlatformUpdater.installPackage(context, file)
     }
 }

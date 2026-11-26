@@ -350,7 +350,7 @@ fun CoboRoot(
             BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
-                    .semantics {  }
+                    .platformRootSemantics()
             ) {
             val widthPx = constraints.maxWidth.toFloat()
             val windowWidth = maxWidth
@@ -501,20 +501,21 @@ fun CoboRoot(
                 )
             }
 
-            // 双侧（左边缘向右、右边缘向左）交互式跟手侧滑返回：仅在可返回或存在页内返回处理器时挂载，
-            // 根页首页空闲时零干扰 HorizontalPager 横滑切栏。
-            val canSwipeBack by remember(nav, backDispatcher) {
-                derivedStateOf {
-                    nav.stack.count { !it.exiting } > 1 || backDispatcher.hasEnabledHandler()
+            if (platformUsesCustomEdgeSwipeBack) {
+                // 双侧（左边缘向右、右边缘向左）交互式跟手侧滑返回：仅在 iOS 上启用；Android 走系统预测性返回。
+                val canSwipeBack by remember(nav, backDispatcher) {
+                    derivedStateOf {
+                        nav.stack.count { !it.exiting } > 1 || backDispatcher.hasEnabledHandler()
+                    }
                 }
-            }
-            if (canSwipeBack) {
-                EdgeSwipeBackOverlay(
-                    widthPx = widthPx,
-                    nav = nav,
-                    backDispatcher = backDispatcher,
-                    scope = scope,
-                )
+                if (canSwipeBack) {
+                    EdgeSwipeBackOverlay(
+                        widthPx = widthPx,
+                        nav = nav,
+                        backDispatcher = backDispatcher,
+                        scope = scope,
+                    )
+                }
             }
 
             // 应用内视频悬浮小窗（系统画中画激活时置顶铺满纯画面）。
@@ -639,13 +640,12 @@ private fun LikeConfirmPrompt() {
  * 设置里关掉预测性返回后，这里换成普通的 [BackHandler]：返回键照常能用，只是页面不再跟着
  * 手指往回收，抬手才走。
  */
+internal expect val platformUsesCustomEdgeSwipeBack: Boolean
+
+internal expect fun Modifier.platformRootSemantics(): Modifier
+
 @Composable
-fun CoboPredictiveBackHandler(nav: NavState) {
-    // iOS 路由栈返回由根节点双侧 EdgeSwipeBackOverlay 交互式驱动，这里不向 BackDispatcher 注册
-    // 立即出栈回调，以免拦截跟手侧滑预览。
-    @Suppress("UNUSED_EXPRESSION")
-    nav
-}
+expect fun CoboPredictiveBackHandler(nav: NavState)
 
 /**
  * The right-hand page of a wide window. It is already on screen beside the list, so it draws
@@ -945,4 +945,4 @@ internal data class ExpandShape(
 }
 
 @Composable
-private fun rememberScreenCornerRadius(): Dp = 52.dp
+internal expect fun rememberScreenCornerRadius(): Dp

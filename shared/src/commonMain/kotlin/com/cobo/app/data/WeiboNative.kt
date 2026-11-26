@@ -5,27 +5,36 @@ import com.cobo.app.platform.md5Hex
 import com.cobo.app.platform.sha256Bytes
 import com.cobo.app.platform.sha256Hex
 import com.cobo.app.platform.sha512Hex
+import kotlin.concurrent.Volatile
 
 /**
- * 原版 `libwbutil.so`（Share 3.9.6 / `10B6395010`）签名算法的跨平台纯 Kotlin + CommonCrypto 实现，
- * 与 Android 端 `WeiboApplication.newCalculateS`、`WeiboApplication.getIValue` 及
- * `NetCheckUtils.getParam`（`wb_mapi_getparam`）逐字节一致，使 iOS 完整支持容器协议认证。
+ * 原生签名后端抽象：Android 宿主可在启动时注入原版 `libwbutil.so` 实现；
+ * 未注入时（包括 iOS 与 JVM 单测）默认走纯 Kotlin 的 [WeiboNativePure]。
  */
-object WeiboNative {
+interface WeiboNativeBackend {
+    val available: Boolean
+    fun s(uid: String): String?
+    fun i(): String?
+    fun cumFrom(unsigned: String): String?
+}
+
+/**
+ * 原版 `libwbutil.so`（Share 3.9.6 / `10B6395010`）签名算法的跨平台纯 Kotlin 实现，
+ * 与 Android 端 `WeiboApplication.newCalculateS`、`WeiboApplication.getIValue` 及
+ * `NetCheckUtils.getParam`（`wb_mapi_getparam`）逐字节对齐。
+ */
+object WeiboNativePure : WeiboNativeBackend {
     const val FROM = "10B6395010"
 
     private const val PIN = "5l0WXnhiY4pJ794KIJ7Rw5F45VXg9sjo"
     private const val I_INPUT = "000000000000000"
 
-    /** `getIndex(sha512(FROM))` 对固定渠道号 `10B6395010` 恒定，启动时算一次并复用。 */
     private val sIndices: IntArray by lazy { computeSIndices(FROM) }
-
-    /** `getIValue("000000000000000")` 对固定输入恒定（`f0cd624`）。 */
     private val cachedI: String by lazy { computeIValue(I_INPUT) }
 
-    val available: Boolean get() = true
+    override val available: Boolean get() = true
 
-    fun s(uid: String): String {
+    override fun s(uid: String): String {
         val orig = sha512Hex(PIN + uid + FROM)
         val out = CharArray(sIndices.size)
         for (i in sIndices.indices) {
@@ -34,13 +43,11 @@ object WeiboNative {
         return out.concatToString()
     }
 
-    fun i(): String = cachedI
+    override fun i(): String = cachedI
 
-    /** [path] 不带 `/2/` 前缀，和接口路径写法一致。 */
     fun cum(path: String): String? = cumFrom("/2/" + path.trimStart('/'))
 
-    /** [unsigned] 是含 query 的完整路径（`/2/xxx?a=b`），严格对齐 `wb_mapi_getparam` / `_getparam`。 */
-    fun cumFrom(unsigned: String): String? {
+    override fun cumFrom(unsigned: String): String? {
         if (unsigned.length < 4) return null
         val existingIdx = unsigned.indexOf("&cum=")
         if (existingIdx >= 0) {
@@ -98,4 +105,25 @@ object WeiboNative {
         val second = md5Hex(tail6 + tail6.substring(0, 4))
         return tail6 + second.last()
     }
+}
+
+object WeiboNative {
+    const val FROM = WeiboNativePure.FROM
+
+    @Volatile
+    var backend: WeiboNativeBackend? = null
+
+    private fun active(): WeiboNativeBackend = backend?.takeIf { it.available } ?: WeiboNativePure
+
+    val available: Boolean get() = active().available
+
+    fun s(uid: String): String? = active().s(uid)
+
+    fun i(): String? = active().i()
+
+    /** [path] 不带 `/2/` 前缀，和接口路径写法一致。 */
+    fun cum(path: String): String? = cumFrom("/2/" + path.trimStart('/'))
+
+    /** [unsigned] 是含 query 的完整路径（`/2/xxx?a=b`）。容器接口按这个口径算。 */
+    fun cumFrom(unsigned: String): String? = active().cumFrom(unsigned)
 }

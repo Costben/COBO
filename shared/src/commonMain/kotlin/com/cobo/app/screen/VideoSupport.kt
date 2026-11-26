@@ -357,6 +357,50 @@ suspend fun resolvePlayableVideo(
     ResolvedVideo.WebPage(url = finalUrl)
 }
 
+internal data class M3u8Playlist(
+    val variantUrl: String? = null,
+    val segments: List<String> = emptyList(),
+    val keyMethod: String? = null,
+    val keyUri: String? = null,
+    val keyIvHex: String? = null,
+)
+
+internal fun parseM3u8Playlist(content: String, baseUrl: String): M3u8Playlist {
+    fun resolve(ref: String): String =
+        if (ref.startsWith("http://", true) || ref.startsWith("https://", true)) ref
+        else resolveRelativeUrl(baseUrl, ref)
+
+    val lines = content.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    var bestVariant: String? = null
+    var bestBandwidth = -1L
+    val segments = ArrayList<String>()
+    var keyMethod: String? = null
+    var keyUri: String? = null
+    var keyIvHex: String? = null
+
+    var i = 0
+    while (i < lines.size) {
+        val line = lines[i]
+        if (line.startsWith("#EXT-X-STREAM-INF:")) {
+            val bw = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
+            val next = lines.getOrNull(i + 1)
+            if (next != null && !next.startsWith("#") && bw >= bestBandwidth) {
+                bestBandwidth = bw
+                bestVariant = resolve(next)
+            }
+        } else if (line.startsWith("#EXT-X-KEY:")) {
+            keyMethod = Regex("""METHOD=([^,]+)""").find(line)?.groupValues?.getOrNull(1)?.trim()
+            val rawUri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.getOrNull(1)
+            if (!rawUri.isNullOrBlank()) keyUri = resolve(rawUri)
+            keyIvHex = Regex("""IV=0x([0-9a-fA-F]+)""").find(line)?.groupValues?.getOrNull(1)
+        } else if (!line.startsWith("#")) {
+            segments.add(resolve(line))
+        }
+        i++
+    }
+    return M3u8Playlist(bestVariant, segments, keyMethod, keyUri, keyIvHex)
+}
+
 suspend fun downloadVideoToGallery(
     @Suppress("UNUSED_PARAMETER") context: PlatformContext,
     videoUrl: String,
@@ -364,15 +408,49 @@ suspend fun downloadVideoToGallery(
     onProgress: (Float?) -> Unit = {},
 ): Result<Unit> = withContext(ioDispatcher) {
     runCatching {
-        if (isM3u8Stream(videoUrl)) {
-            error("暂不支持直接保存 HLS 流视频")
-        }
-        onProgress(0.15f)
         val effectiveReferer = referer.ifBlank { defaultRefererFor(videoUrl) }
         val headers = buildMap {
             put("User-Agent", Api.WEB_UA)
             if (effectiveReferer.isNotBlank()) put("Referer", effectiveReferer)
         }
+        if (isM3u8Stream(videoUrl)) {
+            onProgress(0.05f)
+            var targetUrl = videoUrl
+            val firstResp = PlatformHttp.get(targetUrl, headers)
+            if (!firstResp.isSuccessful) error("获取播放列表失败（HTTP ${firstResp.code}）")
+            var parsed = parseM3u8Playlist(firstResp.bodyText, targetUrl)
+            val variant = parsed.variantUrl
+            if (variant != null && parsed.segments.isEmpty()) {
+                targetUrl = variant
+                val varResp = PlatformHttp.get(targetUrl, headers)
+                if (!varResp.isSuccessful) error("获取清晰度列表失败（HTTP ${varResp.code}）")
+                parsed = parseM3u8Playlist(varResp.bodyText, targetUrl)
+            }
+            if (parsed.segments.isEmpty()) error("未解析到视频分片")
+            val method = parsed.keyMethod?.uppercase()
+            if (method != null && method != "NONE") {
+                error("暂不支持直接保存加密 HLS 流视频")
+            }
+            val chunks = ArrayList<ByteArray>(parsed.segments.size)
+            var totalBytes = 0
+            parsed.segments.forEachIndexed { idx, segUrl ->
+                val segBytes = PlatformHttp.downloadBytes(segUrl, headers) ?: error("视频分片下载失败")
+                chunks.add(segBytes)
+                totalBytes += segBytes.size
+                onProgress(0.05f + 0.85f * ((idx + 1).toFloat() / parsed.segments.size.toFloat()))
+            }
+            val merged = ByteArray(totalBytes)
+            var offset = 0
+            for (c in chunks) {
+                c.copyInto(merged, destinationOffset = offset)
+                offset += c.size
+            }
+            val name = "cobo_video_${currentTimeMillis()}.ts"
+            saveVideoBytesToGallery(merged, name).getOrThrow()
+            onProgress(1f)
+            return@runCatching
+        }
+        onProgress(0.15f)
         val bytes = PlatformHttp.downloadBytes(videoUrl, headers) ?: error("视频下载失败")
         onProgress(0.85f)
         val name = "cobo_video_${currentTimeMillis()}.mp4"
