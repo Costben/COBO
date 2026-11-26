@@ -151,6 +151,8 @@ private class SettingsUiState(context: Context) {
     var acceptPrerelease by mutableStateOf(App.settings.acceptPrerelease)
     var inAppUpdate by mutableStateOf(App.settings.inAppUpdate)
     var blurEffects by mutableStateOf(App.settings.blurEffects)
+    var autoHideFloatingBars by mutableStateOf(App.settings.autoHideFloatingBars)
+    var feedTabTapToTopAndReturn by mutableStateOf(App.settings.feedTabTapToTopAndReturn)
     var allowLandscape by mutableStateOf(App.settings.allowLandscape)
     var searchPanelAnimation by mutableStateOf(App.settings.searchPanelAnimation)
     var confirmLike by mutableStateOf(App.settings.confirmLike)
@@ -453,6 +455,28 @@ private fun LazyListScope.displaySettingsItems(
                 summary = App.settings.bottomLeftAction.label,
                 cardListPosition = CardListPosition.Middle,
                 onClick = { state.pickBottomLeftAction = true },
+            )
+            SwitchPreference(
+                checked = state.autoHideFloatingBars,
+                onCheckedChange = {
+                    state.autoHideFloatingBars = it
+                    App.settings.applyAutoHideFloatingBars(it)
+                },
+                title = "滑动自动隐藏浮动栏",
+                summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
+                modifier = Modifier.testTag("settings_auto_hide_floating_bars"),
+                cardListPosition = CardListPosition.Middle,
+            )
+            SwitchPreference(
+                checked = state.feedTabTapToTopAndReturn,
+                onCheckedChange = {
+                    state.feedTabTapToTopAndReturn = it
+                    App.settings.applyFeedTabTapToTopAndReturn(it)
+                },
+                title = "底栏「微博」单击回顶与返回",
+                summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
+                modifier = Modifier.testTag("settings_feed_tab_tap_to_top_and_return"),
+                cardListPosition = CardListPosition.Middle,
             )
             ArrowPreference(
                 title = "浏览图片",
