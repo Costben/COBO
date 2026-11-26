@@ -78,6 +78,7 @@ import com.cobo.app.App
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.MeIconStyle
+import com.cobo.app.data.MediaWallFilter
 import com.cobo.app.data.Membership
 import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
@@ -90,6 +91,7 @@ import com.cobo.app.data.Updater
 import com.cobo.app.data.User
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.computeProfileRenameStatus
+import com.cobo.app.data.extractMediaWallItems
 import com.cobo.app.ui.MeIconTint
 import com.cobo.app.ui.MeIcons
 import com.cobo.app.ui.NavState
@@ -125,6 +127,7 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.VerifiedBadge
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
+import com.cobo.app.ui.components.mediaAlbumGridItems
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
@@ -143,7 +146,10 @@ import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
+import io.github.suqi8.coui.kmp.basic.TabRowDefaults
+import io.github.suqi8.coui.kmp.basic.TabRowWithContour
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
@@ -606,6 +612,12 @@ class ProfileTabState {
     var loadedUid by mutableStateOf<String?>(null)
 }
 
+private enum class ProfileContentTab(val label: String) {
+    Posts("微博"),
+    Album("相册"),
+    Videos("视频"),
+}
+
 @Composable
 fun ProfileContent(
     nav: NavState,
@@ -621,6 +633,7 @@ fun ProfileContent(
     BindScrollToTop(listState)
     val scope = rememberCoroutineScope()
     val tabState = state ?: remember(uid) { ProfileTabState() }
+    var selectedTab by remember(uid) { mutableStateOf(ProfileContentTab.Posts) }
     val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
@@ -696,12 +709,14 @@ fun ProfileContent(
     }
 
     LaunchedEffect(listState, tabState.items.size) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-            .collect { last ->
-                if (last >= tabState.items.size && tabState.items.isNotEmpty() && !tabState.end) {
-                    loadStatuses(false)
-                }
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 2 && tabState.items.isNotEmpty() && !tabState.end) {
+                loadStatuses(false)
             }
+        }
     }
 
     FullPagePullToRefresh(
@@ -738,7 +753,7 @@ fun ProfileContent(
                 top = 0.dp,
                 bottom = 16.dp + navBottomPadding() + extraBottom,
             ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(if (selectedTab == ProfileContentTab.Posts) 8.dp else 3.dp),
         ) {
             item {
                 val currentUser = tabState.user
@@ -818,6 +833,30 @@ fun ProfileContent(
                     },
                 )
             }
+            item(key = "profile_content_tabs") {
+                TabRowWithContour(
+                    tabs = ProfileContentTab.entries.map { it.label },
+                    selectedTabIndex = selectedTab.ordinal,
+                    onTabSelected = { idx -> selectedTab = ProfileContentTab.entries[idx] },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 5.dp)
+                        .testTag("profile_content_tabs"),
+                    height = TabRowDefaults.TabRowWithContourTinyHeight,
+                    cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
+                    contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
+                    segmentPadding = 6.dp,
+                )
+            }
+            val wallItems = if (selectedTab == ProfileContentTab.Posts) {
+                emptyList()
+            } else {
+                extractMediaWallItems(
+                    statuses = tabState.items,
+                    includeRetweeted = false,
+                    filter = if (selectedTab == ProfileContentTab.Videos) MediaWallFilter.Videos else MediaWallFilter.All,
+                )
+            }
             if (tabState.items.isEmpty()) {
                 item {
                     when {
@@ -828,45 +867,74 @@ fun ProfileContent(
                         else -> EmptyState("还没有微博")
                     }
                 }
-            }
-            itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
-                val origin = rememberExpandOrigin()
-                val topBar = LocalTopBarBounds.current
-                val bottomBar = LocalBottomBarBounds.current
-                SideEffect {
-                    origin.listState = listState
-                    origin.rowKey = status.id
-                    origin.originKey = "card:${status.id}"
-                    origin.topBar = topBar
-                    origin.bottomBar = bottomBar
-                }
-                StatusCard(
-                    status = status,
-                    modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
-                    onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                    onUser = { nav.push(Route.Profile(it.id)) },
-                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                    onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                    onLike = {
-                        scope.launch {
-                            val updated = App.toggleStatusLike(status) ?: return@launch
-                            val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
-                            if (currentIdx >= 0) tabState.items[currentIdx] = updated
+            } else if (selectedTab != ProfileContentTab.Posts) {
+                if (wallItems.isEmpty()) {
+                    item(key = "profile_wall_empty") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            EmptyState(
+                                if (selectedTab == ProfileContentTab.Videos) "已加载微博中暂无视频"
+                                else "已加载微博中暂无图片或视频",
+                            )
+                            if (!tabState.end && !tabState.loading) {
+                                TextButton(
+                                    text = "加载更多微博",
+                                    onClick = { scope.launch { loadStatuses(false) } },
+                                )
+                            }
                         }
-                    },
-                    onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                    onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                    onOpenQuoted = { quoted, quotedOrigin ->
-                        quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
-                        nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
-                    },
-                )
+                    }
+                } else {
+                    mediaAlbumGridItems(
+                        items = wallItems,
+                        horizontalPadding = 12.dp,
+                        onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
+                        onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                        onOpenPost = { nav.push(Route.Detail(it.id, it.mid)) },
+                    )
+                }
+            } else {
+                itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
+                    val origin = rememberExpandOrigin()
+                    val topBar = LocalTopBarBounds.current
+                    val bottomBar = LocalBottomBarBounds.current
+                    SideEffect {
+                        origin.listState = listState
+                        origin.rowKey = status.id
+                        origin.originKey = "card:${status.id}"
+                        origin.topBar = topBar
+                        origin.bottomBar = bottomBar
+                    }
+                    StatusCard(
+                        status = status,
+                        modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
+                        onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                        onUser = { nav.push(Route.Profile(it.id)) },
+                        onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
+                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                        onLike = {
+                            scope.launch {
+                                val updated = App.toggleStatusLike(status) ?: return@launch
+                                val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
+                                if (currentIdx >= 0) tabState.items[currentIdx] = updated
+                            }
+                        },
+                        onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                        onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                        onOpenQuoted = { quoted, quotedOrigin ->
+                            quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
+                            nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
+                        },
+                    )
+                }
             }
             if (tabState.items.isNotEmpty()) {
                 item {
                     if (tabState.loading) LoadingState()
-                    else if (tabState.end) Text(
-                        "没有更多了",
+                    else if (tabState.end && (selectedTab == ProfileContentTab.Posts || wallItems.isNotEmpty())) Text(
+                        if (selectedTab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
                         fontSize = 12.sp,
                         color = COUITheme.colorScheme.onSurfaceSecondary,
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
