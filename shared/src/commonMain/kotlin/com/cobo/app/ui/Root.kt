@@ -892,6 +892,8 @@ private fun LikeConfirmPrompt() {
  */
 internal expect val platformUsesCustomEdgeSwipeBack: Boolean
 
+internal expect val platformSupportsPredictiveBackBlur: Boolean
+
 internal expect fun Modifier.platformRootSemantics(): Modifier
 
 @Composable
@@ -924,7 +926,8 @@ private fun RouteLayer(
     // instead of sliding it in from the right.
     val slide = top != null && !top.expand && !top.growsFromImage
     val cornerShape = remember(screenCorner) { SquircleShape(screenCorner) }
-    val backBlurSupported = isPredictiveBackBlurSupported() &&
+    val backBlurSupported = platformSupportsPredictiveBackBlur &&
+        isPredictiveBackBlurSupported() &&
         blurEffectsEnabled() &&
         App.settings.predictiveBackBlur
     val density = LocalDensity.current
@@ -968,9 +971,30 @@ private fun RouteLayer(
                     clip = false
                 }
             }
-            // iOS Skiko/Metal 单线程渲染中，退场首帧对整屏 MainShell 挂载动态半径高斯模糊会造成明显的起手掉帧；
-            // 仅保留前景跟手缩放与平移动画，确保 120fps 起手零卡顿。
-            applyPredictiveBackBlur(0f)
+            // 最上层返回卡片/页面始终保持清晰，仅对其正下方的背景层施加由模糊逐渐转清的 RenderEffect；
+            // iOS Skiko/Metal 通过 platformSupportsPredictiveBackBlur 保持关闭以避免单线程起手掉帧。
+            val blurRadiusPx = if (belowTop && backBlurSupported && top != null) {
+                val offsetDistance = if (top.followFlingActive && (top.expand || top.hasReturnTarget)) {
+                    top.offset.value.getDistance()
+                } else {
+                    0f
+                }
+                computePredictiveBackBlurRadiusPx(
+                    belowTop = true,
+                    blurEnabled = true,
+                    topPreviewing = top.previewing,
+                    topExiting = top.exiting,
+                    topExpand = top.expand,
+                    topFollowFlingActive = top.followFlingActive,
+                    topProgress = top.progress.value,
+                    topOffsetDistancePx = offsetDistance,
+                    maxBlurRadiusPx = maxBlurRadiusPx,
+                    blurOffsetSpanPx = blurOffsetSpanPx,
+                )
+            } else {
+                0f
+            }
+            applyPredictiveBackBlur(blurRadiusPx)
         }
         .drawWithContent {
             if (!covered) {

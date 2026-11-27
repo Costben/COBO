@@ -27,6 +27,8 @@ import kotlinx.coroutines.withContext
 
 internal actual val platformUsesCustomEdgeSwipeBack: Boolean = false
 
+internal actual val platformSupportsPredictiveBackBlur: Boolean = true
+
 internal actual fun Modifier.platformRootSemantics(): Modifier =
     this.semantics { testTagsAsResourceId = true }
 

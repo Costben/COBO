@@ -7,6 +7,8 @@ import androidx.compose.ui.unit.dp
 
 internal actual val platformUsesCustomEdgeSwipeBack: Boolean = true
 
+internal actual val platformSupportsPredictiveBackBlur: Boolean = false
+
 internal actual fun Modifier.platformRootSemantics(): Modifier = this
 
 @Composable
