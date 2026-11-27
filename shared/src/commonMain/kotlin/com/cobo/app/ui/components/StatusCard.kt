@@ -133,6 +133,7 @@ import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Community
 import io.github.suqi8.coui.kmp.icon.extended.Contacts
 import io.github.suqi8.coui.kmp.icon.extended.Delete
+import io.github.suqi8.coui.kmp.icon.extended.Forward
 import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Lock
 import io.github.suqi8.coui.kmp.icon.extended.More
@@ -215,6 +216,7 @@ fun StatusCard(
     var confirmDelete by remember(displayStatus.id) { mutableStateOf(false) }
     var deleting by remember(displayStatus.id) { mutableStateOf(false) }
     var showMuteDialog by remember(displayStatus.id) { mutableStateOf(false) }
+    var showShareSheet by remember(displayStatus.id) { mutableStateOf(false) }
     val handleFavorite: () -> Unit = {
         val nowFavorited = App.repo.toggleLocalFavorite(displayStatus)
         App.toast(if (nowFavorited) "已收藏到本地" else "已取消本地收藏")
@@ -281,6 +283,7 @@ fun StatusCard(
             inReadLater = inReadLater,
             onToggleFavorite = handleFavorite,
             onToggleReadLater = handleReadLater,
+            onShareCard = { showShareSheet = true },
             cloudFavorited = cloudFavorited,
             onToggleCloudFavorite = handleCloudFavorite,
             following = effectiveFollowing,
@@ -430,6 +433,12 @@ fun StatusCard(
             onDismiss = { showMuteDialog = false },
         )
     }
+    if (showShareSheet) {
+        StatusShareSheet(
+            status = displayStatus,
+            onDismiss = { showShareSheet = false },
+        )
+    }
 }
 
 @Composable
@@ -443,6 +452,7 @@ fun StatusHeader(
     showMore: Boolean = true,
     onToggleFavorite: (() -> Unit)? = null,
     onToggleReadLater: (() -> Unit)? = null,
+    onShareCard: (() -> Unit)? = null,
     onToggleCloudFavorite: (() -> Unit)? = null,
     following: Boolean = false,
     followLabel: String = if (following) "取消关注" else "关注",
@@ -495,13 +505,14 @@ fun StatusHeader(
                         FollowTagBadge(tag, compact = true)
                     }
                 }
-                if (showMore && (onToggleFavorite != null || onToggleReadLater != null || onToggleCloudFavorite != null || onToggleFollow != null || onLocalMute != null || onReport != null || onEdit != null || onDelete != null)) {
+                if (showMore && (onShareCard != null || onToggleFavorite != null || onToggleReadLater != null || onToggleCloudFavorite != null || onToggleFollow != null || onLocalMute != null || onReport != null || onEdit != null || onDelete != null)) {
                     Spacer(Modifier.width(6.dp))
                     StatusMoreButton(
                         statusId = status.id,
                         favorited = favorited,
                         inReadLater = inReadLater,
                         cloudFavorited = cloudFavorited,
+                        onShareCard = onShareCard,
                         onToggleFavorite = onToggleFavorite,
                         onToggleReadLater = onToggleReadLater,
                         onToggleCloudFavorite = onToggleCloudFavorite,
@@ -583,6 +594,7 @@ private fun StatusMoreButton(
     favorited: Boolean,
     inReadLater: Boolean,
     cloudFavorited: Boolean,
+    onShareCard: (() -> Unit)?,
     onToggleFavorite: (() -> Unit)?,
     onToggleReadLater: (() -> Unit)?,
     onToggleCloudFavorite: (() -> Unit)?,
@@ -597,7 +609,8 @@ private fun StatusMoreButton(
     val scheme = COUITheme.colorScheme
     var expanded by remember(statusId) { mutableStateOf(false) }
     val optionSize =
-        (if (onToggleCloudFavorite != null) 1 else 0) +
+        (if (onShareCard != null) 1 else 0) +
+            (if (onToggleCloudFavorite != null) 1 else 0) +
             (if (onToggleFavorite != null) 1 else 0) +
             (if (onToggleReadLater != null) 1 else 0) +
             (if (onToggleFollow != null) 1 else 0) +
@@ -638,6 +651,28 @@ private fun StatusMoreButton(
             val dismiss = LocalDismissState.current
             ListPopupColumn {
                 var idx = 0
+                if (onShareCard != null) {
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "图文分享",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(COUIIcons.Forward, null, Modifier.size(18.dp), tint = scheme.onSurfaceContainer)
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = false,
+                        index = idx++,
+                        modifier = Modifier.testTag("status_share_card"),
+                        groupKey = "status_more_$statusId",
+                        onSelectedIndexChange = {
+                            dismiss?.invoke()
+                            expanded = false
+                            onShareCard()
+                        },
+                    )
+                }
                 if (onToggleFavorite != null) {
                     val favIcon = if (favorited) CoboIcons.StarFill else CoboIcons.Star
                     val favTint = if (favorited) scheme.primary else scheme.onSurfaceContainer

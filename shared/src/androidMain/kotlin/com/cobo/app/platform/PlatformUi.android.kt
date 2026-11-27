@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -134,6 +135,12 @@ actual fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap? = ru
 
 actual fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = runCatching {
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+}.getOrNull()
+
+actual fun encodeImageBitmapToPng(bitmap: ImageBitmap): ByteArray? = runCatching {
+    val out = ByteArrayOutputStream()
+    bitmap.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+    out.toByteArray()
 }.getOrNull()
 
 actual fun decodeImageDimensions(bytes: ByteArray): Pair<Int, Int>? = runCatching {

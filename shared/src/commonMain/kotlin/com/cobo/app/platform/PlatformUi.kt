@@ -71,6 +71,7 @@ expect fun shareImageBytes(bytes: ByteArray, fileName: String, mime: String = "i
 
 expect fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap?
 expect fun decodeImageBitmap(bytes: ByteArray): ImageBitmap?
+expect fun encodeImageBitmapToPng(bitmap: ImageBitmap): ByteArray?
 expect fun decodeImageDimensions(bytes: ByteArray): Pair<Int, Int>?
 expect fun cropAndEncodeJpeg(
     bytes: ByteArray,

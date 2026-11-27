@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.asComposeShader
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.dp
 import io.github.suqi8.coui.kmp.theme.COUITheme
@@ -25,6 +26,7 @@ import kotlinx.cinterop.objcPtr
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.RuntimeEffect
 import org.jetbrains.skia.RuntimeShaderBuilder
@@ -184,6 +186,10 @@ actual fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap? {
 actual fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = runCatching {
     if (bytes.isEmpty()) return null
     Image.makeFromEncoded(bytes).toComposeImageBitmap()
+}.getOrNull()
+
+actual fun encodeImageBitmapToPng(bitmap: ImageBitmap): ByteArray? = runCatching {
+    Image.makeFromBitmap(bitmap.asSkiaBitmap()).encodeToData(EncodedImageFormat.PNG)?.bytes
 }.getOrNull()
 
 actual fun decodeImageDimensions(bytes: ByteArray): Pair<Int, Int>? = runCatching {
