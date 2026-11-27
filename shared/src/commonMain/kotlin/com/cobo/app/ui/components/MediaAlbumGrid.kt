@@ -62,6 +62,7 @@ fun LazyListScope.mediaAlbumGridItems(
     horizontalPadding: Dp = 12.dp,
     topOuterCornerRadius: Dp = InnerTileCornerRadius,
     topOuterWeight: Float = CardDefaults.GroupWeight,
+    rowModifier: Modifier = Modifier,
     onPhotoClick: (pics: List<Pic>, index: Int) -> Unit,
     onVideoClick: (VideoInfo) -> Unit,
     onOpenPost: (Status) -> Unit,
@@ -74,7 +75,7 @@ fun LazyListScope.mediaAlbumGridItems(
         contentType = { _, _ -> "album_row" },
     ) { rowIndex, row ->
         Row(
-            modifier = Modifier
+            modifier = rowModifier
                 .fillMaxWidth()
                 .padding(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(3.dp),
