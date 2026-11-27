@@ -485,7 +485,7 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     var imageTopBarShowCounter by mutableStateOf(sp.getBoolean("image_top_bar_show_counter", true))
         private set
 
-    /** 转发图片显示压缩：开启后转发微博里的配图按九宫格单格缩略图尺寸缩小显示。默认关。 */
+    /** 转发图片显示压缩：开启后转发微博时自身附带的配图按九宫格单格缩略图尺寸缩小显示（不影响被转发原博配图）。默认关。 */
     var retweetImageCompact by mutableStateOf(sp.getBoolean("retweet_image_compact", false))
         private set
 

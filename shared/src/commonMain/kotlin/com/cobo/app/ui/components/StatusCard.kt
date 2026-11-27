@@ -313,7 +313,14 @@ fun StatusCard(
             Spacer(Modifier.height(8.dp))
             StatusVoteCard(status = displayStatus, actionsEnabled = actionsEnabled, onCard = keepFrame)
         }
-        StatusMedia(displayStatus, compact, onImage, onVideo, onCard = keepFrame)
+        StatusMedia(
+            status = displayStatus,
+            compact = compact,
+            onImage = onImage,
+            onVideo = onVideo,
+            onCard = keepFrame,
+            compressPicsToGridThumb = displayStatus.retweeted != null && App.settings.retweetImageCompact,
+        )
         if (displayStatus.retweeted != null) {
             Spacer(Modifier.height(8.dp))
             RetweetBlock(
@@ -1874,7 +1881,6 @@ fun RetweetBlock(
             onImage = onImage,
             onVideo = onVideo,
             onCard = !onCard,
-            compressPicsToGridThumb = App.settings.retweetImageCompact,
         )
     }
 }
