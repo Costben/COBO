@@ -413,6 +413,18 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     var reverseBrowse by mutableStateOf(sp.getBoolean("reverse_browse", false))
         private set
 
+    /** 过滤看过的推荐微博（实验性）：本地记录已阅推荐微博 ID 并在后续刷新翻页时跳过。默认关。 */
+    var filterSeenRecommend by mutableStateOf(sp.getBoolean("filter_seen_recommend", false))
+        private set
+
+    /** 推荐已看记录保留天数，默认 7 天（可选 3 / 7 / 14 / 30 天）。 */
+    var recommendSeenRetentionDays by mutableIntStateOf(
+        RecommendSeenRetention.fromDays(
+            sp.getInt("recommend_seen_retention_days", RecommendSeenRetention.Days7.days)
+        ).days
+    )
+        private set
+
     /** 收纳关注分组：开启后首页中间栏菜单将关注分组收进二级菜单，关闭后直接平铺展开在一级菜单中。默认开。 */
     var collapseFollowGroups by mutableStateOf(sp.getBoolean("collapse_follow_groups", true))
         private set
@@ -779,6 +791,17 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     fun applyReverseBrowse(value: Boolean) {
         reverseBrowse = value
         sp.edit().putBoolean("reverse_browse", value).apply()
+    }
+
+    fun applyFilterSeenRecommend(value: Boolean) {
+        filterSeenRecommend = value
+        sp.edit().putBoolean("filter_seen_recommend", value).apply()
+    }
+
+    fun applyRecommendSeenRetentionDays(days: Int) {
+        val normalized = RecommendSeenRetention.fromDays(days).days
+        recommendSeenRetentionDays = normalized
+        sp.edit().putInt("recommend_seen_retention_days", normalized).apply()
     }
 
     fun applyCollapseFollowGroups(value: Boolean) {
