@@ -47,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -754,6 +755,8 @@ fun ProfileContent(
     val scope = rememberCoroutineScope()
     val tabState = state ?: remember(uid) { ProfileTabState() }
     var selectedTab by remember(uid) { mutableStateOf(ProfileContentTab.Posts) }
+    var autoFilling by remember(uid, selectedTab) { mutableStateOf(false) }
+    var autoFillExhausted by remember(uid, selectedTab) { mutableStateOf(false) }
     val pullState = rememberFullPagePullToRefreshState()
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
@@ -828,13 +831,49 @@ fun ProfileContent(
         }
     }
 
-    LaunchedEffect(listState, tabState.items.size) {
+    // 相册/视频页签按批连续补拉：整段补拉期间保持单一持续的加载状态，避免每翻一页进度条闪灭重建；
+    // 单次自动补拉最多连续翻 4 页，避免视频极少的账号无限循环拉取，未满屏时交由用户点按继续。
+    suspend fun loadMediaBurst(maxPages: Int = 4) {
+        if (autoFilling || tabState.end) return
+        autoFilling = true
+        autoFillExhausted = false
+        try {
+            var fetched = 0
+            while (fetched < maxPages && !tabState.end && tabState.error == null) {
+                val info = listState.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                val total = info.totalItemsCount
+                if (fetched > 0 && total > 0 && last < total - 2) break
+                loadStatuses(reset = false)
+                fetched++
+                withFrameNanos { }
+            }
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val total = info.totalItemsCount
+            if (!tabState.end && tabState.error == null && total > 0 && last >= total - 2) {
+                autoFillExhausted = true
+            }
+        } finally {
+            autoFilling = false
+        }
+    }
+
+    LaunchedEffect(listState, selectedTab, tabState.items.isNotEmpty()) {
         snapshotFlow {
             val info = listState.layoutInfo
-            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
-        }.collect { (last, total) ->
-            if (total > 0 && last >= total - 2 && tabState.items.isNotEmpty() && !tabState.end) {
-                loadStatuses(false)
+            Triple(
+                info.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                info.totalItemsCount,
+                tabState.end,
+            )
+        }.collect { (last, total, ended) ->
+            if (total > 0 && last >= total - 2 && tabState.items.isNotEmpty() && !ended) {
+                if (selectedTab == ProfileContentTab.Posts) {
+                    if (!tabState.loading) loadStatuses(false)
+                } else if (!autoFillExhausted && !autoFilling) {
+                    loadMediaBurst()
+                }
             }
         }
     }
@@ -843,6 +882,7 @@ fun ProfileContent(
         isRefreshing = tabState.refreshing,
         onRefresh = {
             scope.launch {
+                autoFillExhausted = false
                 tabState.resolvedUid?.let { tabState.user = runCatching { App.repo.profile(it, force = true) }.getOrNull() }
                 loadStatuses(true, force = true, showRefresh = true)
             }
@@ -1030,10 +1070,11 @@ fun ProfileContent(
                     filter = if (selectedTab == ProfileContentTab.Videos) MediaWallFilter.Videos else MediaWallFilter.All,
                 )
             }
+            val isLoadingMore = tabState.loading || autoFilling
             if (tabState.items.isEmpty()) {
-                item {
+                item(key = "profile_empty_state") {
                     when {
-                        tabState.loading || tabState.refreshing -> LoadingState()
+                        isLoadingMore || tabState.refreshing -> LoadingState()
                         tabState.error != null -> ErrorState(tabState.error!!) {
                             scope.launch { loadStatuses(true, force = true, showRefresh = true) }
                         }
@@ -1041,7 +1082,7 @@ fun ProfileContent(
                     }
                 }
             } else if (selectedTab != ProfileContentTab.Posts) {
-                if (wallItems.isEmpty()) {
+                if (wallItems.isEmpty() && !isLoadingMore) {
                     item(key = "profile_wall_empty") {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -1051,15 +1092,15 @@ fun ProfileContent(
                                 if (selectedTab == ProfileContentTab.Videos) "已加载微博中暂无视频"
                                 else "已加载微博中暂无图片或视频",
                             )
-                            if (!tabState.end && !tabState.loading) {
+                            if (!tabState.end) {
                                 TextButton(
                                     text = "加载更多微博",
-                                    onClick = { scope.launch { loadStatuses(false) } },
+                                    onClick = { scope.launch { loadMediaBurst() } },
                                 )
                             }
                         }
                     }
-                } else {
+                } else if (wallItems.isNotEmpty()) {
                     mediaAlbumGridItems(
                         items = wallItems,
                         horizontalPadding = 12.dp,
@@ -1106,14 +1147,27 @@ fun ProfileContent(
                 }
             }
             if (tabState.items.isNotEmpty()) {
-                item {
-                    if (tabState.loading) LoadingState()
-                    else if (tabState.end && (selectedTab == ProfileContentTab.Posts || wallItems.isNotEmpty())) Text(
-                        if (selectedTab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
-                        fontSize = 12.sp,
-                        color = COUITheme.colorScheme.onSurfaceSecondary,
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    )
+                item(key = "profile_footer") {
+                    when {
+                        isLoadingMore -> LoadingState()
+                        selectedTab != ProfileContentTab.Posts && autoFillExhausted && !tabState.end && wallItems.isNotEmpty() -> {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TextButton(
+                                    text = "继续加载更多",
+                                    onClick = { scope.launch { loadMediaBurst() } },
+                                )
+                            }
+                        }
+                        tabState.end && (selectedTab == ProfileContentTab.Posts || wallItems.isNotEmpty()) -> Text(
+                            if (selectedTab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
+                            fontSize = 12.sp,
+                            color = COUITheme.colorScheme.onSurfaceSecondary,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        )
+                    }
                 }
             }
         }

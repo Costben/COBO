@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -665,23 +666,66 @@ private fun StatusFeedList(
     val scope = rememberCoroutineScope()
     val pullState = rememberFullPagePullToRefreshState()
     val shownItems = transformItems(store.items)
+    var autoFilling by remember(store, albumMode, albumFilter) { mutableStateOf(false) }
+    var autoFillExhausted by remember(store, albumMode, albumFilter) { mutableStateOf(false) }
+
+    suspend fun loadAlbumBurst(maxPages: Int = 4) {
+        if (autoFilling || store.end) return
+        autoFilling = true
+        autoFillExhausted = false
+        try {
+            var fetched = 0
+            while (fetched < maxPages && !store.end && store.error == null) {
+                val info = listState.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                val total = info.totalItemsCount
+                if (fetched > 0 && total > 0 && last < total - 2) break
+                store.loadMore()
+                fetched++
+                withFrameNanos { }
+            }
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val total = info.totalItemsCount
+            if (!store.end && store.error == null && total > 0 && last >= total - 2) {
+                autoFillExhausted = true
+            }
+        } finally {
+            autoFilling = false
+        }
+    }
 
     SyncDeletedStatuses(store)
     LaunchedEffect(store) {
         if (!store.loaded) store.loadInitial()
     }
-    LaunchedEffect(listState, store, shownItems.size, albumMode) {
+    LaunchedEffect(listState, store, albumMode, albumFilter, store.items.isNotEmpty()) {
         snapshotFlow {
             val info = listState.layoutInfo
-            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
-        }.collect { (last, total) ->
-            if (total > 0 && last >= total - 2 && store.items.isNotEmpty()) store.loadMore()
+            Triple(
+                info.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                info.totalItemsCount,
+                store.end,
+            )
+        }.collect { (last, total, ended) ->
+            if (total > 0 && last >= total - 2 && store.items.isNotEmpty() && !ended) {
+                if (!albumMode) {
+                    if (!store.loading) store.loadMore()
+                } else if (!autoFillExhausted && !autoFilling) {
+                    loadAlbumBurst()
+                }
+            }
         }
     }
 
     FullPagePullToRefresh(
         isRefreshing = store.refreshing,
-        onRefresh = { scope.launch { store.refresh() } },
+        onRefresh = {
+            scope.launch {
+                autoFillExhausted = false
+                store.refresh()
+            }
+        },
         modifier = Modifier.fillMaxSize(),
         state = pullState,
         contentPadding = PaddingValues(top = topInset + extraTopInset),
@@ -727,8 +771,9 @@ private fun StatusFeedList(
                     )
                 }
             }
+            val isLoadingMore = store.loading || autoFilling
             if (store.items.isEmpty()) {
-                item {
+                item(key = "my_content_empty_state") {
                     when {
                         store.refreshing || (!store.loaded && store.error == null) -> LoadingState()
                         store.error != null -> ErrorState(store.error!!) {
@@ -738,7 +783,7 @@ private fun StatusFeedList(
                     }
                 }
             } else if (albumMode) {
-                if (wallItems.isEmpty()) {
+                if (wallItems.isEmpty() && !isLoadingMore) {
                     item(key = "album_filtered_empty") {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -748,15 +793,15 @@ private fun StatusFeedList(
                                 if (shownItems.isEmpty() && filteredEmptyText != null) filteredEmptyText
                                 else "当前收藏中暂无匹配的图片或视频",
                             )
-                            if (!store.end && !store.loading) {
+                            if (!store.end) {
                                 TextButton(
                                     text = "加载更多",
-                                    onClick = { scope.launch { store.loadMore() } },
+                                    onClick = { scope.launch { loadAlbumBurst() } },
                                 )
                             }
                         }
                     }
-                } else {
+                } else if (wallItems.isNotEmpty()) {
                     mediaAlbumGridItems(
                         items = wallItems,
                         horizontalPadding = 0.dp,
@@ -766,7 +811,7 @@ private fun StatusFeedList(
                     )
                 }
             } else if (shownItems.isEmpty()) {
-                item { EmptyState(filteredEmptyText ?: emptyText) }
+                item(key = "my_content_filtered_empty") { EmptyState(filteredEmptyText ?: emptyText) }
             } else {
                 itemsIndexed(shownItems, key = { _, s -> s.id }) { index, status ->
                     val origin = rememberExpandOrigin()
@@ -801,17 +846,29 @@ private fun StatusFeedList(
                     )
                 }
             }
-            if (shownItems.isNotEmpty() && (!albumMode || wallItems.isNotEmpty())) {
-                item {
-                    if (store.loading) {
-                        LoadingState()
-                    } else if (store.end) {
-                        Text(
-                            text = if (albumMode) "长按任意缩略图可查看原微博" else "没有更多了",
-                            color = COUITheme.colorScheme.onSurfaceSecondary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                        )
+            if (store.items.isNotEmpty() && (isLoadingMore || (shownItems.isNotEmpty() && (!albumMode || wallItems.isNotEmpty())))) {
+                item(key = "my_content_footer") {
+                    when {
+                        isLoadingMore -> LoadingState()
+                        albumMode && autoFillExhausted && !store.end && wallItems.isNotEmpty() -> {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TextButton(
+                                    text = "继续加载更多",
+                                    onClick = { scope.launch { loadAlbumBurst() } },
+                                )
+                            }
+                        }
+                        store.end -> {
+                            Text(
+                                text = if (albumMode) "长按任意缩略图可查看原微博" else "没有更多了",
+                                color = COUITheme.colorScheme.onSurfaceSecondary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                            )
+                        }
                     }
                 }
             }
