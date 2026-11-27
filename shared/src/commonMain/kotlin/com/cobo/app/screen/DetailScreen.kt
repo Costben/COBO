@@ -655,6 +655,7 @@ fun DetailScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 32.dp)
                                 .padding(
                                     start = if (keepCardFrame) 16.dp else FlatCommentInset,
                                     end = if (keepCardFrame) 16.dp else FlatCommentInset,
@@ -665,7 +666,7 @@ fun DetailScreen(
                         ) {
                             Row(
                                 modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 if (activeTab == DetailSectionTab.Comments) {
@@ -678,12 +679,14 @@ fun DetailScreen(
                                         onChange = { commentFilter = it },
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.weight(1f, fill = false),
                                     )
                                 } else {
                                     DetailSectionTabButton(
                                         label = "评论",
                                         count = status?.comments ?: comments.size,
                                         selected = false,
+                                        alignStartEdge = true,
                                         onClick = { activeTab = DetailSectionTab.Comments },
                                         modifier = Modifier.testTag("detail_tab_comments"),
                                     )
@@ -1157,7 +1160,7 @@ fun DetailScreen(
 /** 去掉外框后补在列表 12dp 内边距上的横向留白，合计 16dp，与顶栏按钮外框对齐。 */
 internal val FlatCommentInset = 4.dp
 
-/** 详情页「评论 / 转发」切换标签，保持轻量紧凑并高亮当前选中的交互区。 */
+/** 详情页「评论 / 转发」切换标签，与左侧筛选标题保持同一单行基线与极简字重排版。 */
 @Composable
 private fun DetailSectionTabButton(
     label: String,
@@ -1165,29 +1168,29 @@ private fun DetailSectionTabButton(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    alignStartEdge: Boolean = false,
 ) {
     val scheme = COUITheme.colorScheme
     val displayText = if (count > 0) "$label ${fmtCount(count)}" else label
-    Column(
+    Row(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp, horizontal = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(
+                start = if (alignStartEdge) 0.dp else 4.dp,
+                end = 4.dp,
+                top = 4.dp,
+                bottom = 4.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = displayText,
             fontSize = 14.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) scheme.onSurface else scheme.onSurfaceSecondary,
-        )
-        Spacer(Modifier.height(3.dp))
-        Box(
-            modifier = Modifier
-                .width(18.dp)
-                .height(2.dp)
-                .clip(RoundedCornerShape(1.dp))
-                .background(if (selected) scheme.primary else Color.Transparent),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
