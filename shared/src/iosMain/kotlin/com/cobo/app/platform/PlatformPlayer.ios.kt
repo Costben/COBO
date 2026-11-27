@@ -354,7 +354,7 @@ actual class PlatformVideoPlayer actual constructor() {
             ensurePipControllerOnMain()
         }
         if (autoPlay) {
-            ensureAudioSession()
+            if (!muted) ensureAudioSession()
             avPlayer.play()
             if (desiredSpeed != 1f) avPlayer.rate = desiredSpeed
             _isPlaying = true
@@ -440,7 +440,7 @@ actual class PlatformVideoPlayer actual constructor() {
     actual fun play() {
         dispatch_async(dispatch_get_main_queue()) {
             if (released) return@dispatch_async
-            ensureAudioSession()
+            if (!avPlayer.muted) ensureAudioSession()
             if (isEnded) {
                 avPlayer.seekToTime(CMTimeMakeWithSeconds(0.0, 600))
                 _isEnded = false
@@ -480,7 +480,11 @@ actual class PlatformVideoPlayer actual constructor() {
 
     actual fun setMuted(muted: Boolean) {
         dispatch_async(dispatch_get_main_queue()) {
-            if (!released) avPlayer.muted = muted
+            if (released) return@dispatch_async
+            avPlayer.muted = muted
+            if (!muted && _isPlaying) {
+                ensureAudioSession()
+            }
         }
     }
 
@@ -524,6 +528,7 @@ actual class PlatformVideoPlayer actual constructor() {
             posterImage = null
             avPlayer.pause()
             avPlayer.replaceCurrentItemWithPlayerItem(null)
+            playerLayer.removeFromSuperlayer()
         }
     }
 

@@ -990,22 +990,29 @@ private fun RouteLayer(
 
     // 进场展开 / 退场 / 侧滑预览期间，前景页与底层页均冻结为单张静态 GPU 纹理，
     // 消除转场期间底层 Feed + 顶栏模糊 + 底部熔球玻璃与前景详情页同时逐帧重绘造成的掉帧。
-    val freezeSelf = (entry.expand && entry.animating) || entry.exiting || entry.previewing
+    // 看图页（growsFromImage）由页面自身驱动黑幕淡出与缩回动画，绝不可冻结成静态黑屏快照。
+    val feedAutoPlay = LocalFeedVideoAutoPlay.current
+    val freezeSelf = !entry.growsFromImage && ((entry.expand && entry.animating) || entry.exiting || entry.previewing)
     val freezeBelow = belowTop && !inPane && top != null && top.belowFrozen
     val freezeSnapshot = freezeSelf || freezeBelow
+    val hasActiveNativeSurface = entry.hasNativeInteropView ||
+        entry.growsFromImage ||
+        feedAutoPlay?.activeKey != null
+    // 仅在当前路由为已稳定停靠的栈顶页（无进退场动画、无侧滑预览）时才允许信息流视频自动播放。
+    val feedVideoRouteActive = isTop && !entry.animating && !entry.exiting && !entry.previewing
 
     CompositionLocalProvider(
         LocalRouteTransition provides transition,
         LocalCurrentNavEntry provides entry,
         LocalBackRouteIsTop provides isActiveTop,
-        LocalFeedVideoRouteActive provides isActiveTop,
+        LocalFeedVideoRouteActive provides feedVideoRouteActive,
     ) {
         Box(layer) {
             if (entry.expand) {
                 ExpandLayer(entry, screenCorner, progress, { entry.fade.value }, { entry.offset.value }) {
                     ExitSnapshotHost(
                         exiting = freezeSnapshot,
-                        hasNativeView = entry.hasNativeInteropView,
+                        hasNativeView = hasActiveNativeSurface,
                     ) {
                         RouteContent(entry.route, nav)
                     }
@@ -1013,7 +1020,7 @@ private fun RouteLayer(
             } else {
                 ExitSnapshotHost(
                     exiting = freezeSnapshot,
-                    hasNativeView = entry.hasNativeInteropView,
+                    hasNativeView = hasActiveNativeSurface,
                 ) {
                     RouteContent(entry.route, nav)
                 }

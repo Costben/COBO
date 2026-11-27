@@ -159,7 +159,9 @@ fun rememberFeedVideoAutoPlayEnvironment(
 
     val (isWifi, foreground) = rememberPlatformAutoPlayEnvironmentState()
 
-    val topRoute = nav.stack.lastOrNull { !it.exiting }?.route
+    val topEntry = nav.stack.lastOrNull()
+    val topSettled = topEntry != null && !topEntry.exiting && !topEntry.animating && !topEntry.previewing
+    val topRoute = if (topSettled) topEntry.route else null
     val routeEligible = when (topRoute) {
         Route.Main -> nav.mainTab == 0
         is Route.Profile,
