@@ -931,8 +931,9 @@ private fun RouteLayer(
         blurEffectsEnabled() &&
         App.settings.predictiveBackBlur
     val density = LocalDensity.current
-    val maxBlurRadiusPx = with(density) { PredictiveBackMotionDefaults.BackBlurMaxRadius.toPx() }
+    val maxBlurRadiusPx = with(density) { PredictiveBackBlurMaxRadius.toPx() }
     val blurOffsetSpanPx = with(density) { PredictiveBackMotionDefaults.BackBlurOffsetSpan.toPx() }
+    val blurFilter = remember(entry.id) { PredictiveBackBlurFilter() }
 
     // 已被上层静止不透明页面完全遮住的底层路由跳过整棵树绘制，节省 GPU 填充与模糊开销。
     val covered by remember(inPane, index, nav.stack.size) {
@@ -971,7 +972,7 @@ private fun RouteLayer(
                     clip = false
                 }
             }
-            // 最上层返回卡片/页面始终保持清晰，仅对其正下方的背景层施加由模糊逐渐转清的 RenderEffect；
+            // 最上层返回卡片/页面始终保持清晰，仅对其正下方的背景层施加经过死区滤波与退出锁定的渐变模糊；
             // iOS Skiko/Metal 通过 platformSupportsPredictiveBackBlur 保持关闭以避免单线程起手掉帧。
             val blurRadiusPx = if (belowTop && backBlurSupported && top != null) {
                 val offsetDistance = if (top.followFlingActive && (top.expand || top.hasReturnTarget)) {
@@ -979,7 +980,7 @@ private fun RouteLayer(
                 } else {
                     0f
                 }
-                computePredictiveBackBlurRadiusPx(
+                val targetRadiusPx = computePredictiveBackBlurRadiusPx(
                     belowTop = true,
                     blurEnabled = true,
                     topPreviewing = top.previewing,
@@ -991,7 +992,15 @@ private fun RouteLayer(
                     maxBlurRadiusPx = maxBlurRadiusPx,
                     blurOffsetSpanPx = blurOffsetSpanPx,
                 )
+                blurFilter.update(
+                    gestureId = top.id.toLong(),
+                    generation = top.previewGeneration,
+                    active = top.previewing || top.exiting,
+                    exiting = top.exiting,
+                    targetRadiusPx = targetRadiusPx,
+                )
             } else {
+                blurFilter.reset()
                 0f
             }
             applyPredictiveBackBlur(blurRadiusPx)
