@@ -1,10 +1,19 @@
 package com.cobo.app.data
 
 import com.cobo.app.json.JSONObject
+import com.cobo.app.screen.detailSectionTabLabel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DetailSectionJumpTest {
+
+    @Test
+    fun detailSectionTabLabelFormatsOptionalCountConsistently() {
+        assertEquals("转发", detailSectionTabLabel("转发", 0))
+        assertEquals("评论", detailSectionTabLabel("评论", 0))
+        assertEquals("转发 12", detailSectionTabLabel("转发", 12))
+        assertEquals("评论 456", detailSectionTabLabel("评论", 456))
+    }
 
     @Test
     fun detailSectionHeaderIndexAccountsForEditHistory() {

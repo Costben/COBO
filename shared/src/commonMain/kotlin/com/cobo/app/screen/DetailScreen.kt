@@ -687,15 +687,28 @@ fun DetailScreen(
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val repostCount = status?.reposts ?: reposts.size
+                            val commentCount = status?.comments ?: comments.size
                             Row(
                                 modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                DetailSectionTabButton(
+                                    label = "转发",
+                                    count = repostCount,
+                                    selected = activeTab == DetailSectionTab.Reposts,
+                                    alignStartEdge = true,
+                                    onClick = {
+                                        preserveSectionPositionBeforeSwitch()
+                                        activeTab = DetailSectionTab.Reposts
+                                    },
+                                    modifier = Modifier.testTag("detail_tab_reposts"),
+                                )
                                 if (activeTab == DetailSectionTab.Comments) {
                                     CommentFilterDropdownTitle(
                                         filter = commentFilter,
-                                        defaultLabel = "全部评论",
+                                        defaultLabel = detailSectionTabLabel("评论", commentCount),
                                         resetLabel = "显示全部评论",
                                         showAuthorOption = !postAuthorUid.isNullOrBlank(),
                                         groupKey = "detail_comment_filter_$id",
@@ -710,7 +723,7 @@ fun DetailScreen(
                                 } else {
                                     DetailSectionTabButton(
                                         label = "评论",
-                                        count = status?.comments ?: comments.size,
+                                        count = commentCount,
                                         selected = false,
                                         alignStartEdge = true,
                                         onClick = {
@@ -720,16 +733,6 @@ fun DetailScreen(
                                         modifier = Modifier.testTag("detail_tab_comments"),
                                     )
                                 }
-                                DetailSectionTabButton(
-                                    label = "转发",
-                                    count = status?.reposts ?: reposts.size,
-                                    selected = activeTab == DetailSectionTab.Reposts,
-                                    onClick = {
-                                        preserveSectionPositionBeforeSwitch()
-                                        activeTab = DetailSectionTab.Reposts
-                                    },
-                                    modifier = Modifier.testTag("detail_tab_reposts"),
-                                )
                             }
                             if (activeTab == DetailSectionTab.Comments) {
                                 Spacer(Modifier.width(8.dp))
@@ -1218,7 +1221,11 @@ fun DetailScreen(
 /** 去掉外框后补在列表 12dp 内边距上的横向留白，合计 16dp，与顶栏按钮外框对齐。 */
 internal val FlatCommentInset = 4.dp
 
-/** 详情页「评论 / 转发」切换标签，与左侧筛选标题保持同一单行基线与极简字重排版。 */
+/** 生成详情页「转发 / 评论」标签文案，数量大于 0 时附带格式化计数。 */
+internal fun detailSectionTabLabel(label: String, count: Int): String =
+    if (count > 0) "$label ${fmtCount(count)}" else label
+
+/** 详情页「转发 / 评论」切换标签，锁定粗体占位宽度防止切换选中态时右侧标签横向移位。 */
 @Composable
 private fun DetailSectionTabButton(
     label: String,
@@ -1229,7 +1236,7 @@ private fun DetailSectionTabButton(
     alignStartEdge: Boolean = false,
 ) {
     val scheme = COUITheme.colorScheme
-    val displayText = if (count > 0) "$label ${fmtCount(count)}" else label
+    val displayText = detailSectionTabLabel(label, count)
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
@@ -1242,14 +1249,26 @@ private fun DetailSectionTabButton(
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = displayText,
-            fontSize = 14.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) scheme.onSurface else scheme.onSurfaceSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Box(contentAlignment = Alignment.CenterStart) {
+            // 按 SemiBold 字重固定占位，防止切换选中态时字体宽度变化带动右侧评论标签左右移位。
+            Text(
+                text = displayText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.Transparent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clearAndSetSemantics {},
+            )
+            Text(
+                text = displayText,
+                fontSize = 14.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) scheme.onSurface else scheme.onSurfaceSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
