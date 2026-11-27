@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.MeIconStyle
@@ -1329,8 +1330,18 @@ fun ProfileContent(
                                     if (currentIdx >= 0) tabState.items[currentIdx] = updated
                                 }
                             },
-                            onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                            onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onRepost = {
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Reposts),
+                                    origin,
+                                )
+                            },
+                            onComment = {
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Comments),
+                                    origin,
+                                )
+                            },
                             onOpenQuoted = { quoted, quotedOrigin ->
                                 quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
                                 nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)

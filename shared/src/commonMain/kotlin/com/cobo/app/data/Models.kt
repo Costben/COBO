@@ -2575,6 +2575,78 @@ data class FeedPage(
 /** How the detail page orders its comments: the hot list, or every comment in time order. */
 enum class CommentSort { Hot, Time }
 
+/** 详情页打开时的默认定位区域：正文顶端、评论区或转发区。 */
+enum class DetailInitialSection { Body, Comments, Reposts }
+
+/** 详情页下方互动区当前激活的标签页。 */
+enum class DetailSectionTab { Comments, Reposts }
+
+/**
+ * 详情页「转发」列表的分页结果；[nextPage] 为 0 时表示已无更多转发。
+ */
+data class RepostPage(
+    val items: List<Status>,
+    val nextPage: Int = 0,
+)
+
+/** 详情页 LazyColumn 中「评论 / 转发」分组头所在的条目索引。 */
+internal fun detailSectionHeaderIndex(hasEditHistory: Boolean): Int =
+    if (hasEditHistory) 2 else 1
+
+/**
+ * 计算详情页互动区底部所需的最小占位高度（px），确保从外侧直达评论/转发区或原地切换筛选/标签时，
+ * 分组头下方内容总高度不低于可视区高度，避免 LazyColumn 反向夹紧滚动位置将画面拉回正文顶部。
+ */
+internal fun computeDetailSectionFillerHeightPx(
+    usableViewportPx: Int,
+    activeItemCount: Int,
+    preservePosition: Boolean,
+    headerAndFooterPx: Int,
+    minItemHeightPx: Int,
+): Int {
+    if (!preservePosition || usableViewportPx <= 0) return 0
+    val estimatedBodyPx = headerAndFooterPx.coerceAtLeast(0) +
+        activeItemCount.coerceAtLeast(0) * minItemHeightPx.coerceAtLeast(0)
+    return (usableViewportPx - estimatedBodyPx).coerceAtLeast(0)
+}
+
+/** 解析 Share 客户端 `statuses/repost_timeline` 返回的一页转发微博。 */
+internal fun parseRepostsClient(root: JSONObject, curPage: Int): RepostPage {
+    val arr = root.optJSONArray("reposts") ?: JSONArray()
+    val items = statusesOf(arr)
+    val total = root.optInt("total_number", 0)
+    val nextCursor = root.optLong("next_cursor", 0L)
+    val hasMore = items.isNotEmpty() && (nextCursor > 0L || curPage * 20 < total)
+    return RepostPage(
+        items = items,
+        nextPage = if (hasMore) curPage + 1 else 0,
+    )
+}
+
+/** 解析 H5 `api/statuses/repostTimeline` 返回的一页转发微博。 */
+internal fun parseRepostsWeb(root: JSONObject, curPage: Int): RepostPage {
+    val data = root.optJSONObject("data") ?: return RepostPage(emptyList(), 0)
+    val arr = data.optJSONArray("data") ?: JSONArray()
+    val items = statusesOf(arr)
+    val last = data.optInt("max", 0)
+    return RepostPage(
+        items = items,
+        nextPage = if (items.isNotEmpty() && curPage < last) curPage + 1 else 0,
+    )
+}
+
+/** 解析桌面端 `ajax/statuses/repostTimeline` 返回的一页转发微博。 */
+internal fun parseRepostsDesktop(root: JSONObject, curPage: Int): RepostPage {
+    if (root.optInt("ok", 0) != 1) return RepostPage(emptyList(), 0)
+    val arr = root.optJSONArray("data") ?: JSONArray()
+    val items = statusesOf(arr)
+    val last = root.optInt("max_page", 0)
+    return RepostPage(
+        items = items,
+        nextPage = if (items.isNotEmpty() && curPage < last) curPage + 1 else 0,
+    )
+}
+
 /**
  * One page of comments. [maxId]/[maxIdType] carry the hot list's cursor, [nextPage] the
  * chronological list's next page number (0 when there is none left).

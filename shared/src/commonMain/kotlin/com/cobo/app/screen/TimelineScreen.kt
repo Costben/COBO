@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.FeedTopAction
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FilterSurface
@@ -1160,13 +1161,16 @@ private fun TimelinePage(
     // 停在哪要记住：进程被杀或切换账号后再回来，快照填好就直接落到这里。滚动中不写，停稳一会儿再写，
     // 离开页面或切换账号时立刻补写一次，避免刚停下来就切号丢失位置。
     val scrollOwner = remember(store) { store.owner() }
+    val seenOwner = store.owner()
+    val seenClearVersion = if (App.isRecommendSeenReady()) App.recommendSeen.clearVersion else 0
     val seenTrackingActive = store.tracksSeen && store.isSeenFilterActive() && isActivePage
-    val trackedEnterAt = remember(store) { HashMap<String, Long>() }
-    val recordedSeenIds = remember(store) { HashSet<String>() }
-    val pendingSeenFlush = remember(store) { LinkedHashSet<String>() }
-    val currentPostIds by rememberUpdatedState(store.items.mapTo(HashSet()) { it.id })
-    val currentSeenTrackingActive by rememberUpdatedState(seenTrackingActive)
-    LaunchedEffect(listState, store, seenTrackingActive) {
+    val trackedEnterAt = remember(store, seenOwner, seenClearVersion) { HashMap<String, Long>() }
+    val recordedSeenIds = remember(store, seenOwner, seenClearVersion) { HashSet<String>() }
+    val pendingSeenFlush = remember(store, seenOwner, seenClearVersion) { LinkedHashSet<String>() }
+    val currentPostIds by remember(store) {
+        derivedStateOf { store.items.mapTo(HashSet()) { it.id } }
+    }
+    LaunchedEffect(listState, store, seenOwner, seenClearVersion, seenTrackingActive) {
         if (!seenTrackingActive) {
             trackedEnterAt.clear()
             return@LaunchedEffect
@@ -1198,10 +1202,12 @@ private fun TimelinePage(
             }
         }
     }
-    DisposableEffect(store, seenTrackingActive) {
+    DisposableEffect(store, seenOwner, seenClearVersion, seenTrackingActive) {
         onDispose {
+            // 直接使用进入本 Effect 时捕获的 seenTrackingActive（旧值），
+            // 避免切走推荐页时被 rememberUpdatedState 提前改写为 false 而跳过补写。
             val now = currentTimeMillis()
-            if (trackedEnterAt.isNotEmpty() && currentSeenTrackingActive) {
+            if (seenTrackingActive && trackedEnterAt.isNotEmpty()) {
                 val flushedOnExit = evaluateDwellSeenIds(emptySet(), trackedEnterAt, now, RecommendSeenDwellMillis)
                     .filter { recordedSeenIds.add(it) }
                 pendingSeenFlush.addAll(flushedOnExit)
@@ -1355,11 +1361,17 @@ private fun TimelinePage(
                             },
                             onRepost = {
                                 recordInteractionSeen()
-                                nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin)
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, store.readOnly, DetailInitialSection.Reposts),
+                                    origin,
+                                )
                             },
                             onComment = {
                                 recordInteractionSeen()
-                                nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin)
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, store.readOnly, DetailInitialSection.Comments),
+                                    origin,
+                                )
                             },
                             actionsEnabled = !store.readOnly,
                             onOpenQuoted = { quoted, quotedOrigin ->

@@ -47,6 +47,7 @@ import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.ContentFilterRules
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.FollowTags
@@ -953,8 +954,18 @@ private fun LazyListScope.searchStatusTabItems(
                         }
                     }
                 },
-                onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                onRepost = {
+                    nav.push(
+                        Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Reposts),
+                        origin,
+                    )
+                },
+                onComment = {
+                    nav.push(
+                        Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Comments),
+                        origin,
+                    )
+                },
             )
         }
     }

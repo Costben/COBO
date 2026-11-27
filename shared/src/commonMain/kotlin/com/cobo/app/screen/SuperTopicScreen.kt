@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.data.ApiException
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.SuperTopicInfo
@@ -375,8 +376,18 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                                     onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
                                     onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                                     onLike = { scope.launch { feed.like(index) } },
-                                    onRepost = { nav.push(Route.Detail(status.id, status.mid, feed.readOnly), origin) },
-                                    onComment = { nav.push(Route.Detail(status.id, status.mid, feed.readOnly), origin) },
+                                    onRepost = {
+                                        nav.push(
+                                            Route.Detail(status.id, status.mid, feed.readOnly, DetailInitialSection.Reposts),
+                                            origin,
+                                        )
+                                    },
+                                    onComment = {
+                                        nav.push(
+                                            Route.Detail(status.id, status.mid, feed.readOnly, DetailInitialSection.Comments),
+                                            origin,
+                                        )
+                                    },
                                 )
                             }
                             if (feed.items.isNotEmpty()) {

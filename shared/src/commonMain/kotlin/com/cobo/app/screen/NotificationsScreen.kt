@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.Membership
 import com.cobo.app.data.NotificationItem
 import com.cobo.app.data.NotificationTab
@@ -294,8 +295,18 @@ fun NotificationsScreen(
                                         onImage = { pics, idx -> nav.push(Route.Images(pics, idx)) },
                                         onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                                         onLike = { scope.launch { state.toggleStatusLike(index) } },
-                                        onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                                        onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                                        onRepost = {
+                                            nav.push(
+                                                Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Reposts),
+                                                origin,
+                                            )
+                                        },
+                                        onComment = {
+                                            nav.push(
+                                                Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Comments),
+                                                origin,
+                                            )
+                                        },
                                     )
                                 }
                             } else {

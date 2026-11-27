@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.AppBarSurface
@@ -151,8 +152,18 @@ fun ContainerScreen(nav: NavState, cid: String, title: String) {
                             onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                             onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                             onLike = { scope.launch { store.like(index) } },
-                            onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                            onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onRepost = {
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Reposts),
+                                    origin,
+                                )
+                            },
+                            onComment = {
+                                nav.push(
+                                    Route.Detail(status.id, status.mid, initialSection = DetailInitialSection.Comments),
+                                    origin,
+                                )
+                            },
                         )
                     }
                     if (store.items.isNotEmpty()) {
