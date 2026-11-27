@@ -953,6 +953,7 @@ fun ProfileContent(
                     },
                 )
             }
+            val extraTabSpacing = if (selectedTab == ProfileContentTab.Posts) 0.dp else 5.dp
             val mutedUid = tabState.user?.id ?: tabState.resolvedUid ?: uid.orEmpty()
             val isProfileSelf = !App.repo.guest && mutedUid.isNotBlank() && mutedUid == App.repo.session?.uid
             val activeMuteMode = if (!isProfileSelf) ContentFilters.muteMode(mutedUid) else null
@@ -961,7 +962,7 @@ fun ProfileContent(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
+                            .padding(start = 12.dp, top = extraTabSpacing, end = 12.dp),
                         cornerRadius = CardDefaults.GroupCornerRadius,
                         insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         weight = CardDefaults.GroupWeight,
@@ -999,13 +1000,20 @@ fun ProfileContent(
                 }
             }
             item(key = "profile_content_tabs") {
+                // 相册/视频网格行距为 3dp（微博列表为 8dp），补齐上下各 5dp，确保三个页签切换时
+                // 标签栏自身位置与标签栏到下方内容顶部的间距完全一致。
                 TabRowWithContour(
                     tabs = ProfileContentTab.entries.map { it.label },
                     selectedTabIndex = selectedTab.ordinal,
                     onTabSelected = { idx -> selectedTab = ProfileContentTab.entries[idx] },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 5.dp)
+                        .padding(
+                            start = 12.dp,
+                            top = 4.dp + extraTabSpacing,
+                            end = 12.dp,
+                            bottom = 5.dp + extraTabSpacing,
+                        )
                         .testTag("profile_content_tabs"),
                     height = TabRowDefaults.TabRowWithContourTinyHeight,
                     cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
@@ -1055,6 +1063,8 @@ fun ProfileContent(
                     mediaAlbumGridItems(
                         items = wallItems,
                         horizontalPadding = 12.dp,
+                        topOuterCornerRadius = CardDefaults.GroupCornerRadius,
+                        topOuterWeight = CardDefaults.GroupWeight,
                         onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
                         onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                         onOpenPost = { nav.push(Route.Detail(it.id, it.mid)) },

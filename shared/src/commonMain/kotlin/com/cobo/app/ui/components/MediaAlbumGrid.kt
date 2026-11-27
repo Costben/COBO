@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -39,31 +39,40 @@ import com.cobo.app.data.VideoInfo
 import com.cobo.app.data.formatAlbumDuration
 import com.cobo.app.data.mediaWallPhotoGallery
 import com.cobo.app.ui.imageOrigin
+import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Play
+import io.github.suqi8.coui.kmp.squircle.SquircleDefaults
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 
+private val InnerTileCornerRadius = 8.dp
+
 /**
  * 3 列方形缩略图相册墙：点击图片进连续看图，点击视频直接播放，长按任意格跳转到原微博详情。
+ *
+ * [topOuterCornerRadius] 控制首行左上角与右上角的外侧圆角（默认与内侧拼接圆角一致；
+ * 个人主页等紧贴卡片布局的场景可传入 [CardDefaults.GroupCornerRadius] 与微博卡片顶角保持统一）。
  */
 fun LazyListScope.mediaAlbumGridItems(
     items: List<MediaWallItem>,
     horizontalPadding: Dp = 12.dp,
+    topOuterCornerRadius: Dp = InnerTileCornerRadius,
+    topOuterWeight: Float = CardDefaults.GroupWeight,
     onPhotoClick: (pics: List<Pic>, index: Int) -> Unit,
     onVideoClick: (VideoInfo) -> Unit,
     onOpenPost: (Status) -> Unit,
 ) {
     val (galleryPics, photoIndexByKey) = mediaWallPhotoGallery(items)
     val rows = items.chunked(3)
-    items(
+    itemsIndexed(
         items = rows,
-        key = { row -> "album_row_${row.first().key}" },
-        contentType = { "album_row" },
-    ) { row ->
+        key = { _, row -> "album_row_${row.first().key}" },
+        contentType = { _, _ -> "album_row" },
+    ) { rowIndex, row ->
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -73,8 +82,17 @@ fun LazyListScope.mediaAlbumGridItems(
             for (col in 0 until 3) {
                 val item = row.getOrNull(col)
                 if (item != null) {
+                    val isTopStartOuter = rowIndex == 0 && col == 0
+                    val isTopEndOuter = rowIndex == 0 && col == 2
                     MediaAlbumTile(
                         item = item,
+                        topStartRadius = if (isTopStartOuter) topOuterCornerRadius else InnerTileCornerRadius,
+                        topEndRadius = if (isTopEndOuter) topOuterCornerRadius else InnerTileCornerRadius,
+                        cornerWeight = if ((isTopStartOuter || isTopEndOuter) && topOuterCornerRadius != InnerTileCornerRadius) {
+                            topOuterWeight
+                        } else {
+                            SquircleDefaults.Weight
+                        },
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when (item) {
@@ -98,6 +116,9 @@ fun LazyListScope.mediaAlbumGridItems(
 @Composable
 private fun MediaAlbumTile(
     item: MediaWallItem,
+    topStartRadius: Dp,
+    topEndRadius: Dp,
+    cornerWeight: Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -105,8 +126,16 @@ private fun MediaAlbumTile(
     val scheme = COUITheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val squircleEnabled = isSquircleEnabled()
-    val cornerRadius = 8.dp
-    val shape = remember(squircleEnabled) { SquircleShape(cornerRadius, squircleEnabled = squircleEnabled) }
+    val shape = remember(topStartRadius, topEndRadius, cornerWeight, squircleEnabled) {
+        SquircleShape(
+            topStart = topStartRadius,
+            topEnd = topEndRadius,
+            bottomEnd = InnerTileCornerRadius,
+            bottomStart = InnerTileCornerRadius,
+            squircleEnabled = squircleEnabled,
+            weight = cornerWeight,
+        )
+    }
     val originUrl = when (item) {
         is MediaWallItem.Photo -> item.pic.large.ifBlank { item.pic.thumb }
         is MediaWallItem.Video -> ""
@@ -117,7 +146,7 @@ private fun MediaAlbumTile(
             .aspectRatio(1f)
             .let { base ->
                 if (item is MediaWallItem.Photo && originUrl.isNotBlank()) {
-                    base.imageOrigin(originUrl, cornerRadius, aspect = 1f, model = item.thumbUrl)
+                    base.imageOrigin(originUrl, InnerTileCornerRadius, aspect = 1f, model = item.thumbUrl)
                 } else {
                     base
                 }
