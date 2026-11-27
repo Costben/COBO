@@ -370,12 +370,16 @@ actual fun readScreenBrightness(): Float {
     }.getOrDefault(0.5f).coerceIn(0f, 1f)
 }
 
+internal fun resolveAndroidScreenBrightness(value: Float): Float =
+    if (value < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    else value.coerceIn(0.01f, 1f)
+
 actual fun writeScreenBrightness(value: Float) {
     val activity = AndroidPlatformHolder.currentActivity() ?: return
-    val clamped = value.coerceIn(0.01f, 1f)
+    val target = resolveAndroidScreenBrightness(value)
     activity.runOnUiThread {
         val lp = activity.window.attributes
-        lp.screenBrightness = clamped
+        lp.screenBrightness = target
         activity.window.attributes = lp
     }
 }

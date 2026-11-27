@@ -1,5 +1,6 @@
 package com.cobo.app.ui
 
+import com.cobo.app.platform.resolveAndroidScreenBrightness
 import com.cobo.app.screen.shouldAutoHideVideoControls
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -140,5 +141,14 @@ class FloatingVideoControllerTest {
         assertFalse(shouldAutoCloseVideoOnComplete(isLive = false, autoCloseSetting = false, hasPlayed = true))
         assertFalse(shouldAutoCloseVideoOnComplete(isLive = false, autoCloseSetting = true, hasPlayed = false))
         assertFalse(shouldAutoCloseVideoOnComplete(isLive = true, autoCloseSetting = true, hasPlayed = true))
+    }
+
+    @Test
+    fun resolveAndroidScreenBrightnessRestoresSystemOverrideForNegativeValues() {
+        assertEquals(-1f, resolveAndroidScreenBrightness(-1f), 1e-4f)
+        assertEquals(-1f, resolveAndroidScreenBrightness(-0.2f), 1e-4f)
+        assertEquals(0.01f, resolveAndroidScreenBrightness(0f), 1e-4f)
+        assertEquals(0.6f, resolveAndroidScreenBrightness(0.6f), 1e-4f)
+        assertEquals(1f, resolveAndroidScreenBrightness(1.5f), 1e-4f)
     }
 }
