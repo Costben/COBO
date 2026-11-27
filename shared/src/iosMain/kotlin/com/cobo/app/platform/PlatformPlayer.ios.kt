@@ -149,6 +149,8 @@ actual class PlatformVideoPlayer actual constructor() {
     internal var stillImage by mutableStateOf<UIImage?>(null)
     internal var posterImage by mutableStateOf<UIImage?>(null)
     private var stillImageVersion: Int = 0
+    private var stillImagePending: Boolean = false
+    private var posterDecoded: Boolean = false
     private var _currentPositionMs by mutableLongStateOf(0L)
     actual val currentPositionMs: Long get() = _currentPositionMs
     private var _durationMs by mutableLongStateOf(0L)
@@ -195,20 +197,30 @@ actual class PlatformVideoPlayer actual constructor() {
         _isLayerReady = false
     }
 
+    private fun updatePosterReady() {
+        _isPosterReady = stillImage != null || (posterDecoded && !stillImagePending)
+    }
+
     actual fun setStillImage(image: CoilImage?) {
         val bitmap = (image as? BitmapImage)?.bitmap ?: return
         val skiaImage = runCatching { SkiaImage.makeFromBitmap(bitmap) }.getOrNull() ?: return
         val version = ++stillImageVersion
+        stillImagePending = true
+        updatePosterReady()
         val weakSelf = WeakReference(this)
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.toLong(), 0uL)) {
             val bytes = runCatching {
                 skiaImage.encodeToData(EncodedImageFormat.JPEG, 92)?.bytes
             }.getOrNull()
-            val decoded = bytes?.let { UIImage.imageWithData(it.toNSData()) } ?: return@dispatch_async
+            val decoded = bytes?.let { UIImage.imageWithData(it.toNSData()) }
             dispatch_async(dispatch_get_main_queue()) {
                 val self = weakSelf.get() ?: return@dispatch_async
                 if (self.released || self.stillImageVersion != version) return@dispatch_async
-                self.stillImage = decoded
+                self.stillImagePending = false
+                if (decoded != null) {
+                    self.stillImage = decoded
+                }
+                self.updatePosterReady()
             }
         }
     }
@@ -401,7 +413,8 @@ actual class PlatformVideoPlayer actual constructor() {
         dispatch_async(dispatch_get_main_queue()) {
             if (released) return@dispatch_async
             posterImage = null
-            _isPosterReady = false
+            posterDecoded = false
+            updatePosterReady()
             val asset = AVURLAsset.URLAssetWithURL(nsUrl, options = null)
             val item = AVPlayerItem.playerItemWithAsset(asset)
             attachItem(item, looping = looping, muted = muted, autoPlay = autoPlay)
@@ -431,7 +444,8 @@ actual class PlatformVideoPlayer actual constructor() {
                     val self = weakSelf.get() ?: return@dispatch_async
                     if (self.released) return@dispatch_async
                     self.posterImage = decoded
-                    self._isPosterReady = true
+                    self.posterDecoded = true
+                    self.updatePosterReady()
                 }
             }
         }
@@ -644,9 +658,8 @@ private class CoboPlayerContainerView(
             if (posterImageView.image?.objcPtr() != backdropImage.objcPtr()) {
                 posterImageView.image = backdropImage
             }
-            val hideBackdrop = layerReady && clamped >= 0.99f
-            if (posterImageView.hidden != hideBackdrop) {
-                posterImageView.hidden = hideBackdrop
+            if (posterImageView.hidden) {
+                posterImageView.hidden = false
             }
             val layerOpacity = if (!layerReady && clamped <= 0.002f) 0.01f else clamped
             if (abs(playerLayer.opacity - layerOpacity) > 0.002f) {

@@ -1154,6 +1154,11 @@ private fun ZoomableImage(
         scale <= 1f + ZoomEpsilon &&
         !dismissingNow
     val playingLive = canLivePlay && playback.isPlaying
+    val liveAlpha by animateFloatAsState(
+        targetValue = if (playingLive && livePlayer?.isLayerReady == true) 1f else 0f,
+        animationSpec = tween(LiveFadeMillis),
+        label = "livePhotoCrossfade",
+    )
 
     LaunchedEffect(isCurrent) {
         if (!isCurrent) playback.onLeftPage()
@@ -1169,7 +1174,9 @@ private fun ZoomableImage(
             return@LaunchedEffect
         }
         snapshotFlow {
-            livePlayer.isPosterReady &&
+            loaded &&
+                reveal >= 0.99f &&
+                livePlayer.isPosterReady &&
                 progress() >= 0.98f &&
                 !isPagerScrolling() &&
                 !frame.dismiss.active &&
@@ -1209,7 +1216,8 @@ private fun ZoomableImage(
             }
         } else {
             player.pause()
-            delay(LiveFadeMillis.toLong())
+            snapshotFlow { liveAlpha <= 0.005f }.first { it }
+            delay(32L)
             if (!playingLive) {
                 player.seekTo(0L)
             }
@@ -1391,11 +1399,6 @@ private fun ZoomableImage(
                     }
                 },
         ) {
-            val liveAlpha by animateFloatAsState(
-                targetValue = if (playingLive && livePlayer?.isLayerReady == true) 1f else 0f,
-                animationSpec = tween(LiveFadeMillis),
-                label = "livePhotoCrossfade",
-            )
             val showLiveSurface = livePlayer != null &&
                 liveFile != null &&
                 (playingLive || liveAlpha > 0.005f) &&
@@ -1449,7 +1452,6 @@ private fun ZoomableImage(
                         scaleY = scale
                         translationX = displayOffset.x
                         translationY = displayOffset.y
-                        alpha = if (showLiveSurface) 0f else 1f
                     },
             ) {
                 val resting = if (rest.height > box.height + 0.5f) {
@@ -1538,8 +1540,8 @@ private fun ZoomableImage(
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
-                            translationX = offset.x
-                            translationY = offset.y
+                            translationX = baseOffset.x
+                            translationY = baseOffset.y
                         }
                         .clipToBounds()
                 } else {

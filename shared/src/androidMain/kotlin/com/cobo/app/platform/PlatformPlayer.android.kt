@@ -41,7 +41,8 @@ actual class PlatformVideoPlayer actual constructor() {
     private var _isEnded by mutableStateOf(false)
     private var _hasRenderedFirstFrame by mutableStateOf(false)
     private var _isPosterReady by mutableStateOf(false)
-    private var _isLayerReady by mutableStateOf(true)
+    private var _isLayerReady by mutableStateOf(false)
+    private var surfaceAttached = false
     private var _currentPositionMs by mutableLongStateOf(0L)
     private var _durationMs by mutableLongStateOf(0L)
     private var _bufferedPositionMs by mutableLongStateOf(0L)
@@ -82,6 +83,9 @@ actual class PlatformVideoPlayer actual constructor() {
 
         override fun onRenderedFirstFrame() {
             _hasRenderedFirstFrame = true
+            if (surfaceAttached) {
+                _isLayerReady = true
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -130,6 +134,16 @@ actual class PlatformVideoPlayer actual constructor() {
     actual val errorMessage: String? get() = _errorMessage
     actual val isSystemPipActive: Boolean get() = _isSystemPipActive
 
+    internal fun attachSurface() {
+        surfaceAttached = true
+        _isLayerReady = false
+    }
+
+    internal fun detachSurface() {
+        surfaceAttached = false
+        _isLayerReady = false
+    }
+
     actual fun setStillImage(image: Image?) {
         _isPosterReady = image != null
     }
@@ -166,6 +180,7 @@ actual class PlatformVideoPlayer actual constructor() {
         _errorMessage = null
         lastErrorCode = 0
         _hasRenderedFirstFrame = false
+        _isLayerReady = false
         _isEnded = false
         _isBuffering = true
         val httpFactory = DefaultHttpDataSource.Factory()
@@ -190,6 +205,7 @@ actual class PlatformVideoPlayer actual constructor() {
         _errorMessage = null
         lastErrorCode = 0
         _hasRenderedFirstFrame = false
+        _isLayerReady = false
         _isEnded = false
         _isBuffering = true
         val uri = if (filePath.startsWith("file://") || filePath.startsWith("content://")) {
@@ -222,6 +238,7 @@ actual class PlatformVideoPlayer actual constructor() {
     actual fun seekTo(positionMs: Long) {
         if (released) return
         exoPlayer.seekTo(positionMs.coerceAtLeast(0L))
+        _isEnded = false
         syncPositions()
     }
 
@@ -250,6 +267,8 @@ actual class PlatformVideoPlayer actual constructor() {
         exoPlayer.stop()
         _isPlaying = false
         _isBuffering = false
+        _hasRenderedFirstFrame = false
+        _isLayerReady = false
     }
 
     actual fun release() {
@@ -270,22 +289,34 @@ actual fun PlatformVideoSurface(
     transparentBackground: Boolean,
     alpha: Float,
 ) {
+    val layerReady = player.isLayerReady
+    val clamped = alpha.coerceIn(0f, 1f)
+    // TextureView 在 alpha=0 时会被 ViewGroup 跳过绘制而延迟创建 SurfaceTexture，首帧未就绪前保持 0.01f 促使其立刻出帧。
+    val targetAlpha = if (transparentBackground && !layerReady && clamped <= 0.005f) {
+        0.01f
+    } else {
+        clamped
+    }
     DisposableEffect(player) {
-        onDispose {}
+        onDispose {
+            player.detachSurface()
+        }
     }
     AndroidView(
         factory = { ctx ->
             (LayoutInflater.from(ctx).inflate(R.layout.live_player_view, null) as PlayerView).apply {
                 useController = false
+                setKeepContentOnPlayerReset(true)
                 resizeMode = if (fillCrop) {
                     AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 } else {
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
-                setShutterBackgroundColor(
-                    if (transparentBackground) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK,
-                )
-                this.alpha = alpha
+                val bg = if (transparentBackground) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK
+                setBackgroundColor(bg)
+                setShutterBackgroundColor(bg)
+                this.alpha = targetAlpha
+                player.attachSurface()
                 this.player = player.exoPlayer
             }
         },
@@ -296,16 +327,18 @@ actual fun PlatformVideoSurface(
             } else {
                 AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
-            view.setShutterBackgroundColor(
-                if (transparentBackground) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK,
-            )
-            view.alpha = alpha
+            val bg = if (transparentBackground) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK
+            view.setBackgroundColor(bg)
+            view.setShutterBackgroundColor(bg)
+            view.alpha = targetAlpha
             if (view.player !== player.exoPlayer) {
+                player.attachSurface()
                 view.player = player.exoPlayer
             }
         },
         onRelease = { view ->
             view.player = null
+            player.detachSurface()
         },
     )
 }
