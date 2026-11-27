@@ -26,11 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.GraphicsLayerScope
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
@@ -145,71 +141,71 @@ fun AppBarSurface(
     )
 }
 
+internal const val SearchBarLightVeilMax = 0.48f
+internal const val SearchBarDarkVeilMax = 0.20f
+
 /**
- * 为第一行搜索栏胶囊（`TopAppBarSearchBar`）构造对齐 ColorOS 17 便签质感的采样层：
- * 直接采样底层页面并叠一层克制的浅/深色雾面（浅色最多 42% 页面底色、深色最多 20% 黑色），
- * 避免直接采样原图时彩色照片过透染脏，也避免采样顶栏 90% 实白遮罩导致搜索栏变纯白失透。
+ * 为独立单行搜索顶栏（如设置页搜索）提供一层真正的 [LayerBackdrop] 采样源：
+ * 只把底层页面 + 克制雾面录进离屏层（自身不向屏幕多画像素），保持 `LayerBackdrop`
+ * 的按需消费计数链路完整，避免搜索栏既过透发脏又被实心遮罩洗成纯白。
  */
-private class VeiledBackdrop(
-    private val upstream: Backdrop,
-    private val baseColor: Color,
-    private val veilColor: Color,
-    private val veilAlpha: () -> Float,
-) : Backdrop {
-    override val isCoordinatesDependent: Boolean get() = upstream.isCoordinatesDependent
-    override val offsetResidualX: Float get() = upstream.offsetResidualX
-    override val offsetResidualY: Float get() = upstream.offsetResidualY
-
-    override fun DrawScope.drawBackdrop(
-        density: Density,
-        coordinates: LayoutCoordinates?,
-        layerBlock: (GraphicsLayerScope.() -> Unit)?,
-        downscaleFactor: Int,
-    ) {
-        val padX = size.width
-        val padY = size.height
-        val fullTopLeft = Offset(-padX, -padY)
-        val fullSize = Size(size.width + padX * 2f, size.height + padY * 2f)
-        drawRect(baseColor, topLeft = fullTopLeft, size = fullSize)
-        with(upstream) {
-            drawBackdrop(density, coordinates, layerBlock, downscaleFactor)
-        }
-        val a = veilAlpha().coerceIn(0f, 1f)
-        if (a > 0f) {
-            drawRect(veilColor, alpha = a, topLeft = fullTopLeft, size = fullSize)
-        }
-    }
-}
-
-internal const val SearchBarLightVeilMax = 0.52f
-internal const val SearchBarDarkVeilMax = 0.22f
-
 @Composable
-fun rememberSearchBarBackdrop(
-    upstream: Backdrop? = LocalBackdrop.current,
+fun SearchBarBackdropHost(
+    modifier: Modifier = Modifier,
     containerColor: Color = pageContainerColor(),
+    upstream: Backdrop? = LocalBackdrop.current,
     scrollFraction: () -> Float = { 1f },
-): Backdrop? {
-    if (!blurEffectsEnabled() || upstream == null) return null
+    content: @Composable (searchBarBackdrop: Backdrop?) -> Unit,
+) {
+    val blur = blurEffectsEnabled()
     val dark = isDarkTheme()
+    val upstreamLayer = upstream as? LayerBackdrop
     val veilColor = if (dark) Color.Black else containerColor
-    val maxVeil = if (dark) SearchBarDarkVeilMax else SearchBarLightVeilMax
+    val veilMax = if (dark) SearchBarDarkVeilMax else SearchBarLightVeilMax
     val currentScroll by rememberUpdatedState(scrollFraction)
-    return remember(upstream, containerColor, veilColor, maxVeil) {
-        VeiledBackdrop(
-            upstream = upstream,
-            baseColor = containerColor,
-            veilColor = veilColor,
-            veilAlpha = { maxVeil * currentScroll().coerceIn(0f, 1f) },
-        )
+    var recorderCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    val searchBackdrop = if (upstreamLayer != null) {
+        rememberLayerBackdrop(upstream = upstreamLayer) {
+            drawRect(containerColor)
+            val coords = recorderCoords
+            if (coords != null && coords.isAttached) {
+                with(upstreamLayer) {
+                    drawBackdrop(
+                        density = this@rememberLayerBackdrop,
+                        coordinates = coords,
+                        layerBlock = null,
+                        downscaleFactor = 1,
+                    )
+                }
+            }
+            val a = veilMax * currentScroll().coerceIn(0f, 1f)
+            if (a > 0f) drawRect(veilColor, alpha = a)
+        }
+    } else {
+        null
+    }
+
+    Box(modifier) {
+        if (blur && searchBackdrop != null) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .onGloballyPositioned { recorderCoords = it }
+                    .layerBackdrop(searchBackdrop),
+            )
+        }
+        content(if (blur) (searchBackdrop ?: upstream) else null)
     }
 }
 
 /**
  * 对齐 ColorOS 17 便签的双行毛玻璃顶栏（搜索/标题行 + 筛选胶囊行）：
- * 1. 先把底层页面 + `AppBarBlurOverlay` 渐进模糊与提白层录进 `materialBackdrop`（不再在未滚满时涂纯白），
- *    供第二行 `ChipTabGroup` 采样：未选中胶囊带真实 40px 磨砂模糊且滚过黑图不发黑，选中胶囊保留半透奶白/深灰玻璃感；
- * 2. 第一行搜索栏通过 `rememberSearchBarBackdrop` 采样克制雾化的底层页面，既保留滚动内容的柔和透出，又不被高饱和照片染脏或洗成纯白。
+ * 1. 所有采样源均使用真正的 [LayerBackdrop]（严禁用自定义包装类包在外部导致 `acquireConsumer` 失效、采样退化成纯色实心）；
+ * 2. 第二行 `ChipTabGroup` 直接采样录有「底层实时页面 + 顶栏渐进模糊与轻雾提亮」的 `materialBackdrop`：
+ *    未选中胶囊带真实 40px 磨砂模糊且滚过暗图不发黑，选中胶囊与四宫格圆钮保持半透奶白/深灰玻璃高光；
+ * 3. 第一行搜索栏采样独立的 `searchRowBackdrop`（仅向离屏层录制底层页面 + 克制雾面，不向屏幕多画像素），
+ *    避免直接采原图过透染脏，也避免采顶栏顶部 ~90% 遮罩而变纯白失透。
  */
 @Composable
 fun CoboSearchFilterTopAppBar(
@@ -230,6 +226,7 @@ fun CoboSearchFilterTopAppBar(
     firstRow: @Composable () -> Unit,
 ) {
     val blur = blurEffectsEnabled()
+    val dark = isDarkTheme()
     val density = LocalDensity.current
     val statusBarTop = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
     val hasFilters = filters != null
@@ -246,6 +243,11 @@ fun CoboSearchFilterTopAppBar(
     val barHeight = statusBarTop + rowsHeight
 
     val upstreamLayer = backdrop as? LayerBackdrop
+    val currentScroll by rememberUpdatedState(scrollFraction)
+    val veilColor = if (dark) Color.Black else containerColor
+    val searchVeilMax = if (dark) SearchBarDarkVeilMax else SearchBarLightVeilMax
+    val chipExtraVeilMax = if (dark) 0.08f else 0.22f
+
     var materialCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val materialBackdrop = if (upstreamLayer != null) {
         rememberLayerBackdrop(upstream = upstreamLayer) {
@@ -262,35 +264,38 @@ fun CoboSearchFilterTopAppBar(
                 }
             }
             drawContent()
-        }
-    } else {
-        rememberLayerBackdrop {
-            drawRect(containerColor)
-            drawContent()
-        }
-    }
-
-    val firstRowBackdrop = rememberSearchBarBackdrop(
-        upstream = backdrop,
-        containerColor = containerColor,
-        scrollFraction = scrollFraction,
-    )
-    val dark = isDarkTheme()
-    val chipVeilColor = if (dark) Color.Black else containerColor
-    val chipVeilMax = if (dark) 0.12f else 0.35f
-    val currentScrollForChips by rememberUpdatedState(scrollFraction)
-    val chipBackdrop: Backdrop? = if (blur && backdrop != null) {
-        remember(materialBackdrop, containerColor, chipVeilColor, chipVeilMax) {
-            VeiledBackdrop(
-                upstream = materialBackdrop,
-                baseColor = containerColor,
-                veilColor = chipVeilColor,
-                veilAlpha = { chipVeilMax * currentScrollForChips().coerceIn(0f, 1f) },
-            )
+            // 仅在录制层给第二行下缘补一层极轻雾面（不影响屏幕上的渐隐底边），防止黑图滚到胶囊底边时发暗。
+            val extra = chipExtraVeilMax * currentScroll().coerceIn(0f, 1f)
+            if (extra > 0f) drawRect(veilColor, alpha = extra)
         }
     } else {
         null
     }
+
+    var searchCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val searchRowBackdrop = if (upstreamLayer != null) {
+        rememberLayerBackdrop(upstream = upstreamLayer) {
+            drawRect(containerColor)
+            val coords = searchCoords
+            if (coords != null && coords.isAttached) {
+                with(upstreamLayer) {
+                    drawBackdrop(
+                        density = this@rememberLayerBackdrop,
+                        coordinates = coords,
+                        layerBlock = null,
+                        downscaleFactor = 1,
+                    )
+                }
+            }
+            val a = searchVeilMax * currentScroll().coerceIn(0f, 1f)
+            if (a > 0f) drawRect(veilColor, alpha = a)
+        }
+    } else {
+        null
+    }
+
+    val effectiveFirstRowBackdrop: Backdrop? = if (blur) (searchRowBackdrop ?: backdrop) else null
+    val effectiveChipBackdrop: Backdrop? = if (blur) (materialBackdrop ?: backdrop) else null
 
     CompositionLocalProvider(LocalEdgeToEdge provides true) {
         Layout(
@@ -301,7 +306,13 @@ fun CoboSearchFilterTopAppBar(
                         .fillMaxWidth()
                         .height(barHeight + extraHeight)
                         .onGloballyPositioned { materialCoords = it }
-                        .layerBackdropIf(blur && backdrop != null, materialBackdrop),
+                        .then(
+                            if (blur && materialBackdrop != null) {
+                                Modifier.layerBackdrop(materialBackdrop)
+                            } else {
+                                Modifier
+                            },
+                        ),
                 ) {
                     if (blur) {
                         AppBarBlurOverlay(
@@ -324,6 +335,20 @@ fun CoboSearchFilterTopAppBar(
                         )
                     }
                 }
+                // 仅录离屏搜索栏背景层（空节点不向屏幕输出像素，避免叠加或遮挡 AppBarBlurOverlay）。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(barHeight + extraHeight)
+                        .onGloballyPositioned { searchCoords = it }
+                        .then(
+                            if (blur && searchRowBackdrop != null) {
+                                Modifier.layerBackdrop(searchRowBackdrop)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -331,7 +356,7 @@ fun CoboSearchFilterTopAppBar(
                         .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
                         .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top)),
                 ) {
-                    CompositionLocalProvider(LocalBackdrop provides firstRowBackdrop) {
+                    CompositionLocalProvider(LocalBackdrop provides effectiveFirstRowBackdrop) {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(firstRowHeight),
                             contentAlignment = Alignment.Center,
@@ -361,7 +386,7 @@ fun CoboSearchFilterTopAppBar(
                                 leadingIcon = leadingIcon,
                                 onLeadingIconClick = onLeadingIconClick,
                                 contentPadding = filterContentPadding,
-                                backdrop = chipBackdrop,
+                                backdrop = effectiveChipBackdrop,
                             )
                         }
                     }
@@ -369,9 +394,11 @@ fun CoboSearchFilterTopAppBar(
             },
         ) { measurables, constraints ->
             val material = measurables[0].measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
-            val rows = measurables[1].measure(constraints.copy(minHeight = 0))
+            val searchLayer = measurables[1].measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+            val rows = measurables[2].measure(constraints.copy(minHeight = 0))
             layout(rows.width, rows.height) {
                 material.placeRelative(0, 0)
+                searchLayer.placeRelative(0, 0)
                 rows.placeRelative(0, 0)
             }
         }

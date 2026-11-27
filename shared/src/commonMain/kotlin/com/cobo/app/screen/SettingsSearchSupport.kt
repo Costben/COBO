@@ -456,11 +456,11 @@ internal fun SettingsSearchTopBar(
         val barRowHeight = TopAppBarDefaults.SmallTopAppBarCenterHeight
         val pageBarHeight = statusBarTop + barRowHeight
         val scrollFraction = rememberListScrollFraction(listState)
-        val searchBarBackdrop = com.cobo.app.ui.rememberSearchBarBackdrop(
+        com.cobo.app.ui.SearchBarBackdropHost(
+            modifier = modifier.fillMaxWidth(),
             containerColor = pageColor,
             scrollFraction = scrollFraction,
-        )
-        Box(modifier.fillMaxWidth()) {
+        ) { searchBarBackdrop ->
             AppBarSurface(
                 modifier = Modifier.fillMaxWidth(),
                 containerColor = pageColor,
