@@ -132,4 +132,12 @@ class CommentFilterTest {
         assertTrue(commentFilterEmptyMessage(CommentFilterState(authorOnly = true)).contains("博主"))
         assertTrue(commentFilterEmptyMessage(CommentFilterState(imagesOnly = true)).contains("带图"))
     }
+
+    @Test
+    fun triggerLabelReflectsActiveFilterCombination() {
+        assertEquals("全部评论", commentFilterTriggerLabel(CommentFilterState(), "全部评论"))
+        assertEquals("仅看博主", commentFilterTriggerLabel(CommentFilterState(authorOnly = true), "全部评论"))
+        assertEquals("仅看带图", commentFilterTriggerLabel(CommentFilterState(imagesOnly = true), "全部回复 · 2"))
+        assertEquals("博主 · 带图", commentFilterTriggerLabel(CommentFilterState(authorOnly = true, imagesOnly = true), "全部回复 · 2"))
+    }
 }

@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -91,6 +92,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -111,6 +113,7 @@ import com.cobo.app.data.User
 import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.commentFilterEmptyMessage
+import com.cobo.app.data.commentFilterTriggerLabel
 import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.shouldFilterComment
@@ -178,6 +181,7 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Copy
 import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Forward
@@ -542,7 +546,7 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
 
                 item {
                     Box(Modifier.fillMaxWidth()) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(
@@ -551,30 +555,25 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                                     top = 6.dp,
                                     bottom = 4.dp,
                                 ),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = if (sort == CommentSort.Hot) "热门评论" else "最新评论",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = scheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
-                                // so the two orders share one compact track instead.
-                                SortSwitch(
-                                    selected = sort,
-                                    onSelect = ::switchSort,
-                                )
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            CommentFilterBar(
+                            CommentFilterDropdownTitle(
                                 filter = commentFilter,
+                                defaultLabel = "全部评论",
+                                resetLabel = "显示全部评论",
                                 showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                groupKey = "detail_comment_filter_$id",
                                 onChange = { commentFilter = it },
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
+                            // so the two orders share one compact track instead.
+                            SortSwitch(
+                                selected = sort,
+                                onSelect = ::switchSort,
                             )
                         }
                         // A hairline progress bar sits in the header's bottom padding, so a slow
@@ -1795,71 +1794,211 @@ private fun SortSwitch(
     )
 }
 
-/** 紧凑胶囊筛选条：与 [SortSwitch] 同套圆角与字号，用于「仅看博主 / 仅看带图」快速切换。 */
+/**
+ * 评论区左侧标题下拉筛选器：未筛选时以无底色标题 + 向下箭头与右侧排序开关同行，
+ * 启用条件后切为淡主色胶囊并附一键清除按钮，点击展开 COUI 原生多选下拉菜单。
+ */
 @Composable
-internal fun CommentFilterBar(
+internal fun CommentFilterDropdownTitle(
     filter: CommentFilterState,
+    defaultLabel: String,
+    resetLabel: String,
     showAuthorOption: Boolean,
+    groupKey: String,
     onChange: (CommentFilterState) -> Unit,
     modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (showAuthorOption) {
-            CommentFilterPill(
-                label = "仅看博主",
-                selected = filter.authorOnly,
-                modifier = Modifier.testTag("comment_filter_author"),
-                onClick = { onChange(filter.copy(authorOnly = !filter.authorOnly)) },
-            )
-        }
-        CommentFilterPill(
-            label = "仅看带图",
-            selected = filter.imagesOnly,
-            modifier = Modifier.testTag("comment_filter_images"),
-            onClick = { onChange(filter.copy(imagesOnly = !filter.imagesOnly)) },
-        )
-    }
-}
-
-@Composable
-private fun CommentFilterPill(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 14.sp,
+    fontWeight: FontWeight = FontWeight.SemiBold,
 ) {
     val scheme = COUITheme.colorScheme
     val dark = scheme.background.luminance() < 0.5f
     val haptic = LocalHapticFeedback.current
-    val bg = when {
-        selected -> scheme.primary.copy(alpha = if (dark) 0.22f else 0.13f)
-        dark -> scheme.onSurface.copy(alpha = 0.14f)
-        else -> scheme.onSurface.copy(alpha = 0.08f)
+    var expanded by remember(groupKey) { mutableStateOf(false) }
+
+    val active = filter.isActive
+    val triggerLabel = commentFilterTriggerLabel(filter, defaultLabel)
+    val triggerBg = if (active) {
+        scheme.primary.copy(alpha = if (dark) 0.22f else 0.13f)
+    } else {
+        Color.Transparent
     }
-    val fg = if (selected) scheme.primary else scheme.onSurfaceSecondary
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(9.dp))
-            .background(bg)
-            .clickable(role = Role.Checkbox) {
-                haptic.performHapticFeedback(
-                    if (!selected) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
-                )
-                onClick()
-            }
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
+    val textColor = if (active) scheme.primary else scheme.onSurface
+    val chevronColor = if (active) scheme.primary else scheme.onSurfaceSecondary
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "commentFilterChevron",
+    )
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = fg,
-        )
+        Box(modifier = Modifier.weight(1f, fill = false)) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(triggerBg)
+                    .clickable(role = Role.DropdownList) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        expanded = !expanded
+                    }
+                    .padding(
+                        start = if (active) 9.dp else 0.dp,
+                        end = if (active) 7.dp else 4.dp,
+                        top = 4.dp,
+                        bottom = 4.dp,
+                    )
+                    .testTag("comment_filter_trigger"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = triggerLabel,
+                    fontSize = fontSize,
+                    fontWeight = if (active) FontWeight.SemiBold else fontWeight,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(3.dp))
+                Icon(
+                    imageVector = CoboIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = chevronColor,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .graphicsLayer { rotationZ = chevronRotation },
+                )
+            }
+
+            OverlayListPopup(
+                show = expanded,
+                popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                onDismissRequest = { expanded = false },
+            ) {
+                val dismiss = LocalDismissState.current
+                val menuScheme = COUITheme.colorScheme
+                val optionSize = (if (showAuthorOption) 1 else 0) + 1 + (if (active) 1 else 0)
+                var idx = 0
+                ListPopupColumn {
+                    if (showAuthorOption) {
+                        val authorTint = if (filter.authorOnly) menuScheme.primary else menuScheme.onSurfaceContainer
+                        DropdownImpl(
+                            item = DropdownItem(
+                                text = "仅看博主",
+                                icon = { iconModifier ->
+                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = CoboIcons.ProfileOutline,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = authorTint,
+                                        )
+                                    }
+                                },
+                            ),
+                            optionSize = optionSize,
+                            isSelected = filter.authorOnly,
+                            index = idx++,
+                            modifier = Modifier.testTag("comment_filter_author"),
+                            groupKey = groupKey,
+                            role = Role.Checkbox,
+                            onSelectedIndexChange = {
+                                val next = !filter.authorOnly
+                                haptic.performHapticFeedback(
+                                    if (next) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
+                                )
+                                onChange(filter.copy(authorOnly = next))
+                            },
+                        )
+                    }
+                    val imageTint = if (filter.imagesOnly) menuScheme.primary else menuScheme.onSurfaceContainer
+                    DropdownImpl(
+                        item = DropdownItem(
+                            text = "仅看带图",
+                            icon = { iconModifier ->
+                                Box(iconModifier, contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = CoboIcons.Image,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = imageTint,
+                                    )
+                                }
+                            },
+                        ),
+                        optionSize = optionSize,
+                        isSelected = filter.imagesOnly,
+                        index = idx++,
+                        modifier = Modifier.testTag("comment_filter_images"),
+                        groupKey = groupKey,
+                        role = Role.Checkbox,
+                        onSelectedIndexChange = {
+                            val next = !filter.imagesOnly
+                            haptic.performHapticFeedback(
+                                if (next) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
+                            )
+                            onChange(filter.copy(imagesOnly = next))
+                        },
+                    )
+                    if (active) {
+                        DropdownImpl(
+                            item = DropdownItem(
+                                text = resetLabel,
+                                icon = { iconModifier ->
+                                    Box(iconModifier, contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = CoboIcons.Comment,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = menuScheme.onSurfaceContainer,
+                                        )
+                                    }
+                                },
+                            ),
+                            optionSize = optionSize,
+                            isSelected = false,
+                            index = idx++,
+                            modifier = Modifier.testTag("comment_filter_reset"),
+                            groupKey = groupKey,
+                            role = Role.Button,
+                            onSelectedIndexChange = {
+                                haptic.performHapticFeedback(HapticFeedbackType.ToggleOff)
+                                dismiss?.invoke()
+                                expanded = false
+                                onChange(CommentFilterState())
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        if (active) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(scheme.onSurface.copy(alpha = if (dark) 0.14f else 0.08f))
+                    .clickable(role = Role.Button) {
+                        haptic.performHapticFeedback(HapticFeedbackType.ToggleOff)
+                        expanded = false
+                        onChange(CommentFilterState())
+                    }
+                    .semantics { contentDescription = "清除筛选" }
+                    .testTag("comment_filter_clear"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = COUIIcons.Close,
+                    contentDescription = null,
+                    tint = scheme.onSurfaceSecondary,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+        }
     }
 }
 

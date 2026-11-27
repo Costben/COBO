@@ -69,6 +69,16 @@ fun filterComments(
     }
 }
 
+fun commentFilterTriggerLabel(
+    filter: CommentFilterState,
+    defaultLabel: String,
+): String = when {
+    filter.authorOnly && filter.imagesOnly -> "博主 · 带图"
+    filter.authorOnly -> "仅看博主"
+    filter.imagesOnly -> "仅看带图"
+    else -> defaultLabel
+}
+
 fun commentFilterEmptyMessage(filter: CommentFilterState): String = when {
     filter.authorOnly && filter.imagesOnly -> "已加载评论中暂无博主的带图评论"
     filter.authorOnly -> "已加载评论中暂无博主评论或回复"

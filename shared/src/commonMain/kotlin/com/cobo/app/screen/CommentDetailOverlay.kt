@@ -519,7 +519,8 @@ private fun CommentDetailSheetContent(
                     }
 
                     item(key = "detail_sub_header") {
-                        Column(
+                        val replyCount = maxOf(replyTotal, rawReplies.size)
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(
@@ -528,31 +529,23 @@ private fun CommentDetailSheetContent(
                                     top = 8.dp,
                                     bottom = 4.dp,
                                 ),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = "相关回复共 ${maxOf(replyTotal, rawReplies.size)} 条",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = scheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                SubReplySortTabRow(
-                                    sort = sort,
-                                    onSelectSort = { sort = it },
-                                )
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            CommentFilterBar(
+                            CommentFilterDropdownTitle(
                                 filter = subFilter,
+                                defaultLabel = if (replyCount > 0) "全部回复 · $replyCount" else "全部回复",
+                                resetLabel = "显示全部回复",
                                 showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                groupKey = "sub_comment_filter_${initialRoot.id}",
                                 onChange = { subFilter = it },
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            SubReplySortTabRow(
+                                sort = sort,
+                                onSelectSort = { sort = it },
                             )
                         }
                     }

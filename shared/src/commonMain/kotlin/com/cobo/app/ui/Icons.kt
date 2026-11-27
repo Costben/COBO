@@ -549,6 +549,28 @@ object CoboIcons {
         }.build()
     }
 
+    /** 紧凑向下尖角箭头，用于标题下拉触发器。 */
+    val ChevronDown: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ChevronDown",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.1f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(6.5f, 9.5f)
+                lineTo(12f, 15f)
+                lineTo(17.5f, 9.5f)
+            }
+        }.build()
+    }
+
     /** 收到的赞：线性大拇指轮廓。 */
     val ThumbUp: ImageVector by lazy {
         outline("ThumbUp") {
