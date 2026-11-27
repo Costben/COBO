@@ -12,6 +12,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,11 +38,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,8 +54,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
@@ -3038,11 +3048,13 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
     val videoButtons = App.settings.videoTopBarButtons
     val imageButtons = App.settings.imageTopBarButtons
     val showCounter = App.settings.imageTopBarShowCounter
+    var draggingAny by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(pageColor)) {
         Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
             LazyColumn(
                 state = listState,
+                userScrollEnabled = !draggingAny,
                 modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
                 contentPadding = PaddingValues(
                     start = 12.dp,
@@ -3054,7 +3066,7 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
             ) {
                 item {
                     Text(
-                        text = "勾选需要显示的按钮，并通过「上移 / 下移」调整从左到右的排列顺序。",
+                        text = "勾选需要显示的按钮，长按已勾选项目并上下拖动即可调整从左到右的排列顺序。",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = COUITheme.colorScheme.onSurfaceSecondary,
@@ -3072,6 +3084,7 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
                         enabledItems = videoButtons,
                         labelOf = { it.label },
                         onUpdate = { App.settings.applyVideoTopBarButtons(it) },
+                        onDraggingChange = { draggingAny = it },
                     )
                 }
 
@@ -3102,6 +3115,7 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
                         enabledItems = imageButtons,
                         labelOf = { it.label },
                         onUpdate = { App.settings.applyImageTopBarButtons(it) },
+                        onDraggingChange = { draggingAny = it },
                     )
                 }
             }
@@ -3137,13 +3151,37 @@ fun MediaTopBarSettingsScreen(nav: NavState) {
 }
 
 @Composable
-private fun <T> TopBarOrderEditorCard(
+private fun <T : Any> TopBarOrderEditorCard(
     allItems: List<T>,
     enabledItems: List<T>,
     labelOf: (T) -> String,
     onUpdate: (List<T>) -> Unit,
+    onDraggingChange: (Boolean) -> Unit = {},
 ) {
-    val orderedRows = enabledItems + allItems.filter { it !in enabledItems }
+    val haptic = LocalHapticFeedback.current
+    val currentEnabled by rememberUpdatedState(enabledItems)
+    val currentOnUpdate by rememberUpdatedState(onUpdate)
+    val currentOnDraggingChange by rememberUpdatedState(onDraggingChange)
+
+    var draggingItem by remember { mutableStateOf<T?>(null) }
+    var dragOrder by remember { mutableStateOf<List<T>?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val rowHeights = remember { mutableStateMapOf<T, Float>() }
+
+    val activeEnabled = dragOrder ?: enabledItems
+    val orderedRows = activeEnabled + allItems.filter { it !in activeEnabled }
+
+    fun finishDrag(commit: Boolean) {
+        val result = dragOrder
+        draggingItem = null
+        dragOrder = null
+        dragOffsetY = 0f
+        currentOnDraggingChange(false)
+        if (commit && result != null && result != currentEnabled) {
+            currentOnUpdate(result)
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = CardDefaults.GroupCornerRadius,
@@ -3151,65 +3189,114 @@ private fun <T> TopBarOrderEditorCard(
         weight = CardDefaults.GroupWeight,
     ) {
         orderedRows.forEach { item ->
-            val enabledIndex = enabledItems.indexOf(item)
-            val checked = enabledIndex >= 0
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val next = if (checked) enabledItems - item else enabledItems + item
-                        onUpdate(next)
-                    }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(
-                    state = if (checked) ToggleableState.On else ToggleableState.Off,
-                    onClick = null,
-                )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = labelOf(item),
-                    fontSize = 15.sp,
-                    color = if (checked) COUITheme.colorScheme.onSurface else COUITheme.colorScheme.onSurfaceSecondary,
-                    modifier = Modifier.weight(1f),
-                )
-                if (checked) {
-                    val canMoveUp = enabledIndex > 0
-                    val canMoveDown = enabledIndex < enabledItems.lastIndex
-                    OrderStepChip(
-                        label = "上移",
-                        enabled = canMoveUp,
-                        onClick = {
-                            if (canMoveUp) {
-                                val mutable = enabledItems.toMutableList()
-                                val prev = mutable[enabledIndex - 1]
-                                mutable[enabledIndex - 1] = item
-                                mutable[enabledIndex] = prev
-                                onUpdate(mutable)
+            key(item) {
+                val enabledIndex = activeEnabled.indexOf(item)
+                val checked = enabledIndex >= 0
+                val isDragging = draggingItem == item
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { rowHeights[item] = it.size.height.toFloat() }
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .graphicsLayer {
+                            if (isDragging) {
+                                translationY = dragOffsetY
+                                scaleX = 1.02f
+                                scaleY = 1.02f
+                                alpha = 0.94f
                             }
-                        },
+                        }
+                        .then(
+                            if (isDragging) {
+                                Modifier
+                                    .padding(horizontal = 6.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(COUITheme.colorScheme.primary.copy(alpha = 0.08f))
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .then(
+                            if (checked) {
+                                Modifier.pointerInput(item) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            if (item !in currentEnabled) return@detectDragGesturesAfterLongPress
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            draggingItem = item
+                                            dragOrder = currentEnabled
+                                            dragOffsetY = 0f
+                                            currentOnDraggingChange(true)
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            if (draggingItem != item) return@detectDragGesturesAfterLongPress
+                                            change.consume()
+                                            dragOffsetY += dragAmount.y
+                                            var cur = dragOrder ?: currentEnabled
+                                            var idx = cur.indexOf(item)
+                                            while (idx in 0 until cur.lastIndex) {
+                                                val nextH = rowHeights[cur[idx + 1]] ?: break
+                                                if (dragOffsetY > nextH * 0.5f) {
+                                                    cur = cur.toMutableList().apply { add(idx + 1, removeAt(idx)) }
+                                                    dragOrder = cur
+                                                    dragOffsetY -= nextH
+                                                    idx++
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                } else {
+                                                    break
+                                                }
+                                            }
+                                            while (idx > 0) {
+                                                val prevH = rowHeights[cur[idx - 1]] ?: break
+                                                if (dragOffsetY < -prevH * 0.5f) {
+                                                    cur = cur.toMutableList().apply { add(idx - 1, removeAt(idx)) }
+                                                    dragOrder = cur
+                                                    dragOffsetY += prevH
+                                                    idx--
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                } else {
+                                                    break
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = { finishDrag(commit = true) },
+                                        onDragCancel = { finishDrag(commit = false) },
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .clickable(enabled = draggingItem == null) {
+                            val next = if (checked) enabledItems - item else enabledItems + item
+                            onUpdate(next)
+                        }
+                        .padding(
+                            horizontal = if (isDragging) 10.dp else 16.dp,
+                            vertical = 12.dp,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        state = if (checked) ToggleableState.On else ToggleableState.Off,
+                        onClick = null,
                     )
-                    Spacer(Modifier.width(6.dp))
-                    OrderStepChip(
-                        label = "下移",
-                        enabled = canMoveDown,
-                        onClick = {
-                            if (canMoveDown) {
-                                val mutable = enabledItems.toMutableList()
-                                val nextItem = mutable[enabledIndex + 1]
-                                mutable[enabledIndex + 1] = item
-                                mutable[enabledIndex] = nextItem
-                                onUpdate(mutable)
-                            }
-                        },
-                    )
-                } else {
+                    Spacer(Modifier.width(12.dp))
                     Text(
-                        text = "已隐藏",
-                        fontSize = 12.sp,
-                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        text = labelOf(item),
+                        fontSize = 15.sp,
+                        color = if (checked) COUITheme.colorScheme.onSurface else COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.weight(1f),
                     )
+                    if (checked) {
+                        DragHandleIndicator(active = isDragging)
+                    } else {
+                        Text(
+                            text = "已隐藏",
+                            fontSize = 12.sp,
+                            color = COUITheme.colorScheme.onSurfaceSecondary,
+                        )
+                    }
                 }
             }
         }
@@ -3217,35 +3304,26 @@ private fun <T> TopBarOrderEditorCard(
 }
 
 @Composable
-private fun OrderStepChip(
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val bg = if (enabled) {
-        COUITheme.colorScheme.primary.copy(alpha = 0.12f)
-    } else {
-        COUITheme.colorScheme.onSurface.copy(alpha = 0.05f)
-    }
-    val fg = if (enabled) {
+private fun DragHandleIndicator(active: Boolean) {
+    val tint = if (active) {
         COUITheme.colorScheme.primary
     } else {
-        COUITheme.colorScheme.onSurfaceSecondary.copy(alpha = 0.4f)
+        COUITheme.colorScheme.onSurfaceSecondary.copy(alpha = 0.45f)
     }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = fg,
-        )
+        repeat(3) {
+            Box(
+                Modifier
+                    .width(16.dp)
+                    .height(1.8.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(tint),
+            )
+        }
     }
 }
 
