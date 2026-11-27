@@ -81,7 +81,7 @@ import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
-import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
+import com.cobo.app.ui.CoboSearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -349,9 +349,9 @@ fun NotificationsScreen(
                 val barDensity = LocalDensity.current
                 val selectedIdx = pagerState.currentPage.coerceIn(0, tabs.lastIndex)
                 val currentTab = tabs[selectedIdx]
-                // 复用 SearchFilterTopAppBar：顶栏材质先完成渐进模糊与提白，第二行筛选胶囊
-                // 不再单独采样原始页面底层，避免滚过纯黑图片时未选中标签变纯黑、字迹不可读。
-                SearchFilterTopAppBar(
+                // 使用对齐 ColorOS 17 便签的双行玻璃顶栏：第二行胶囊采样顶栏材质层，
+                // 未选中保留磨砂模糊且滚过黑图不发黑，选中保持半透奶白/深灰玻璃感。
+                CoboSearchFilterTopAppBar(
                     filters = chipTabs,
                     selectedFilter = selectedIdx,
                     onFilterSelected = { idx ->

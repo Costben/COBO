@@ -455,11 +455,16 @@ internal fun SettingsSearchTopBar(
         val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val barRowHeight = TopAppBarDefaults.SmallTopAppBarCenterHeight
         val pageBarHeight = statusBarTop + barRowHeight
+        val scrollFraction = rememberListScrollFraction(listState)
+        val searchBarBackdrop = com.cobo.app.ui.rememberSearchBarBackdrop(
+            containerColor = pageColor,
+            scrollFraction = scrollFraction,
+        )
         Box(modifier.fillMaxWidth()) {
             AppBarSurface(
                 modifier = Modifier.fillMaxWidth(),
                 containerColor = pageColor,
-                scrollFraction = rememberListScrollFraction(listState),
+                scrollFraction = scrollFraction,
             ) {
                 Box(Modifier.fillMaxWidth().height(pageBarHeight))
             }
@@ -489,6 +494,7 @@ internal fun SettingsSearchTopBar(
                         onExpandedChange(false)
                     },
                     searchButtonContentDescription = "搜索设置",
+                    backdrop = searchBarBackdrop,
                     gradientColor = Color.Transparent,
                     titleContent = {
                         Row(

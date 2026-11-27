@@ -93,7 +93,7 @@ import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.ListPopupDefaults
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
 import io.github.suqi8.coui.kmp.basic.PopupPositionProvider
-import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
+import com.cobo.app.ui.CoboSearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
@@ -410,7 +410,7 @@ fun SuperTopicScreen(nav: NavState, containerId: String, fallbackUrl: String) {
                 val barDensity = LocalDensity.current
                 val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val currentTab = tabs[pagerState.currentPage.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))]
-                SearchFilterTopAppBar(
+                CoboSearchFilterTopAppBar(
                     filters = chipTabs,
                     selectedFilter = pagerState.currentPage.coerceIn(0, (tabs.size - 1).coerceAtLeast(0)),
                     onFilterSelected = { idx ->
