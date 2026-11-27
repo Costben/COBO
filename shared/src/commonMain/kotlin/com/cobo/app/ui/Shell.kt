@@ -126,6 +126,7 @@ import androidx.compose.ui.unit.sp
 import com.cobo.app.App
 import com.cobo.app.FeedTopAction
 import com.cobo.app.data.Account
+import com.cobo.app.data.BottomBarItem
 import com.cobo.app.data.BottomLeftAction
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
@@ -931,6 +932,7 @@ fun MainShell(nav: NavState) {
                 ) {
                     FloatingBottomBar(
                         tab = tab,
+                        itemOrder = App.settings.bottomBarOrder,
                         onTab = { target -> if (bottomBarActive) nav.setTab(target) },
                         tapToTopAndReturn = feedTabTapToTopAndReturn,
                         bottomLeftAction = bottomLeftAction,
@@ -2183,6 +2185,7 @@ internal fun buildCenterMenuEntries(
 @Composable
 private fun FloatingBottomBar(
     tab: Int,
+    itemOrder: List<BottomBarItem>,
     onTab: (Int) -> Unit,
     tapToTopAndReturn: Boolean,
     bottomLeftAction: BottomLeftAction,
@@ -2198,6 +2201,9 @@ private fun FloatingBottomBar(
     profileOverflowMenu: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val normalizedOrder = remember(itemOrder) { BottomBarItem.normalize(itemOrder) }
+    val primaryItems = normalizedOrder.take(3)
+    val trailingItem = normalizedOrder[3]
     val tapScope = rememberCoroutineScope()
     var lastFeedTapAt by remember { mutableLongStateOf(0L) }
     var pendingSingleTapJob by remember { mutableStateOf<Job?>(null) }
@@ -2368,52 +2374,153 @@ private fun FloatingBottomBar(
                     }
                 },
                 endAccessory = {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("bottom_publish")
-                            .clickable(
-                                interactionSource = null,
-                                indication = null,
-                                role = Role.Button,
-                                onClick = onPublish,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            COUIIcons.Add,
-                            "发微博",
-                            tint = COUITheme.colorScheme.onSurface,
-                        )
+                    val scheme = COUITheme.colorScheme
+                    when (trailingItem) {
+                        BottomBarItem.Publish -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("bottom_publish")
+                                    .clickable(
+                                        interactionSource = null,
+                                        indication = null,
+                                        role = Role.Button,
+                                        onClick = onPublish,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    COUIIcons.Add,
+                                    "发微博",
+                                    tint = scheme.onSurface,
+                                )
+                            }
+                        }
+                        BottomBarItem.Messages -> {
+                            val selected = tab == 1
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("bottom_tab_messages")
+                                    .clickable(
+                                        interactionSource = null,
+                                        indication = null,
+                                        role = Role.Tab,
+                                        onClick = { onTab(1) },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (selected) CoboIcons.MessagesFilled else CoboIcons.MessagesOutline,
+                                    contentDescription = "消息",
+                                    tint = if (selected) scheme.primary else scheme.onSurface,
+                                )
+                            }
+                        }
+                        BottomBarItem.Feed -> {
+                            val selected = tab == 0
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("bottom_tab_feed")
+                                    .clickable(
+                                        interactionSource = null,
+                                        indication = null,
+                                        role = Role.Tab,
+                                        onClick = { onFeedTap() },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (selected) CoboIcons.FeedFilled else CoboIcons.FeedOutline,
+                                    contentDescription = "微博",
+                                    tint = if (selected) scheme.primary else scheme.onSurface,
+                                )
+                            }
+                        }
+                        BottomBarItem.Profile -> {
+                            val selected = tab == 2
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("bottom_tab_profile")
+                                    .combinedClickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        role = Role.Tab,
+                                        onClick = { onTab(2) },
+                                        onLongClick = if (profileOverflowMenu != null) {
+                                            { profileMenuExpanded = true }
+                                        } else {
+                                            null
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (!profileAvatarUrl.isNullOrBlank()) {
+                                    Avatar(
+                                        url = profileAvatarUrl,
+                                        size = BottomFloatingNavigationBarDefaults.IconSize,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = if (selected) CoboIcons.ProfileFilled else CoboIcons.ProfileOutline,
+                                        contentDescription = "我",
+                                        tint = if (selected) scheme.primary else scheme.onSurface,
+                                    )
+                                }
+                                if (profileOverflowMenu != null) {
+                                    OverlayListPopup(
+                                        show = profileMenuExpanded,
+                                        popupPositionProvider = ListPopupDefaults.DropdownPositionProvider,
+                                        onDismissRequest = { profileMenuExpanded = false },
+                                    ) {
+                                        profileOverflowMenu()
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
             ) {
-                // 位置按用户要求交换：左「消息」、中「微博」、右「我」。tab 值仍沿用
-                // 0=微博 / 1=消息 / 2=我，只换视觉顺序，避免影响 nav.mainTab 的持久化语义。
-                BottomFloatingNavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { onTab(1) },
-                    icon = CoboIcons.MessagesOutline,
-                    selectedIcon = CoboIcons.MessagesFilled,
-                    label = "消息",
-                    modifier = Modifier.testTag("bottom_tab_messages"),
-                )
-                BottomFloatingNavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { onFeedTap() },
-                    icon = CoboIcons.FeedOutline,
-                    selectedIcon = CoboIcons.FeedFilled,
-                    label = "微博",
-                    modifier = Modifier.testTag("bottom_tab_feed"),
-                )
-                ProfileFloatingNavItem(
-                    selected = tab == 2,
-                    onClick = { onTab(2) },
-                    avatarUrl = profileAvatarUrl,
-                    overflowMenu = profileOverflowMenu,
-                    onMenuExpandedChange = { profileMenuExpanded = it },
-                    modifier = Modifier.testTag("bottom_tab_profile"),
-                )
+                // 主胶囊内按用户自定义的前 3 项顺序排布（默认左「消息」、中「微博」、右「我」）；
+                // tab 值始终保持 0=微博 / 1=消息 / 2=我，不改变持久化语义。
+                primaryItems.forEach { slot ->
+                    when (slot) {
+                        BottomBarItem.Messages -> BottomFloatingNavigationBarItem(
+                            selected = tab == 1,
+                            onClick = { onTab(1) },
+                            icon = CoboIcons.MessagesOutline,
+                            selectedIcon = CoboIcons.MessagesFilled,
+                            label = "消息",
+                            modifier = Modifier.testTag("bottom_tab_messages"),
+                        )
+                        BottomBarItem.Feed -> BottomFloatingNavigationBarItem(
+                            selected = tab == 0,
+                            onClick = { onFeedTap() },
+                            icon = CoboIcons.FeedOutline,
+                            selectedIcon = CoboIcons.FeedFilled,
+                            label = "微博",
+                            modifier = Modifier.testTag("bottom_tab_feed"),
+                        )
+                        BottomBarItem.Profile -> ProfileFloatingNavItem(
+                            selected = tab == 2,
+                            onClick = { onTab(2) },
+                            avatarUrl = profileAvatarUrl,
+                            overflowMenu = profileOverflowMenu,
+                            onMenuExpandedChange = { profileMenuExpanded = it },
+                            modifier = Modifier.testTag("bottom_tab_profile"),
+                        )
+                        BottomBarItem.Publish -> BottomFloatingNavigationBarItem(
+                            selected = false,
+                            onClick = onPublish,
+                            icon = COUIIcons.Add,
+                            selectedIcon = COUIIcons.Add,
+                            label = "发微博",
+                            modifier = Modifier.testTag("bottom_publish"),
+                        )
+                    }
+                }
             }
         }
     }

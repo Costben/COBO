@@ -73,6 +73,7 @@ import androidx.compose.ui.zIndex
 import coil3.SingletonImageLoader
 import com.cobo.app.App
 import com.cobo.app.data.Account
+import com.cobo.app.data.BottomBarItem
 import com.cobo.app.data.BottomLeftAction
 import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedTabSelection
@@ -149,6 +150,9 @@ import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
+import io.github.suqi8.coui.kmp.icon.extended.Add
+import io.github.suqi8.coui.kmp.icon.extended.Refresh
+import io.github.suqi8.coui.kmp.icon.extended.Search
 import io.github.suqi8.coui.kmp.icon.extended.Undo
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
@@ -457,7 +461,7 @@ fun SettingsSubPageScreen(nav: NavState, page: SettingsSubPage) {
 
     val entries = when (page) {
         SettingsSubPage.AppearanceLayout -> displayAppearanceSubEntries(state = state)
-        SettingsSubPage.BarsAndNavigation -> displayBarsSubEntries(state = state)
+        SettingsSubPage.BarsAndNavigation -> displayBarsSubEntries(nav = nav, state = state)
         SettingsSubPage.GesturesAndMotion -> displayGesturesSubEntries(nav = nav, state = state)
         SettingsSubPage.MediaPlayback -> displayMediaSubEntries(nav = nav, state = state)
         SettingsSubPage.FeedCardStyle -> feedCardStyleSubEntries(state = state)
@@ -903,59 +907,77 @@ private fun displayAppearanceSubEntries(
 
 @Composable
 private fun displayBarsSubEntries(
+    nav: NavState,
     state: SettingsUiState,
-): List<SettingsEntry> = listOf(
-    SettingsEntry(
-        id = "bottom_left_action",
-        title = "底栏左下角按钮",
-        summary = App.settings.bottomLeftAction.label,
-        keywords = "底部 悬浮栏 快捷 按钮 搜索 刷新 bottom",
-    ) { pos ->
-        SettingsArrowRow(
+): List<SettingsEntry> {
+    val bottomOrderSummary = BottomBarItem.summary(App.settings.bottomBarOrder)
+    return listOf(
+        SettingsEntry(
+            id = "bottom_bar_order",
+            title = "底栏顺序",
+            summary = bottomOrderSummary,
+            keywords = "底栏 顺序 导航 调整 排序 交换 消息 微博 我 发微博 加号 bottom bar order",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "底栏顺序",
+                modifier = Modifier.testTag("settings_bottom_bar_order"),
+                summary = bottomOrderSummary,
+                cardListPosition = pos,
+                onClick = { nav.push(Route.BottomBarOrderSettings) },
+            )
+        },
+        SettingsEntry(
+            id = "bottom_left_action",
             title = "底栏左下角按钮",
-            modifier = Modifier.testTag("settings_bottom_left_action"),
             summary = App.settings.bottomLeftAction.label,
-            cardListPosition = pos,
-            onClick = { state.pickBottomLeftAction = true },
-        )
-    },
-    SettingsEntry(
-        id = "auto_hide_floating_bars",
-        title = "滑动自动隐藏浮动栏",
-        summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
-        keywords = "顶栏 底栏 工具栏 沉浸 隐藏 收起 float bar",
-    ) { pos ->
-        SettingsSwitchRow(
-            checked = state.autoHideFloatingBars,
-            onCheckedChange = {
-                state.autoHideFloatingBars = it
-                App.settings.applyAutoHideFloatingBars(it)
-            },
+            keywords = "底部 悬浮栏 快捷 按钮 搜索 刷新 bottom",
+        ) { pos ->
+            SettingsArrowRow(
+                title = "底栏左下角按钮",
+                modifier = Modifier.testTag("settings_bottom_left_action"),
+                summary = App.settings.bottomLeftAction.label,
+                cardListPosition = pos,
+                onClick = { state.pickBottomLeftAction = true },
+            )
+        },
+        SettingsEntry(
+            id = "auto_hide_floating_bars",
             title = "滑动自动隐藏浮动栏",
             summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
-            modifier = Modifier.testTag("settings_auto_hide_floating_bars"),
-            cardListPosition = pos,
-        )
-    },
-    SettingsEntry(
-        id = "feed_tab_tap_to_top_and_return",
-        title = "底栏「微博」单击回顶与返回",
-        summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
-        keywords = "回到顶部 刷新 原位置 双击 top return",
-    ) { pos ->
-        SettingsSwitchRow(
-            checked = state.feedTabTapToTopAndReturn,
-            onCheckedChange = {
-                state.feedTabTapToTopAndReturn = it
-                App.settings.applyFeedTabTapToTopAndReturn(it)
-            },
+            keywords = "顶栏 底栏 工具栏 沉浸 隐藏 收起 float bar",
+        ) { pos ->
+            SettingsSwitchRow(
+                checked = state.autoHideFloatingBars,
+                onCheckedChange = {
+                    state.autoHideFloatingBars = it
+                    App.settings.applyAutoHideFloatingBars(it)
+                },
+                title = "滑动自动隐藏浮动栏",
+                summary = "向下浏览时自动收起顶部分段栏、悬浮底栏与详情页底部工具栏，向上滑动或回到顶部时恢复",
+                modifier = Modifier.testTag("settings_auto_hide_floating_bars"),
+                cardListPosition = pos,
+            )
+        },
+        SettingsEntry(
+            id = "feed_tab_tap_to_top_and_return",
             title = "底栏「微博」单击回顶与返回",
             summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
-            modifier = Modifier.testTag("settings_feed_tab_tap_to_top_and_return"),
-            cardListPosition = pos,
-        )
-    },
-)
+            keywords = "回到顶部 刷新 原位置 双击 top return",
+        ) { pos ->
+            SettingsSwitchRow(
+                checked = state.feedTabTapToTopAndReturn,
+                onCheckedChange = {
+                    state.feedTabTapToTopAndReturn = it
+                    App.settings.applyFeedTabTapToTopAndReturn(it)
+                },
+                title = "底栏「微博」单击回顶与返回",
+                summary = "开启后在微博页单击回顶，再点返回原浏览位置，双击刷新；关闭时保持双击回顶",
+                modifier = Modifier.testTag("settings_feed_tab_tap_to_top_and_return"),
+                cardListPosition = pos,
+            )
+        },
+    )
+}
 
 @Composable
 private fun displayGesturesSubEntries(
@@ -1287,7 +1309,7 @@ private fun displayAllSearchableEntries(
 ): List<SettingsEntry> =
     displayCoreEntries(state) +
         displayAppearanceSubEntries(state) +
-        displayBarsSubEntries(state) +
+        displayBarsSubEntries(nav, state) +
         displayGesturesSubEntries(nav, state) +
         displayMediaSubEntries(nav, state) +
         displayGeneralInteractionEntries(state)
@@ -3323,6 +3345,359 @@ private fun DragHandleIndicator(active: Boolean) {
                     .clip(RoundedCornerShape(1.dp))
                     .background(tint),
             )
+        }
+    }
+}
+
+@Composable
+fun BottomBarOrderSettingsScreen(nav: NavState) {
+    val blurEffects = blurEffectsEnabled()
+    val pageColor = pageContainerColor()
+    val backdrop = rememberLayerBackdrop()
+    val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
+    val listState = rememberLazyListState()
+    BindScrollToTop(listState)
+
+    val savedOrder = App.settings.bottomBarOrder
+    val leftAction = App.settings.bottomLeftAction
+    var previewOrder by remember(savedOrder) { mutableStateOf(savedOrder) }
+    var draggingAny by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize().background(pageColor)) {
+        Box(Modifier.fillMaxSize().layerBackdropIf(blurEffects, backdrop).background(pageColor)) {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !draggingAny,
+                modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical(),
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    top = glassBarContentTop(topBarHeight, 10.dp),
+                    end = 12.dp,
+                    bottom = 24.dp + navBottomPadding(),
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item {
+                    Text(
+                        text = "长按下方项目并上下拖动，即可交换底栏中「消息、微博、我、发微博（+）」的顺序；左下角融合球位置固定。",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+
+                item {
+                    SectionTitle("底栏实时预览")
+                }
+
+                item {
+                    BottomBarOrderPreviewCard(
+                        order = previewOrder,
+                        leftAction = leftAction,
+                    )
+                }
+
+                item {
+                    SectionTitle("排列顺序（从左到右）")
+                }
+
+                item {
+                    BottomBarOrderEditorCard(
+                        order = savedOrder,
+                        onPreviewChange = { previewOrder = it },
+                        onCommit = {
+                            previewOrder = it
+                            App.settings.applyBottomBarOrder(it)
+                        },
+                        onDraggingChange = { draggingAny = it },
+                    )
+                }
+            }
+        }
+
+        CompositionLocalProvider(
+            LocalBackdrop provides if (blurEffects) backdrop else null,
+            LocalEdgeToEdge provides true,
+        ) {
+            PinnedBarDensity {
+                AppBarSurface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    containerColor = pageColor,
+                    scrollFraction = rememberListScrollFraction(listState),
+                ) {
+                    SmallTopAppBar(
+                        title = "底栏顺序",
+                        color = Color.Transparent,
+                        showDivider = false,
+                        gradientGlass = false,
+                        navigationIcon = { BackIconButton { nav.pop() } },
+                        actions = {
+                            TextButton(
+                                text = "重置",
+                                onClick = {
+                                    App.settings.resetBottomBarOrder()
+                                    previewOrder = BottomBarItem.DefaultOrder
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun bottomBarPreviewIcon(item: BottomBarItem) = when (item) {
+    BottomBarItem.Messages -> CoboIcons.MessagesOutline
+    BottomBarItem.Feed -> CoboIcons.FeedOutline
+    BottomBarItem.Profile -> CoboIcons.ProfileOutline
+    BottomBarItem.Publish -> COUIIcons.Add
+}
+
+private fun bottomLeftPreviewIcon(action: BottomLeftAction) = when (action) {
+    BottomLeftAction.Refresh -> COUIIcons.Refresh
+    BottomLeftAction.Search -> COUIIcons.Search
+    BottomLeftAction.Favorites -> CoboIcons.Star
+}
+
+@Composable
+private fun BottomBarOrderPreviewCard(
+    order: List<BottomBarItem>,
+    leftAction: BottomLeftAction,
+) {
+    val normalized = BottomBarItem.normalize(order)
+    val scheme = COUITheme.colorScheme
+    val pillBg = scheme.surfaceContainerHigh
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
+        weight = CardDefaults.GroupWeight,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // 左下角融合球（固定不参与排序）
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(pillBg.copy(alpha = 0.65f))
+                    .border(1.dp, scheme.dividerLine.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = bottomLeftPreviewIcon(leftAction),
+                    contentDescription = leftAction.label,
+                    tint = scheme.onSurfaceSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+
+            // 中间主胶囊（前 3 项）
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(50.dp)
+                    .clip(RoundedCornerShape(25.dp))
+                    .background(pillBg)
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                normalized.take(3).forEach { item ->
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            imageVector = bottomBarPreviewIcon(item),
+                            contentDescription = item.label,
+                            tint = if (item == BottomBarItem.Feed) scheme.primary else scheme.onSurface,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = item.label,
+                            fontSize = 10.sp,
+                            fontWeight = if (item == BottomBarItem.Feed) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (item == BottomBarItem.Feed) scheme.primary else scheme.onSurfaceSecondary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+
+            // 右侧独立圆钮（第 4 项）
+            val trailing = normalized[3]
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(pillBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = bottomBarPreviewIcon(trailing),
+                    contentDescription = trailing.label,
+                    tint = scheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomBarOrderEditorCard(
+    order: List<BottomBarItem>,
+    onPreviewChange: (List<BottomBarItem>) -> Unit,
+    onCommit: (List<BottomBarItem>) -> Unit,
+    onDraggingChange: (Boolean) -> Unit = {},
+) {
+    val scheme = COUITheme.colorScheme
+    val haptic = LocalHapticFeedback.current
+    val currentOrder by rememberUpdatedState(BottomBarItem.normalize(order))
+    val currentOnPreview by rememberUpdatedState(onPreviewChange)
+    val currentOnCommit by rememberUpdatedState(onCommit)
+    val currentOnDragging by rememberUpdatedState(onDraggingChange)
+
+    var draggingItem by remember { mutableStateOf<BottomBarItem?>(null) }
+    var dragOrder by remember { mutableStateOf<List<BottomBarItem>?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val rowHeights = remember { mutableStateMapOf<BottomBarItem, Float>() }
+
+    val displayOrder = dragOrder ?: currentOrder
+
+    fun finishDrag(commit: Boolean) {
+        val result = dragOrder
+        draggingItem = null
+        dragOrder = null
+        dragOffsetY = 0f
+        currentOnDragging(false)
+        if (commit && result != null && result != currentOrder) {
+            currentOnCommit(result)
+        } else {
+            currentOnPreview(currentOrder)
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = CardDefaults.GroupCornerRadius,
+        insideMargin = PaddingValues(vertical = 4.dp),
+        weight = CardDefaults.GroupWeight,
+    ) {
+        displayOrder.forEachIndexed { index, item ->
+            key(item) {
+                val isDragging = draggingItem == item
+                val slotCaption = when (index) {
+                    0 -> "主栏第 1 位"
+                    1 -> "主栏第 2 位"
+                    2 -> "主栏第 3 位"
+                    else -> "右侧独立圆钮"
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { rowHeights[item] = it.size.height.toFloat() }
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .graphicsLayer {
+                            if (isDragging) {
+                                translationY = dragOffsetY
+                                scaleX = 1.02f
+                                scaleY = 1.02f
+                                alpha = 0.94f
+                            }
+                        }
+                        .then(
+                            if (isDragging) {
+                                Modifier
+                                    .padding(horizontal = 6.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(scheme.primary.copy(alpha = 0.08f))
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .pointerInput(item) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    draggingItem = item
+                                    dragOrder = currentOrder
+                                    dragOffsetY = 0f
+                                    currentOnDragging(true)
+                                },
+                                onDrag = { change, dragAmount ->
+                                    if (draggingItem != item) return@detectDragGesturesAfterLongPress
+                                    change.consume()
+                                    dragOffsetY += dragAmount.y
+                                    var cur = dragOrder ?: currentOrder
+                                    var idx = cur.indexOf(item)
+                                    while (idx in 0 until cur.lastIndex) {
+                                        val nextH = rowHeights[cur[idx + 1]] ?: break
+                                        if (dragOffsetY > nextH * 0.5f) {
+                                            cur = cur.toMutableList().apply { add(idx + 1, removeAt(idx)) }
+                                            dragOrder = cur
+                                            currentOnPreview(cur)
+                                            dragOffsetY -= nextH
+                                            idx++
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        } else {
+                                            break
+                                        }
+                                    }
+                                    while (idx > 0) {
+                                        val prevH = rowHeights[cur[idx - 1]] ?: break
+                                        if (dragOffsetY < -prevH * 0.5f) {
+                                            cur = cur.toMutableList().apply { add(idx - 1, removeAt(idx)) }
+                                            dragOrder = cur
+                                            currentOnPreview(cur)
+                                            dragOffsetY += prevH
+                                            idx--
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        } else {
+                                            break
+                                        }
+                                    }
+                                },
+                                onDragEnd = { finishDrag(commit = true) },
+                                onDragCancel = { finishDrag(commit = false) },
+                            )
+                        }
+                        .padding(
+                            horizontal = if (isDragging) 10.dp else 16.dp,
+                            vertical = 13.dp,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = bottomBarPreviewIcon(item),
+                        contentDescription = null,
+                        tint = if (isDragging) scheme.primary else scheme.onSurface,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.label,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.onSurface,
+                        )
+                        Text(
+                            text = slotCaption,
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                        )
+                    }
+                    DragHandleIndicator(active = isDragging)
+                }
+            }
         }
     }
 }

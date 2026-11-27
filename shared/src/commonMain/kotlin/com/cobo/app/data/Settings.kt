@@ -124,6 +124,46 @@ enum class BottomLeftAction(val key: String, val label: String) {
     }
 }
 
+/**
+ * 悬浮底栏可调顺序的 4 个槽位项（前 3 项位于主胶囊内，第 4 项位于右侧独立圆钮；左下角融合球固定不调）。
+ */
+enum class BottomBarItem(val key: String, val label: String) {
+    Messages("messages", "消息"),
+    Feed("feed", "微博"),
+    Profile("profile", "我"),
+    Publish("publish", "发微博"),
+    ;
+
+    companion object {
+        val DefaultOrder: List<BottomBarItem> = listOf(Messages, Feed, Profile, Publish)
+
+        fun fromKey(key: String?): BottomBarItem? =
+            entries.firstOrNull { it.key == key }
+
+        /** 始终保证 4 项去重且齐全：缺失项按默认顺序补齐，防止任意底栏入口丢失。 */
+        fun normalize(items: List<BottomBarItem>): List<BottomBarItem> = buildList(DefaultOrder.size) {
+            items.forEach { item ->
+                if (item !in this) add(item)
+            }
+            DefaultOrder.forEach { item ->
+                if (item !in this) add(item)
+            }
+        }
+
+        fun parse(raw: String?): List<BottomBarItem> {
+            if (raw.isNullOrBlank()) return DefaultOrder
+            val parsed = raw.split(',').mapNotNull { fromKey(it.trim()) }
+            return normalize(parsed)
+        }
+
+        fun encode(items: List<BottomBarItem>): String =
+            normalize(items).joinToString(",") { it.key }
+
+        fun summary(items: List<BottomBarItem>): String =
+            normalize(items).joinToString(" · ") { it.label }
+    }
+}
+
 /** 「我」页入口与一级设置选项左侧图标的配色样式，默认使用 ColorOS 17 语义彩色。 */
 enum class MeIconStyle(val key: String, val label: String) {
     Colorful("colorful", "默认"),
@@ -392,6 +432,11 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     /** 底栏左下角融合球按钮的作用：回到顶部刷新 / 搜索 / 打开收藏夹。 */
     var bottomLeftAction by mutableStateOf(
         BottomLeftAction.fromKey(sp.getString("bottom_left_action", null))
+    )
+        private set
+
+    var bottomBarOrder by mutableStateOf(
+        BottomBarItem.parse(sp.getString("bottom_bar_order", null))
     )
         private set
 
@@ -747,6 +792,16 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         sp.edit().putString("bottom_left_action", value.key).apply()
     }
 
+    fun applyBottomBarOrder(value: List<BottomBarItem>) {
+        val normalized = BottomBarItem.normalize(value)
+        bottomBarOrder = normalized
+        sp.edit().putString("bottom_bar_order", BottomBarItem.encode(normalized)).apply()
+    }
+
+    fun resetBottomBarOrder() {
+        applyBottomBarOrder(BottomBarItem.DefaultOrder)
+    }
+
     fun applyImageBrowseQuality(value: ImageBrowseQuality) {
         imageBrowseQuality = value
         sp.edit().putString("image_browse_quality", value.key).apply()
@@ -887,6 +942,7 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         autoHideFloatingBars = autoHideFloatingBars,
         feedTabTapToTopAndReturn = feedTabTapToTopAndReturn,
         bottomLeftActionKey = bottomLeftAction.key,
+        bottomBarOrderKeys = bottomBarOrder.map { it.key },
         feedLeftTabKey = feedLeftTab.takeIf { !it.isGroup }?.item?.key,
         feedCenterTabKey = feedCenterTab.takeIf { !it.isGroup }?.item?.key,
         feedRightTabKey = feedRightTab.takeIf { !it.isGroup }?.item?.key,
@@ -945,6 +1001,10 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         backup.feedTabTapToTopAndReturn?.let(::applyFeedTabTapToTopAndReturn)
         backup.bottomLeftActionKey?.let { key ->
             BottomLeftAction.entries.firstOrNull { it.key == key }?.let(::applyBottomLeftAction)
+        }
+        backup.bottomBarOrderKeys?.let { keys ->
+            val items = keys.mapNotNull(BottomBarItem::fromKey)
+            if (items.isNotEmpty()) applyBottomBarOrder(items)
         }
         backup.feedLeftTabKey?.let { key ->
             FeedTabItem.entries.firstOrNull { it.key == key && it != FeedTabItem.Group }

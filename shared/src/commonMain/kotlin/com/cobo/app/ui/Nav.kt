@@ -247,6 +247,7 @@ sealed interface Route {
     data class SettingsSubDetail(val page: SettingsSubPage) : Route
     data object PredictiveBackSettings : Route
     data object MediaTopBarSettings : Route
+    data object BottomBarOrderSettings : Route
     data object ContentFilterSettings : Route
     data object About : Route
     data object Changelog : Route

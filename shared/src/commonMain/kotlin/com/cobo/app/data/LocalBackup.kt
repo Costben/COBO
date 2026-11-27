@@ -34,6 +34,7 @@ data class SettingsBackup(
     val autoHideFloatingBars: Boolean? = null,
     val feedTabTapToTopAndReturn: Boolean? = null,
     val bottomLeftActionKey: String? = null,
+    val bottomBarOrderKeys: List<String>? = null,
     val feedLeftTabKey: String? = null,
     val feedCenterTabKey: String? = null,
     val feedRightTabKey: String? = null,
@@ -429,6 +430,9 @@ private fun encodeSettingsBackup(s: SettingsBackup): JSONObject = JSONObject().a
     s.autoHideFloatingBars?.let { put("autoHideFloatingBars", it) }
     s.feedTabTapToTopAndReturn?.let { put("feedTabTapToTopAndReturn", it) }
     s.bottomLeftActionKey?.let { put("bottomLeftActionKey", it) }
+    s.bottomBarOrderKeys?.let { keys ->
+        put("bottomBarOrderKeys", JSONArray().apply { keys.forEach { put(it) } })
+    }
     s.feedLeftTabKey?.let { put("feedLeftTabKey", it) }
     s.feedCenterTabKey?.let { put("feedCenterTabKey", it) }
     s.feedRightTabKey?.let { put("feedRightTabKey", it) }
@@ -496,6 +500,19 @@ private fun decodeSettingsBackup(o: JSONObject): SettingsBackup {
         null
     }
 
+    val bottomBarOrderKeys = if (o.has("bottomBarOrderKeys") && !o.isNull("bottomBarOrderKeys")) {
+        o.optJSONArray("bottomBarOrderKeys")?.let { arr ->
+            buildList<String>(arr.length()) {
+                for (i in 0 until arr.length()) {
+                    val v = arr.optString(i).takeIf { arr.opt(i) != JSONObject.NULL }?.trim().orEmpty()
+                    if (v.isNotEmpty()) add(v)
+                }
+            }
+        }
+    } else {
+        null
+    }
+
     return SettingsBackup(
         darkMode = optIntOrNull("darkMode"),
         fontScale = optFloatOrNull("fontScale"),
@@ -512,6 +529,7 @@ private fun decodeSettingsBackup(o: JSONObject): SettingsBackup {
         autoHideFloatingBars = optBoolOrNull("autoHideFloatingBars"),
         feedTabTapToTopAndReturn = optBoolOrNull("feedTabTapToTopAndReturn"),
         bottomLeftActionKey = optStrOrNull("bottomLeftActionKey"),
+        bottomBarOrderKeys = bottomBarOrderKeys,
         feedLeftTabKey = optStrOrNull("feedLeftTabKey"),
         feedCenterTabKey = optStrOrNull("feedCenterTabKey"),
         feedRightTabKey = optStrOrNull("feedRightTabKey"),
