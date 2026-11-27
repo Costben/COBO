@@ -1020,6 +1020,7 @@ fun StatusMedia(
     onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit,
     onCard: Boolean = true,
+    compressPicsToGridThumb: Boolean = false,
 ) {
     val video = status.video?.let { info ->
         if (info.statusId.isBlank() && status.id.isNotBlank()) info.copy(statusId = status.id) else info
@@ -1054,13 +1055,29 @@ fun StatusMedia(
     }
     if (effectivePics.isNotEmpty()) {
         Spacer(Modifier.height(8.dp))
-        ImageGrid(effectivePics, compact, onImage, onVideo)
+        ImageGrid(
+            pics = effectivePics,
+            compact = compact,
+            onImage = onImage,
+            onVideo = onVideo,
+            forceGridThumbSize = compressPicsToGridThumb,
+        )
     }
     val bigPic = status.bigPic
     if (bigPic != null && bigPic.url.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
         if (bigPic.isLarge) {
-            BigPicCard(bigPic, onImage)
+            if (compressPicsToGridThumb) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(modifier = Modifier.weight(1f).aspectRatio(1f)) {
+                        BigPicCard(bigPic, onImage, compactThumb = true)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.weight(1f))
+                }
+            } else {
+                BigPicCard(bigPic, onImage)
+            }
         } else {
             PageLinkCard(bigPic, compact = compact, onCard = onCard)
         }
@@ -1132,6 +1149,7 @@ private fun PageLinkCard(
 private fun BigPicCard(
     bigPic: BigPicInfo,
     onImage: (List<Pic>, Int) -> Unit,
+    compactThumb: Boolean = false,
 ) {
     val linkHandler = LocalLinkHandler.current
     val saver = LocalImageSaver.current
@@ -1147,12 +1165,12 @@ private fun BigPicCard(
     val singlePic = remember(bigPic.url) {
         listOf(Pic(thumb = bigPic.url, large = bigPic.url, preserveUrl = true))
     }
+    val cornerRadius = if (compactThumb) 8.dp else 10.dp
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(ratio)
-            .imageOrigin(bigPic.url, 10.dp, aspect = ratio, model = bigPic.url)
-            .clip(RoundedCornerShape(10.dp))
+            .then(if (compactThumb) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(ratio))
+            .imageOrigin(bigPic.url, cornerRadius, aspect = ratio, model = bigPic.url)
+            .clip(RoundedCornerShape(cornerRadius))
             .background(COUITheme.colorScheme.surfaceContainerHigh)
             .preciseClickAnchor(precise)
             .combinedClickable(
@@ -1217,12 +1235,28 @@ private fun BigPicCard(
     }
 }
 
+internal data class ImageGridLayout(
+    val totalSlotsPerRow: Int,
+    val itemsPerRow: Int,
+)
+
+/** 计算配图网格每行总槽位数与每行实际放置张数；开启压缩时一律按九宫格 3 列单格尺寸排版。 */
+internal fun resolveImageGridLayout(picCount: Int, forceGridThumbSize: Boolean): ImageGridLayout {
+    if (forceGridThumbSize) {
+        val itemsPerRow = if (picCount == 4) 2 else 3
+        return ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = itemsPerRow)
+    }
+    val columns = if (picCount <= 4) 2 else 3
+    return ImageGridLayout(totalSlotsPerRow = columns, itemsPerRow = columns)
+}
+
 @Composable
 fun ImageGrid(
     pics: List<Pic>,
     compact: Boolean,
     onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit = {},
+    forceGridThumbSize: Boolean = false,
 ) {
     val urls = pics.map { it.large }
     val imageItems = remember(pics) {
@@ -1233,7 +1267,7 @@ fun ImageGrid(
     // 长按任意一张图片缩略图就能弹出保存菜单（实况图按实况保存），视频条目不走图片保存。
     val saver = LocalImageSaver.current
     val origins = LocalImageOrigins.current
-    if (pics.size == 1) {
+    if (pics.size == 1 && !forceGridThumbSize) {
         val pic = pics.first()
         val ratio = if (pic.width > 0 && pic.height > 0) {
             (pic.width.toFloat() / pic.height.toFloat()).coerceIn(0.62f, 1.9f)
@@ -1315,14 +1349,14 @@ fun ImageGrid(
         return
     }
 
-    val columns = if (pics.size <= 4) 2 else 3
-    val rows = (pics.size + columns - 1) / columns
+    val layout = resolveImageGridLayout(pics.size, forceGridThumbSize)
+    val rows = (pics.size + layout.itemsPerRow - 1) / layout.itemsPerRow
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (row in 0 until rows) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                for (col in 0 until columns) {
-                    val index = row * columns + col
-                    if (index < pics.size) {
+                for (col in 0 until layout.totalSlotsPerRow) {
+                    val index = if (col < layout.itemsPerRow) row * layout.itemsPerRow + col else -1
+                    if (index in pics.indices) {
                         val precise = rememberPreciseClickState()
                         val pic = pics[index]
                         val shown = pic.thumb.ifBlank { pic.large }
@@ -1834,7 +1868,14 @@ fun RetweetBlock(
             Spacer(Modifier.height(6.dp))
             StatusVoteCard(status = status, actionsEnabled = actionsEnabled, onCard = !onCard)
         }
-        StatusMedia(status, true, onImage, onVideo, onCard = !onCard)
+        StatusMedia(
+            status = status,
+            compact = true,
+            onImage = onImage,
+            onVideo = onVideo,
+            onCard = !onCard,
+            compressPicsToGridThumb = App.settings.retweetImageCompact,
+        )
     }
 }
 

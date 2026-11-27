@@ -2,8 +2,10 @@ package com.cobo.app.data
 
 import com.cobo.app.screen.CachedProfileStatuses
 import com.cobo.app.screen.ProfileStatusesCache
+import com.cobo.app.ui.components.ImageGridLayout
 import com.cobo.app.ui.components.buildWeiboShareUrl
 import com.cobo.app.ui.components.formatShareBodyText
+import com.cobo.app.ui.components.resolveImageGridLayout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -64,5 +66,29 @@ class BottomBarAndShareTest {
         assertEquals("https://m.weibo.cn/detail/5001", buildWeiboShareUrl(status))
         assertEquals("https://m.weibo.cn/detail/1001", buildWeiboShareUrl(status.copy(mid = "")))
         assertEquals("第一段\n第二段\n第三段 #话题#", formatShareBodyText(status.textHtml))
+    }
+
+    @Test
+    fun retweetImageCompactUsesNineGridTileSizing() {
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(1, true))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(2, true))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(3, true))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 2), resolveImageGridLayout(4, true))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(9, true))
+
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 2, itemsPerRow = 2), resolveImageGridLayout(2, false))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 2, itemsPerRow = 2), resolveImageGridLayout(4, false))
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(5, false))
+    }
+
+    @Test
+    fun localBackupRoundTripsRetweetImageCompact() {
+        val bundle = LocalBackupBundle(
+            exportedAt = 1234L,
+            appVersion = "1.2.10",
+            settings = SettingsBackup(retweetImageCompact = true),
+        )
+        val decoded = decodeLocalBackupJson(encodeLocalBackupJson(bundle))
+        assertEquals(true, decoded.settings?.retweetImageCompact)
     }
 }

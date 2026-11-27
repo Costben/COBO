@@ -1070,6 +1070,21 @@ private fun displayMediaSubEntries(
         )
     },
     SettingsEntry(
+        id = "retweet_image_compact",
+        title = "转发图片显示压缩",
+        summary = "开启后转发微博中的配图按九宫格单格缩略图大小显示",
+        keywords = "转发 图片 压缩 缩略图 九宫格 尺寸 缩小 retweet image compact",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.retweetImageCompact,
+            onCheckedChange = { App.settings.applyRetweetImageCompact(it) },
+            title = "转发图片显示压缩",
+            summary = "开启后转发微博中的配图按九宫格单格缩略图大小显示",
+            modifier = Modifier.testTag("settings_retweet_image_compact"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
         id = "live_photo_auto_play",
         title = "实况图自动播放",
         summary = "进入或滑动到实况图时自动播放一次，结束后仅支持长按重播",

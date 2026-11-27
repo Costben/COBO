@@ -485,6 +485,10 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     var imageTopBarShowCounter by mutableStateOf(sp.getBoolean("image_top_bar_show_counter", true))
         private set
 
+    /** 转发图片显示压缩：开启后转发微博里的配图按九宫格单格缩略图尺寸缩小显示。默认关。 */
+    var retweetImageCompact by mutableStateOf(sp.getBoolean("retweet_image_compact", false))
+        private set
+
     /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
@@ -500,6 +504,11 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     /** 点过「跳过此版本」的版本号：自动检查时不再拿它打扰。 */
     var skippedUpdate by mutableStateOf(sp.getString("skipped_update", "").orEmpty())
         private set
+
+    fun applyRetweetImageCompact(value: Boolean) {
+        retweetImageCompact = value
+        sp.edit().putBoolean("retweet_image_compact", value).apply()
+    }
 
     fun applyMainTab(value: Int) {
         mainTab = value
@@ -961,6 +970,7 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         profileTabAvatar = profileTabAvatar,
         profileShowStatuses = profileShowStatuses,
         imageBrowseQualityKey = imageBrowseQuality.key,
+        retweetImageCompact = retweetImageCompact,
         livePhotoAutoPlay = livePhotoAutoPlay,
         livePhotoSound = livePhotoSound,
         videoAutoFloatOnBack = videoAutoFloatOnBack,
@@ -1039,6 +1049,7 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         backup.imageBrowseQualityKey?.let { key ->
             ImageBrowseQuality.entries.firstOrNull { it.key == key }?.let(::applyImageBrowseQuality)
         }
+        backup.retweetImageCompact?.let(::applyRetweetImageCompact)
         backup.livePhotoAutoPlay?.let(::applyLivePhotoAutoPlay)
         backup.livePhotoSound?.let(::applyLivePhotoSound)
         backup.videoAutoFloatOnBack?.let(::applyVideoAutoFloatOnBack)

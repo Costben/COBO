@@ -53,6 +53,7 @@ data class SettingsBackup(
     val profileTabAvatar: Boolean? = null,
     val profileShowStatuses: Boolean? = null,
     val imageBrowseQualityKey: String? = null,
+    val retweetImageCompact: Boolean? = null,
     val livePhotoAutoPlay: Boolean? = null,
     val livePhotoSound: Boolean? = null,
     val videoAutoFloatOnBack: Boolean? = null,
@@ -455,6 +456,7 @@ private fun encodeSettingsBackup(s: SettingsBackup): JSONObject = JSONObject().a
     s.profileTabAvatar?.let { put("profileTabAvatar", it) }
     s.profileShowStatuses?.let { put("profileShowStatuses", it) }
     s.imageBrowseQualityKey?.let { put("imageBrowseQualityKey", it) }
+    s.retweetImageCompact?.let { put("retweetImageCompact", it) }
     s.livePhotoAutoPlay?.let { put("livePhotoAutoPlay", it) }
     s.livePhotoSound?.let { put("livePhotoSound", it) }
     s.videoAutoFloatOnBack?.let { put("videoAutoFloatOnBack", it) }
@@ -548,6 +550,7 @@ private fun decodeSettingsBackup(o: JSONObject): SettingsBackup {
         profileTabAvatar = optBoolOrNull("profileTabAvatar"),
         profileShowStatuses = optBoolOrNull("profileShowStatuses"),
         imageBrowseQualityKey = optStrOrNull("imageBrowseQualityKey"),
+        retweetImageCompact = optBoolOrNull("retweetImageCompact"),
         livePhotoAutoPlay = optBoolOrNull("livePhotoAutoPlay"),
         livePhotoSound = optBoolOrNull("livePhotoSound"),
         videoAutoFloatOnBack = optBoolOrNull("videoAutoFloatOnBack"),
