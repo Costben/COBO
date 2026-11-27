@@ -3034,9 +3034,9 @@ fun PredictiveBackSettingsScreen(nav: NavState) {
                                     predictiveBackBlur = it
                                     App.settings.applyPredictiveBackBlur(it)
                                 },
-                                title = "返回跟手背景模糊",
+                                title = "返回背景模糊",
                                 summary = if (blurEffects) {
-                                    "走跟手轨迹返回时模糊上一级页面，随归位逐渐变清晰"
+                                    "预测性返回时保持上层卡片清晰，背景页由模糊逐渐变清晰"
                                 } else {
                                     "需先在设置中开启「模糊效果」"
                                 },

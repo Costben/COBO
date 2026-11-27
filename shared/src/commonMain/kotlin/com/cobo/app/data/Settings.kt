@@ -323,9 +323,9 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         private set
 
     /**
-     * 返回跟手背景模糊：走跟手轨迹返回时将上一级页面高斯模糊，随页面归位逐渐变清晰。默认关。
+     * 返回背景模糊：预测性返回时保持最上层卡片清晰，将背景层高斯模糊并随返回过程逐渐变清晰。默认开。
      */
-    var predictiveBackBlur by mutableStateOf(sp.getBoolean("predictive_back_blur", false))
+    var predictiveBackBlur by mutableStateOf(sp.getBoolean("predictive_back_blur", true))
         private set
 
     /**
