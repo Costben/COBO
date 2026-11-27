@@ -1145,7 +1145,13 @@ private fun RouteContent(route: Route, nav: NavState) {
         Route.Main -> MainShell(nav)
         is Route.Login -> LoginScreen(nav, route.addAccount, route.fresh, route.relogin)
         is Route.SmsLogin -> SmsLoginScreen(nav, route.addAccount, route.relogin)
-        is Route.Detail -> DetailScreen(nav, route.id, route.mid, route.readOnly || App.repo.guest)
+        is Route.Detail -> DetailScreen(
+            nav,
+            route.id,
+            route.mid,
+            route.readOnly || App.repo.guest,
+            route.initialSection,
+        )
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)
         is Route.Relations -> RelationsScreen(nav, route.uid, route.kind)

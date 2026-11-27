@@ -2535,6 +2535,49 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         )
     }
 
+    /** 拉取微博转发列表，按页返回带正文、时间与发布者的转发微博。 */
+    suspend fun reposts(
+        id: String,
+        mid: String,
+        page: Int = 1,
+        force: Boolean = false,
+    ): RepostPage {
+        val curPage = page.coerceAtLeast(1)
+        val targetId = id.ifBlank { mid }
+        if (isClientChannel()) {
+            val root = containerGet(
+                "statuses/repost_timeline",
+                mapOf("id" to targetId, "page" to curPage.toString(), "count" to "20"),
+            )
+            return parseRepostsClient(root, curPage)
+        }
+        if (session?.loginType == LOGIN_TYPE_CLIENT) {
+            val desk = desktopCookieOrNull()
+            if (desk != null) {
+                val desktopPage = runCatching {
+                    val root = Api.getDesktop(
+                        Api.url(
+                            "https://weibo.com/ajax/statuses/repostTimeline",
+                            mapOf("id" to targetId, "page" to curPage.toString()),
+                        ),
+                        desk,
+                    )
+                    if (root.optInt("ok", 0) == 1) parseRepostsDesktop(root, curPage) else null
+                }.getOrNull()
+                if (desktopPage != null) return desktopPage
+            }
+        }
+        val root = get(
+            Api.url(
+                "https://m.weibo.cn/api/statuses/repostTimeline",
+                mapOf("id" to targetId, "page" to curPage.toString()),
+            ),
+            cookie(),
+            force,
+        )
+        return parseRepostsWeb(root, curPage)
+    }
+
     /**
      * Replies under one comment ("楼中楼"). The hot list only inlines a preview, so the full
      * thread comes from `comments/hotFlowChild`, paged with the `max_id` cursor it hands back.

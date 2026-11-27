@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cobo.app.App
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.MediaWallFilter
 import com.cobo.app.data.ReadLater
 import com.cobo.app.data.ReadLaterFilter
@@ -834,8 +835,18 @@ private fun StatusFeedList(
                             val rawIdx = store.items.indexOfFirst { it.id == status.id }
                             if (rawIdx >= 0) scope.launch { store.like(rawIdx) }
                         },
-                        onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                        onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                        onRepost = {
+                            nav.push(
+                                Route.Detail(status.id, status.mid, store.readOnly, DetailInitialSection.Reposts),
+                                origin,
+                            )
+                        },
+                        onComment = {
+                            nav.push(
+                                Route.Detail(status.id, status.mid, store.readOnly, DetailInitialSection.Comments),
+                                origin,
+                            )
+                        },
                         actionsEnabled = !store.readOnly,
                         onOpenQuoted = { quoted, quotedOrigin ->
                             quotedOrigin.attachToRow(listState, status.id, topBar)

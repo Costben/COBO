@@ -102,6 +102,9 @@ import com.cobo.app.data.CommentBadge
 import com.cobo.app.data.CommentFilterState
 import com.cobo.app.data.CommentSort
 import com.cobo.app.data.ContentFilters
+import com.cobo.app.data.DetailInitialSection
+import com.cobo.app.data.DetailSectionTab
+import com.cobo.app.data.FilterSurface
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.data.Membership
 import com.cobo.app.data.MuteUserMode
@@ -114,9 +117,11 @@ import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.commentFilterEmptyMessage
 import com.cobo.app.data.commentFilterTriggerLabel
+import com.cobo.app.data.detailSectionHeaderIndex
 import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
 import com.cobo.app.data.shouldFilterComment
+import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.data.stripHtml
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.AppBarSurface
@@ -203,11 +208,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = false) {
+fun DetailScreen(
+    nav: NavState,
+    id: String,
+    mid: String,
+    readOnly: Boolean = false,
+    initialSection: DetailInitialSection = DetailInitialSection.Body,
+) {
     val scope = rememberCoroutineScope()
     // 列表里点进来的或稍后再看离线快照先顶上：正文、图片、互动数都已经有了，先画出来，接口回来再换。
     var status by remember(id) { mutableStateOf(StatusMemory.find(id) ?: ReadLater.find(id, mid)?.status) }
     var detailError by remember(id) { mutableStateOf<String?>(null) }
+    var activeTab by remember(id, initialSection) {
+        mutableStateOf(
+            if (initialSection == DetailInitialSection.Reposts) {
+                DetailSectionTab.Reposts
+            } else {
+                DetailSectionTab.Comments
+            },
+        )
+    }
     val comments = remember(id) { mutableStateListOf<Comment>() }
     var maxId by remember(id) { mutableStateOf<String?>(null) }
     var maxIdType by remember(id) { mutableStateOf(0) }
@@ -216,6 +236,12 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     var loadingComments by remember(id) { mutableStateOf(false) }
     var commentsEnd by remember(id) { mutableStateOf(false) }
     var commentError by remember(id) { mutableStateOf<String?>(null) }
+    val reposts = remember(id) { mutableStateListOf<Status>() }
+    var nextRepostPage by remember(id) { mutableStateOf(1) }
+    var loadingReposts by remember(id) { mutableStateOf(false) }
+    var repostsEnd by remember(id) { mutableStateOf(false) }
+    var repostError by remember(id) { mutableStateOf<String?>(null) }
+    var repostsInitialized by remember(id) { mutableStateOf(false) }
     var switchingSort by remember(id) { mutableStateOf(false) }
     var showSwitchProgress by remember(id) { mutableStateOf(false) }
     var repostDialog by remember { mutableStateOf(false) }
@@ -226,6 +252,10 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     var commentFilter by remember(id) { mutableStateOf(CommentFilterState()) }
     val listState = rememberLazyListState()
     BindScrollToTop(listState)
+    var userScrolled by remember(id) { mutableStateOf(false) }
+    var pendingSectionJump by remember(id, initialSection) {
+        mutableStateOf(initialSection != DetailInitialSection.Body)
+    }
     // The bar floats over this list too, so the quoted post inside the card below has to be able to
     // read where the bar ends when a page returns into it.
     val topBarBounds = remember { TopBarBounds() }
@@ -242,6 +272,33 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
     // A link may carry a Base62 mblogid or numeric id; once loaded, prefer the canonical numeric id and mid.
     fun effectiveId(): String = status?.id?.takeIf { it.isNotBlank() } ?: id
     fun effectiveMid(): String = status?.mid?.takeIf { it.isNotBlank() } ?: mid
+
+    suspend fun loadReposts(reset: Boolean, force: Boolean = false, waitEnterTransition: Boolean = false) {
+        if (loadingReposts) return
+        if (!reset && (repostsEnd || nextRepostPage <= 0)) return
+        loadingReposts = true
+        repostError = null
+        repostsInitialized = true
+        try {
+            val page = App.repo.reposts(
+                id = effectiveId(),
+                mid = effectiveMid(),
+                page = if (reset) 1 else nextRepostPage,
+                force = force,
+            )
+            if (waitEnterTransition) awaitEnterTransitionSettled()
+            if (reset) reposts.clear()
+            val before = reposts.size
+            val known = reposts.mapTo(HashSet()) { it.id }
+            page.items.forEach { if (known.add(it.id)) reposts.add(it) }
+            nextRepostPage = page.nextPage
+            repostsEnd = page.items.isEmpty() || page.nextPage == 0 || (!reset && reposts.size == before)
+        } catch (t: Throwable) {
+            repostError = t.message ?: "转发加载失败"
+        } finally {
+            loadingReposts = false
+        }
+    }
 
     suspend fun loadComments(reset: Boolean, force: Boolean = false, waitEnterTransition: Boolean = false) {
         if (loadingComments) return
@@ -388,15 +445,61 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
         status = updated
     }
 
-    LaunchedEffect(listState, comments.size) {
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            userScrolled = true
+            pendingSectionJump = false
+        }
+    }
+
+    // 外侧点击评论/转发图标进来时，自动定位到「评论 / 转发」分组头；若正文加载后新增编辑记录条则同步校准。
+    LaunchedEffect(id, initialSection, status != null, (status?.editCount ?: 0) > 0) {
+        if (!pendingSectionJump || userScrolled) return@LaunchedEffect
+        val targetIdx = detailSectionHeaderIndex((status?.editCount ?: 0) > 0)
+        withFrameNanos { }
+        if (!pendingSectionJump || userScrolled) return@LaunchedEffect
+        listState.scrollToItem(targetIdx)
+        if (status != null) {
+            pendingSectionJump = false
+        }
+    }
+
+    var lastEditHistoryVisible by remember(id) { mutableStateOf((status?.editCount ?: 0) > 0) }
+    LaunchedEffect((status?.editCount ?: 0) > 0) {
+        val nowHasHistory = (status?.editCount ?: 0) > 0
+        if (initialSection != DetailInitialSection.Body && nowHasHistory && !lastEditHistoryVisible && !userScrolled) {
+            withFrameNanos { }
+            if (!userScrolled) {
+                listState.scrollToItem(detailSectionHeaderIndex(true))
+            }
+        }
+        lastEditHistoryVisible = nowHasHistory
+    }
+
+    // 切到「转发」标签页时懒加载第一页转发列表。
+    LaunchedEffect(id, activeTab, status?.id) {
+        if (activeTab == DetailSectionTab.Reposts && !repostsInitialized && (status != null || detailError != null)) {
+            loadReposts(reset = true, force = false, waitEnterTransition = status != null)
+        }
+    }
+
+    LaunchedEffect(listState, activeTab, comments.size, reposts.size) {
         snapshotFlow {
             val info = listState.layoutInfo
             (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
         }.collect { (last, total) ->
-            if (!switchingSort && total > 0 && last >= total - 2 &&
-                comments.isNotEmpty() && !commentsEnd
-            ) {
-                loadComments(false, force = false)
+            if (activeTab == DetailSectionTab.Comments) {
+                if (!switchingSort && total > 0 && last >= total - 2 &&
+                    comments.isNotEmpty() && !commentsEnd
+                ) {
+                    loadComments(false, force = false)
+                }
+            } else {
+                if (!loadingReposts && total > 0 && last >= total - 2 &&
+                    reposts.isNotEmpty() && !repostsEnd
+                ) {
+                    loadReposts(false, force = false)
+                }
             }
         }
     }
@@ -543,8 +646,11 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     shouldFilterComment(it, filterRules, selfUid)
                 }
                 val visibleComments = filterComments(unmutedComments, commentFilter, postAuthorUid, includeReplies = true)
+                val visibleReposts = reposts.filterNot {
+                    shouldFilterStatus(it, filterRules, FilterSurface.Feed, selfUid)
+                }
 
-                item {
+                item(key = "section_header") {
                     Box(Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -557,29 +663,53 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                                 ),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            CommentFilterDropdownTitle(
-                                filter = commentFilter,
-                                defaultLabel = "全部评论",
-                                resetLabel = "显示全部评论",
-                                showAuthorOption = !postAuthorUid.isNullOrBlank(),
-                                groupKey = "detail_comment_filter_$id",
-                                onChange = { commentFilter = it },
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
+                            Row(
                                 modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
-                            // so the two orders share one compact track instead.
-                            SortSwitch(
-                                selected = sort,
-                                onSelect = ::switchSort,
-                            )
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (activeTab == DetailSectionTab.Comments) {
+                                    CommentFilterDropdownTitle(
+                                        filter = commentFilter,
+                                        defaultLabel = "全部评论",
+                                        resetLabel = "显示全部评论",
+                                        showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                        groupKey = "detail_comment_filter_$id",
+                                        onChange = { commentFilter = it },
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                } else {
+                                    DetailSectionTabButton(
+                                        label = "评论",
+                                        count = status?.comments ?: comments.size,
+                                        selected = false,
+                                        onClick = { activeTab = DetailSectionTab.Comments },
+                                        modifier = Modifier.testTag("detail_tab_comments"),
+                                    )
+                                }
+                                DetailSectionTabButton(
+                                    label = "转发",
+                                    count = status?.reposts ?: reposts.size,
+                                    selected = activeTab == DetailSectionTab.Reposts,
+                                    onClick = { activeTab = DetailSectionTab.Reposts },
+                                    modifier = Modifier.testTag("detail_tab_reposts"),
+                                )
+                            }
+                            if (activeTab == DetailSectionTab.Comments) {
+                                Spacer(Modifier.width(8.dp))
+                                // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
+                                // so the two orders share one compact track instead.
+                                SortSwitch(
+                                    selected = sort,
+                                    onSelect = ::switchSort,
+                                )
+                            }
                         }
                         // A hairline progress bar sits in the header's bottom padding, so a slow
                         // order switch reads as "refreshing in place" instead of a spinner flash.
                         SortProgressLine(
-                            visible = showSwitchProgress,
+                            visible = activeTab == DetailSectionTab.Comments && showSwitchProgress,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 // Drop into the list's 8dp item gap so the line is not glued to
@@ -592,93 +722,131 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                     }
                 }
 
-                itemsIndexed(visibleComments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
-                    CommentCard(
-                        comment = comment,
-                        statusId = id,
-                        mid = effectiveMid(),
-                        modifier = Modifier.graphicsLayer { alpha = commentsAlpha },
-                        likeTag = Modifier.testTag("comment_like_$index"),
-                        replyTag = Modifier.testTag("comment_reply_$index"),
-                        readOnly = readOnly,
-                        keepFrame = keepCardFrame,
-                        onOpenDetail = { activeCommentDetail = comment },
-                        onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
-                        onRepost = { repostComment = it },
-                        onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
-                        onUser = { nav.push(Route.Profile(it.id)) },
-                    ) {
-                        val at = comments.indexOfFirst { it.id == comment.id }
-                        if (at < 0) return@CommentCard
-                        val current = comments[at]
-                        if (App.repo.isCommentLikeInFlight(current.id)) return@CommentCard
-                        scope.launch {
-                            // 先问再改：确认框弹着的这段时间列表可能刷新过，回来重新找一遍位置。
-                            if (!App.confirmLike(current.liked)) return@launch
-                            if (App.repo.isCommentLikeInFlight(current.id)) return@launch
-                            val now = comments.indexOfFirst { it.id == current.id }
-                            if (now < 0) return@launch
-                            comments[now] = current.copy(
-                                liked = !current.liked,
-                                likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
-                            )
-                            // Comment likes have their own endpoints; api/attitudes/* is statuses only.
-                            runCatching { App.repo.likeComment(current.id, current.liked) }
-                                .onFailure {
-                                    val back = comments.indexOfFirst { it.id == current.id }
-                                    if (back >= 0) comments[back] = current
-                                    App.toast(it.message ?: "操作失败")
-                                }
-                        }
-                    }
-                }
-
-                item {
-                    when {
-                        // An order switch keeps the old rows visible and reports progress in the
-                        // header, so it must not also drop a spinner under the list.
-                        switchingSort -> Unit
-                        loadingComments -> LoadingState()
-                        commentError != null -> ErrorState(commentError!!) {
-                            scope.launch { loadComments(true, force = true) }
-                        }
-                        commentFilter.isActive && unmutedComments.isNotEmpty() && visibleComments.isEmpty() -> Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                if (activeTab == DetailSectionTab.Comments) {
+                    itemsIndexed(visibleComments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
+                        CommentCard(
+                            comment = comment,
+                            statusId = id,
+                            mid = effectiveMid(),
+                            modifier = Modifier.graphicsLayer { alpha = commentsAlpha },
+                            likeTag = Modifier.testTag("comment_like_$index"),
+                            replyTag = Modifier.testTag("comment_reply_$index"),
+                            readOnly = readOnly,
+                            keepFrame = keepCardFrame,
+                            onOpenDetail = { activeCommentDetail = comment },
+                            onImage = { pics, index -> nav.push(Route.Images(pics, index)) },
+                            onRepost = { repostComment = it },
+                            onReport = { nav.push(Route.Web(commentReportUrl(effectiveMid(), it.id), "投诉")) },
+                            onUser = { nav.push(Route.Profile(it.id)) },
                         ) {
-                            Text(
-                                text = commentFilterEmptyMessage(commentFilter),
-                                fontSize = 13.sp,
-                                color = scheme.onSurfaceSecondary,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                if (!commentsEnd) {
-                                    TextButton(
-                                        text = "加载更多",
-                                        onClick = { scope.launch { loadComments(false, force = false) } },
-                                    )
-                                }
-                                TextButton(
-                                    text = "显示全部评论",
-                                    onClick = { commentFilter = CommentFilterState() },
+                            val at = comments.indexOfFirst { it.id == comment.id }
+                            if (at < 0) return@CommentCard
+                            val current = comments[at]
+                            if (App.repo.isCommentLikeInFlight(current.id)) return@CommentCard
+                            scope.launch {
+                                // 先问再改：确认框弹着的这段时间列表可能刷新过，回来重新找一遍位置。
+                                if (!App.confirmLike(current.liked)) return@launch
+                                if (App.repo.isCommentLikeInFlight(current.id)) return@launch
+                                val now = comments.indexOfFirst { it.id == current.id }
+                                if (now < 0) return@launch
+                                comments[now] = current.copy(
+                                    liked = !current.liked,
+                                    likes = (current.likes + if (current.liked) -1 else 1).coerceAtLeast(0),
                                 )
+                                // Comment likes have their own endpoints; api/attitudes/* is statuses only.
+                                runCatching { App.repo.likeComment(current.id, current.liked) }
+                                    .onFailure {
+                                        val back = comments.indexOfFirst { it.id == current.id }
+                                        if (back >= 0) comments[back] = current
+                                        App.toast(it.message ?: "操作失败")
+                                    }
                             }
                         }
-                        commentsEnd -> Text(
-                            if (comments.isNotEmpty() && unmutedComments.isEmpty()) "当前评论已被屏蔽规则隐藏" else "没有更多评论",
-                            fontSize = 12.sp,
-                            color = scheme.onSurfaceSecondary,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    }
+
+                    item {
+                        when {
+                            // An order switch keeps the old rows visible and reports progress in the
+                            // header, so it must not also drop a spinner under the list.
+                            switchingSort -> Unit
+                            loadingComments -> LoadingState()
+                            commentError != null -> ErrorState(commentError!!) {
+                                scope.launch { loadComments(true, force = true) }
+                            }
+                            commentFilter.isActive && unmutedComments.isNotEmpty() && visibleComments.isEmpty() -> Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    text = commentFilterEmptyMessage(commentFilter),
+                                    fontSize = 13.sp,
+                                    color = scheme.onSurfaceSecondary,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    if (!commentsEnd) {
+                                        TextButton(
+                                            text = "加载更多",
+                                            onClick = { scope.launch { loadComments(false, force = false) } },
+                                        )
+                                    }
+                                    TextButton(
+                                        text = "显示全部评论",
+                                        onClick = { commentFilter = CommentFilterState() },
+                                    )
+                                }
+                            }
+                            commentsEnd -> Text(
+                                if (comments.isNotEmpty() && unmutedComments.isEmpty()) "当前评论已被屏蔽规则隐藏" else "没有更多评论",
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceSecondary,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                            comments.isNotEmpty() && unmutedComments.isEmpty() -> Text(
+                                "当前评论已被屏蔽规则隐藏",
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceSecondary,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                        }
+                    }
+                } else {
+                    itemsIndexed(visibleReposts, key = { index, repost -> "repost_${repost.id}#$index" }) { _, repost ->
+                        RepostRowCard(
+                            repost = repost,
+                            keepFrame = keepCardFrame,
+                            onUser = { nav.push(Route.Profile(it.id)) },
+                            onOpen = {
+                                nav.push(Route.Detail(repost.id, repost.mid, readOnly))
+                            },
                         )
-                        comments.isNotEmpty() && unmutedComments.isEmpty() -> Text(
-                            "当前评论已被屏蔽规则隐藏",
-                            fontSize = 12.sp,
-                            color = scheme.onSurfaceSecondary,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        )
+                    }
+
+                    item {
+                        when {
+                            loadingReposts -> LoadingState()
+                            repostError != null -> ErrorState(repostError!!) {
+                                scope.launch { loadReposts(true, force = true) }
+                            }
+                            repostsEnd -> Text(
+                                when {
+                                    reposts.isEmpty() -> "暂无转发"
+                                    visibleReposts.isEmpty() -> "当前转发已被屏蔽规则隐藏"
+                                    else -> "没有更多转发"
+                                },
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceSecondary,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                            reposts.isNotEmpty() && visibleReposts.isEmpty() -> Text(
+                                "当前转发已被屏蔽规则隐藏",
+                                fontSize = 12.sp,
+                                color = scheme.onSurfaceSecondary,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -716,7 +884,11 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                                 onClick = {
                                     scope.launch {
                                         status = runCatching { App.repo.detail(id, force = true) }.getOrNull()
-                                        loadComments(true, force = true)
+                                        if (activeTab == DetailSectionTab.Comments) {
+                                            loadComments(true, force = true)
+                                        } else {
+                                            loadReposts(true, force = true)
+                                        }
                                     }
                                 },
                                 modifier = Modifier.couiTopAppBarActionItem(),
@@ -940,6 +1112,11 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
                             val picIds = images.map { App.repo.uploadImage(it) }
                             App.repo.repost(id, effectiveMid(), text, visibility.code, picIds)
                             App.toast("转发成功")
+                            if (activeTab == DetailSectionTab.Reposts) {
+                                loadReposts(true, force = true)
+                            } else {
+                                repostsInitialized = false
+                            }
                             true
                         } catch (e: CancellationException) {
                             throw e
@@ -979,6 +1156,131 @@ fun DetailScreen(nav: NavState, id: String, mid: String, readOnly: Boolean = fal
 
 /** 去掉外框后补在列表 12dp 内边距上的横向留白，合计 16dp，与顶栏按钮外框对齐。 */
 internal val FlatCommentInset = 4.dp
+
+/** 详情页「评论 / 转发」切换标签，保持轻量紧凑并高亮当前选中的交互区。 */
+@Composable
+private fun DetailSectionTabButton(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = COUITheme.colorScheme
+    val displayText = if (count > 0) "$label ${fmtCount(count)}" else label
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = displayText,
+            fontSize = 14.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) scheme.onSurface else scheme.onSurfaceSecondary,
+        )
+        Spacer(Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .width(18.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(if (selected) scheme.primary else Color.Transparent),
+        )
+    }
+}
+
+/** 详情页转发列表条目，显示转发人信息、时间来源与转发态度正文，点击整条进入该转发详情。 */
+@Composable
+private fun RepostRowCard(
+    repost: Status,
+    keepFrame: Boolean,
+    onUser: (User) -> Unit,
+    onOpen: () -> Unit,
+) {
+    val scheme = COUITheme.colorScheme
+    val author = repost.user
+    val displayName = UserRemarks.displayName(author?.id, author?.name.orEmpty())
+    val body: @Composable () -> Unit = {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .let { mod ->
+                    if (keepFrame) mod else mod.clickable(onClick = onOpen)
+                }
+                .padding(
+                    horizontal = if (keepFrame) 14.dp else FlatCommentInset,
+                    vertical = 10.dp,
+                ),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Avatar(
+                url = author?.avatar,
+                size = 34.dp,
+                verifiedKind = author?.verifiedKind ?: VerifiedKind.None,
+                modifier = Modifier.clickable { author?.let(onUser) },
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = displayName,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .clickable { author?.let(onUser) },
+                    )
+                    val membership = author?.membership ?: Membership.None
+                    if (membership != Membership.None) {
+                        Spacer(Modifier.width(4.dp))
+                        MemberBadge(membership, compact = true, rank = author?.mbrank ?: 0, height = 14.dp)
+                    }
+                }
+                val meta = buildString {
+                    append(formatWeiboTime(repost.createdAt))
+                    if (repost.source.isNotBlank()) {
+                        if (isNotEmpty()) append(" 来自 ")
+                        append(repost.source)
+                    }
+                }
+                if (meta.isNotBlank()) {
+                    Text(
+                        text = meta,
+                        fontSize = 11.sp,
+                        color = scheme.onSurfaceSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (repost.textHtml.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    WeiboText(
+                        html = repost.textHtml,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                    )
+                }
+            }
+        }
+    }
+    if (keepFrame) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = CardDefaults.GroupCornerRadius,
+            insideMargin = PaddingValues(0.dp),
+            weight = CardDefaults.GroupWeight,
+            onClick = onOpen,
+        ) { body() }
+    } else {
+        body()
+    }
+}
 
 /** 网页版举报入口：`type=2` 是举报评论，`url` 指向它所在的那条微博。 */
 private fun commentReportUrl(mid: String, cid: String): String {

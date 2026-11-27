@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cobo.app.App
+import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.NotificationTab
 import com.cobo.app.data.Pic
 import com.cobo.app.data.RelationKind
@@ -224,7 +225,12 @@ sealed interface Route {
     data class Login(val addAccount: Boolean = false, val fresh: Boolean = false, val relogin: String? = null) : Route
     /** 手机号 + 短信验证码登录（Share 方案）：拿到 gsid 后可长期自动换取新 Cookie。 */
     data class SmsLogin(val addAccount: Boolean = false, val relogin: String? = null) : Route
-    data class Detail(val id: String, val mid: String, val readOnly: Boolean = false) : Route
+    data class Detail(
+        val id: String,
+        val mid: String,
+        val readOnly: Boolean = false,
+        val initialSection: DetailInitialSection = DetailInitialSection.Body,
+    ) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route
     data class Relations(val uid: String, val kind: RelationKind) : Route
