@@ -29,6 +29,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -572,5 +573,133 @@ fun WeiboRichText(
         color = color,
         linkColor = linkColor,
         selectable = selectable,
+    )
+}
+
+private val SharePlainHighlightRegex = Regex(
+    """https?://[^\s<>'"\u4E00-\u9FA5]+|#[^#\n]{1,40}#|@[\w\u4E00-\u9FA5\-_·]{1,30}""",
+)
+
+/**
+ * 构建用于图文分享海报的富文本与内联内容表：
+ * - 完整渲染微博表情包（`<img alt="[...]" src="...">` 与客户端 `[表情]` 短码）；
+ * - 完整渲染 HTML `<a>` 超链接（含超话/视频/图片/正文前缀图标）并统一着 [linkColor]；
+ * - 对非 `<a>` 包裹的裸链接（`http(s)://...`）、`#话题#` 与 `@提及` 同样补充 [linkColor] 高亮。
+ */
+internal fun buildShareWeiboAnnotated(
+    html: String,
+    linkColor: Color,
+    prefixAuthor: String? = null,
+    emojiUrlOf: (String) -> String? = WeiboEmojiBitmaps::urlOf,
+): Pair<AnnotatedString, Map<String, InlineTextContent>> {
+    val inlineContent = LinkedHashMap<String, InlineTextContent>()
+    val builder = AnnotatedString.Builder()
+    val linkSpanStyle = SpanStyle(color = linkColor, fontWeight = FontWeight.Medium)
+
+    val trimmedAuthor = prefixAuthor?.trim().orEmpty()
+    if (trimmedAuthor.isNotEmpty()) {
+        val start = builder.length
+        builder.append("@")
+        builder.append(trimmedAuthor)
+        builder.addStyle(linkSpanStyle, start, builder.length)
+        if (html.isNotBlank()) builder.append("：")
+    }
+
+    val normalizedHtml = html
+        .replace(Regex("(?i)</p>\\s*<p[^>]*>"), "<br/><br/>")
+        .replace(Regex("(?i)</?p[^>]*>"), "")
+        .trim()
+
+    fun appendPlainWithTokens(chunk: String) {
+        if (chunk.isEmpty()) return
+        val baseOffset = builder.length
+        builder.append(chunk)
+        SharePlainHighlightRegex.findAll(chunk).forEach { match ->
+            builder.addStyle(
+                style = linkSpanStyle,
+                start = baseOffset + match.range.first,
+                end = baseOffset + match.range.last + 1,
+            )
+        }
+    }
+
+    splitEmoji(normalizedHtml, emojiUrlOf).forEachIndexed { index, (url, segment) ->
+        if (url == null) {
+            val parsed = parseWeiboContent(segment)
+            val plain = parsed.plain
+            var cursor = 0
+            var inlineIndex = 0
+            parsed.links.forEach { link ->
+                if (link.start < cursor) return@forEach
+                if (link.start > cursor) {
+                    appendPlainWithTokens(plain.substring(cursor, link.start))
+                }
+                val spec = link.glyph?.let { glyphSpec(it) }
+                if (spec != null) {
+                    val id = "share_seg_${index}_${spec.tag}_${inlineIndex++}"
+                    builder.appendInlineContent(id, spec.alt)
+                    inlineContent[id] = linkPrefixInlineContent(
+                        icon = spec.icon,
+                        url = link.url,
+                        linkColor = linkColor,
+                        yOffset = spec.yOffset,
+                        onLink = null,
+                    )
+                }
+                val textStart = builder.length
+                builder.append(plain.substring(link.start, link.end))
+                builder.addStyle(linkSpanStyle, textStart, builder.length)
+                cursor = link.end
+            }
+            if (cursor < plain.length) {
+                appendPlainWithTokens(plain.substring(cursor))
+            }
+        } else {
+            val id = "share_emoji_$index"
+            builder.appendInlineContent(id, segment)
+            inlineContent[id] = InlineTextContent(
+                Placeholder(1.05.em, 1.05.em, PlaceholderVerticalAlign.Center),
+            ) {
+                AsyncImage(
+                    model = url,
+                    contentDescription = segment,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+    return builder.toAnnotatedString() to inlineContent
+}
+
+/** 图文分享海报专用富文本：保留表情包内联图片、全部超链接配色与字体族设置，不可点击且不可选区。 */
+@Composable
+internal fun ShareWeiboText(
+    html: String,
+    color: Color,
+    linkColor: Color,
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    modifier: Modifier = Modifier,
+    fontFamily: FontFamily = FontFamily.Default,
+    prefixAuthor: String? = null,
+) {
+    val emojiVersion = WeiboEmojiBitmaps.version
+    val (annotated, inline) = remember(html, linkColor, prefixAuthor, emojiVersion) {
+        buildShareWeiboAnnotated(
+            html = html,
+            linkColor = linkColor,
+            prefixAuthor = prefixAuthor,
+        )
+    }
+    if (annotated.text.isBlank() && inline.isEmpty()) return
+    Text(
+        text = annotated,
+        modifier = modifier,
+        color = color,
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        fontFamily = fontFamily,
+        fontWeight = FontWeight.Normal,
+        inlineContent = inline,
     )
 }

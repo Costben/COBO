@@ -178,8 +178,22 @@ class RecommendSeenStore(
     var version by mutableIntStateOf(0)
         private set
 
+    /** 仅在显式清空记录时递增，供前端同步清空内存去重集合。 */
+    var clearVersion by mutableIntStateOf(0)
+        private set
+
     init {
         root.mkdirs()
+    }
+
+    /** 仅在对应账号缓存已加载进内存时返回有效条数，避免在组合阶段触发主线程同步读盘。 */
+    fun countLoadedOrNull(owner: String, retentionMillis: Long): Int? {
+        if (retentionMillis <= 0L) return 0
+        val cached = cache[ownerKey(owner)] ?: return null
+        val now = clock()
+        return cached.toMap().count { (id, seenAt) ->
+            id.isNotBlank() && seenAt > 0L && (now - seenAt) <= retentionMillis
+        }
     }
 
     fun isSeen(owner: String, statusId: String, retentionMillis: Long): Boolean {
@@ -213,6 +227,7 @@ class RecommendSeenStore(
         val key = ownerKey(owner)
         cache.remove(key)
         runCatching { fileForKey(key).delete() }
+        clearVersion++
         version++
     }
 

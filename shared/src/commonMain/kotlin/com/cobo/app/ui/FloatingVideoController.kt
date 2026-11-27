@@ -432,7 +432,11 @@ fun FloatingVideoOverlay(
                             Icon(COUIIcons.Close, "关闭小窗", Modifier.size(14.dp))
                         }
                         HighlightedIconButton(
-                            onClick = { controller.requestSystemPip(session.aspectRatio) },
+                            onClick = {
+                                if (!controller.requestSystemPip(session.aspectRatio)) {
+                                    App.toast("当前设备不支持画中画")
+                                }
+                            },
                             size = 28.dp,
                         ) {
                             Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(14.dp))

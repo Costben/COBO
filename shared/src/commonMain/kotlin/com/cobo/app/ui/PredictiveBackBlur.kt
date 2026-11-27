@@ -66,6 +66,7 @@ internal class PredictiveBackBlurFilter {
     private var activeGestureId: Long = Long.MIN_VALUE
     private var activeGeneration: Int = Int.MIN_VALUE
     private var initialized: Boolean = false
+    private var lastUpdateNanos: Long = -1L
     private var smoothedRadiusPx: Float = 0f
     private var exitCeilingPx: Float = Float.POSITIVE_INFINITY
 
@@ -73,6 +74,7 @@ internal class PredictiveBackBlurFilter {
         activeGestureId = Long.MIN_VALUE
         activeGeneration = Int.MIN_VALUE
         initialized = false
+        lastUpdateNanos = -1L
         smoothedRadiusPx = 0f
         exitCeilingPx = Float.POSITIVE_INFINITY
     }
@@ -83,6 +85,7 @@ internal class PredictiveBackBlurFilter {
         active: Boolean,
         exiting: Boolean,
         targetRadiusPx: Float,
+        nowNanos: Long = -1L,
     ): Float {
         if (!active) {
             reset()
@@ -94,28 +97,49 @@ internal class PredictiveBackBlurFilter {
             activeGestureId = gestureId
             activeGeneration = generation
             initialized = true
+            lastUpdateNanos = nowNanos
             smoothedRadiusPx = cleanTarget
             exitCeilingPx = if (exiting) cleanTarget else Float.POSITIVE_INFINITY
-        } else if (exiting) {
-            exitCeilingPx = minOf(exitCeilingPx, smoothedRadiusPx)
-            val boundedTarget = minOf(cleanTarget, exitCeilingPx)
-            val delta = boundedTarget - smoothedRadiusPx
-            smoothedRadiusPx = if (abs(delta) <= 0.35f) {
-                boundedTarget
-            } else {
-                (smoothedRadiusPx + delta * 0.45f).coerceIn(0f, exitCeilingPx)
-            }
-            exitCeilingPx = minOf(exitCeilingPx, smoothedRadiusPx)
         } else {
-            val delta = cleanTarget - smoothedRadiusPx
-            if (abs(delta) > PredictiveBackBlurDeadzonePx) {
-                smoothedRadiusPx = (smoothedRadiusPx + delta * PredictiveBackBlurSmoothingAlpha).coerceAtLeast(0f)
-            } else if (cleanTarget <= PredictiveBackMotionDefaults.BACK_BLUR_THRESHOLD_PX) {
-                smoothedRadiusPx = 0f
+            val dtMs = if (nowNanos >= 0L && lastUpdateNanos >= 0L) {
+                val rawMs = (nowNanos - lastUpdateNanos) / 1_000_000f
+                if (rawMs < 1f) {
+                    // 同帧重复绘制不重复步进滤波器，防止刷新率/重绘次数影响收敛速度。
+                    return quantizeRadius(smoothedRadiusPx)
+                }
+                rawMs.coerceAtMost(64f)
+            } else {
+                16.667f
+            }
+            if (nowNanos >= 0L) lastUpdateNanos = nowNanos
+
+            if (exiting) {
+                exitCeilingPx = minOf(exitCeilingPx, smoothedRadiusPx)
+                val boundedTarget = minOf(cleanTarget, exitCeilingPx)
+                val delta = boundedTarget - smoothedRadiusPx
+                val stepAlpha = 1f - (1f - 0.45f).pow(dtMs / 16.667f)
+                smoothedRadiusPx = if (abs(delta) <= 0.35f) {
+                    boundedTarget
+                } else {
+                    (smoothedRadiusPx + delta * stepAlpha).coerceIn(0f, exitCeilingPx)
+                }
+                exitCeilingPx = minOf(exitCeilingPx, smoothedRadiusPx)
+            } else {
+                val delta = cleanTarget - smoothedRadiusPx
+                val stepAlpha = 1f - (1f - PredictiveBackBlurSmoothingAlpha).pow(dtMs / 16.667f)
+                if (abs(delta) > PredictiveBackBlurDeadzonePx) {
+                    smoothedRadiusPx = (smoothedRadiusPx + delta * stepAlpha).coerceAtLeast(0f)
+                } else if (cleanTarget <= PredictiveBackMotionDefaults.BACK_BLUR_THRESHOLD_PX) {
+                    smoothedRadiusPx = 0f
+                }
             }
         }
 
-        if (smoothedRadiusPx <= PredictiveBackMotionDefaults.BACK_BLUR_THRESHOLD_PX) return 0f
-        return (smoothedRadiusPx * 2f).roundToInt() / 2f
+        return quantizeRadius(smoothedRadiusPx)
+    }
+
+    private fun quantizeRadius(radiusPx: Float): Float {
+        if (radiusPx <= PredictiveBackMotionDefaults.BACK_BLUR_THRESHOLD_PX) return 0f
+        return (radiusPx * 2f).roundToInt() / 2f
     }
 }

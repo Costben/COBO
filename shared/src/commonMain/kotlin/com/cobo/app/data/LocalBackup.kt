@@ -41,6 +41,8 @@ data class SettingsBackup(
     val collapseFollowGroups: Boolean? = null,
     val hotBoardKeys: List<String>? = null,
     val reverseBrowse: Boolean? = null,
+    val filterSeenRecommend: Boolean? = null,
+    val recommendSeenRetentionDays: Int? = null,
     val feedCardFrame: Boolean? = null,
     val detailCardFrame: Boolean? = null,
     val foldLongText: Boolean? = null,
@@ -444,6 +446,8 @@ private fun encodeSettingsBackup(s: SettingsBackup): JSONObject = JSONObject().a
         put("hotBoardKeys", arr)
     }
     s.reverseBrowse?.let { put("reverseBrowse", it) }
+    s.filterSeenRecommend?.let { put("filterSeenRecommend", it) }
+    s.recommendSeenRetentionDays?.let { put("recommendSeenRetentionDays", it) }
     s.feedCardFrame?.let { put("feedCardFrame", it) }
     s.detailCardFrame?.let { put("detailCardFrame", it) }
     s.foldLongText?.let { put("foldLongText", it) }
@@ -538,6 +542,8 @@ private fun decodeSettingsBackup(o: JSONObject): SettingsBackup {
         collapseFollowGroups = optBoolOrNull("collapseFollowGroups"),
         hotBoardKeys = hotBoardKeys,
         reverseBrowse = optBoolOrNull("reverseBrowse"),
+        filterSeenRecommend = optBoolOrNull("filterSeenRecommend"),
+        recommendSeenRetentionDays = optIntOrNull("recommendSeenRetentionDays"),
         feedCardFrame = optBoolOrNull("feedCardFrame"),
         detailCardFrame = optBoolOrNull("detailCardFrame"),
         foldLongText = optBoolOrNull("foldLongText"),

@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import com.cobo.app.platform.PickedMediaRegistry
+import com.cobo.app.platform.PlatformBackHandler
 import com.cobo.app.platform.PlatformUri
 import com.cobo.app.platform.currentTimeMillis
 import com.cobo.app.platform.epochDayOfYear
@@ -10,6 +11,14 @@ import com.cobo.app.platform.logWarn
 import com.cobo.app.platform.parseWeiboDateMillis
 import com.cobo.app.platform.rememberPhotoPicker
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -99,6 +108,7 @@ import com.cobo.app.ui.pageContainerColor
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.CapsuleOutlineShape
+import io.github.suqi8.coui.kmp.basic.HorizontalDivider
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
@@ -108,8 +118,6 @@ import io.github.suqi8.coui.kmp.blur.Backdrop
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
-import io.github.suqi8.coui.kmp.layout.SheetCloseCapsule
-import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Photos
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
@@ -185,6 +193,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
     LaunchedEffect(composerFocused) {
         if (composerFocused) emojiOpen = false
     }
+    PlatformBackHandler(enabled = emojiOpen) { emojiOpen = false }
 
     // 20003：对方账号已注销，聊天记录取不到、消息也发不出去，界面直接收成一句话。
     // 群聊没有这个状态，群里某个成员注销不该把整间群锁死。
@@ -467,7 +476,7 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .onSizeChanged { composerHeightPx = it.height }
-                            .padding(bottom = navPad),
+                            .padding(bottom = if (emojiOpen) 0.dp else navPad),
                     ) {
                         ChatBottomBar(
                             value = draft,
@@ -494,6 +503,42 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                             focusRequester = composerFocus,
                             interactionSource = composerInteraction,
                             backdrop = if (blur) backdrop else null,
+                        )
+                    }
+                }
+            }
+
+            // 表情面板贴底展开在输入栏正下方，自动将输入栏与聊天列表一并顶上去，
+            // 连续点选多个表情时可实时看到输入框内容并直接发送。
+            if (!dead) {
+                AnimatedVisibility(
+                    visible = emojiOpen,
+                    enter = expandVertically(
+                        animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing),
+                        expandFrom = Alignment.Top,
+                    ) + fadeIn(tween(durationMillis = 180, easing = LinearOutSlowInEasing)),
+                    exit = shrinkVertically(
+                        animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing),
+                        shrinkTowards = Alignment.Top,
+                    ) + fadeOut(tween(durationMillis = 130, easing = FastOutLinearInEasing)),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(scheme.surfaceContainer)
+                            .padding(bottom = navPad)
+                            .testTag("chat_emoji_panel"),
+                    ) {
+                        HorizontalDivider(thickness = 0.5.dp, color = scheme.dividerLine)
+                        WeiboEmojiPanel(
+                            modifier = Modifier
+                                .padding(top = 8.dp, start = 8.dp, end = 8.dp, bottom = 6.dp)
+                                .height(264.dp),
+                            // 私信里表情就是微博那套 [微笑] 标记，和发博输入框一致，由服务端渲染成图；
+                            // 保持面板展开以便连续点选多个表情。
+                            onPick = { emoji ->
+                                insertAtSelection(emoji.phrase)
+                            },
                         )
                     }
                 }
@@ -553,35 +598,6 @@ fun ChatScreen(nav: NavState, uid: String, name: String, gid: String = "") {
                 }
             }
         }
-    }
-
-    OverlayBottomSheet(
-        show = emojiOpen,
-        // 「表情」从大标题挪到顶栏「关闭」右边，省下的 42dp 全给表情网格，
-        // 同样的面板高度能多显示一排。
-        startAction = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SheetCloseCapsule(onClick = { emojiOpen = false })
-                Text(
-                    "表情",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.onBackground,
-                    modifier = Modifier.padding(start = 10.dp),
-                )
-            }
-        },
-        onDismissRequest = { emojiOpen = false },
-    ) {
-        WeiboEmojiPanel(
-            // 原本 260dp，加上被大标题占掉的 3 + 27 + 12 = 42dp。
-            modifier = Modifier.height(302.dp),
-            // 私信里表情就是微博那套 [微笑] 标记，和发博输入框一致，由服务端渲染成图。
-            onPick = { emoji ->
-                insertAtSelection(emoji.phrase)
-                emojiOpen = false
-            },
-        )
     }
 }
 

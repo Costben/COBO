@@ -140,8 +140,8 @@ class ComposerInputState internal constructor(initialText: String) {
 
     fun insert(code: String, cursorBack: Int = 0) {
         val current = value.text
-        val start = value.selection.start.coerceIn(0, current.length)
-        val end = value.selection.end.coerceIn(start, current.length)
+        val start = value.selection.min.coerceIn(0, current.length)
+        val end = value.selection.max.coerceIn(start, current.length)
         val next = current.substring(0, start) + code + current.substring(end)
         val nextPos = (start + code.length - cursorBack).coerceIn(0, next.length)
         text = next

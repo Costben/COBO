@@ -5,19 +5,29 @@ import com.cobo.app.platform.currentTimeMillis
 import com.cobo.app.platform.ioDispatcher
 import com.cobo.app.platform.urlEncode
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -63,7 +73,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
@@ -199,12 +208,12 @@ import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.squircle.SquircleShape
 import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -229,10 +238,15 @@ fun DetailScreen(
             },
         )
     }
+    var displayedTab by remember(id, initialSection) { mutableStateOf(activeTab) }
+    val sectionTabAlpha = remember(id) { Animatable(1f) }
     val comments = remember(id) { mutableStateListOf<Comment>() }
     var maxId by remember(id) { mutableStateOf<String?>(null) }
     var maxIdType by remember(id) { mutableStateOf(0) }
     var sort by remember(id) { mutableStateOf(CommentSort.Hot) }
+    var displayedSort by remember(id) { mutableStateOf(CommentSort.Hot) }
+    var sortSwitchSeq by remember(id) { mutableIntStateOf(0) }
+    var sortSwitchJob by remember(id) { mutableStateOf<Job?>(null) }
     var nextCommentPage by remember(id) { mutableStateOf(1) }
     var loadingComments by remember(id) { mutableStateOf(false) }
     var commentsEnd by remember(id) { mutableStateOf(false) }
@@ -244,7 +258,7 @@ fun DetailScreen(
     var repostError by remember(id) { mutableStateOf<String?>(null) }
     var repostsInitialized by remember(id) { mutableStateOf(false) }
     var switchingSort by remember(id) { mutableStateOf(false) }
-    var showSwitchProgress by remember(id) { mutableStateOf(false) }
+    val sortContentAlpha = remember(id) { Animatable(1f) }
     var repostDialog by remember { mutableStateOf(false) }
     // 从评论菜单进来的转发：带上这条评论，composer 预填成引用它。
     var repostComment by remember { mutableStateOf<Comment?>(null) }
@@ -294,7 +308,6 @@ fun DetailScreen(
         if (!reset && (repostsEnd || nextRepostPage <= 0)) return
         loadingReposts = true
         repostError = null
-        repostsInitialized = true
         try {
             val page = App.repo.reposts(
                 id = effectiveId(),
@@ -309,19 +322,35 @@ fun DetailScreen(
             page.items.forEach { if (known.add(it.id)) reposts.add(it) }
             nextRepostPage = page.nextPage
             repostsEnd = page.items.isEmpty() || page.nextPage == 0 || (!reset && reposts.size == before)
+            repostsInitialized = true
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
             repostError = t.message ?: "转发加载失败"
+            repostsInitialized = true
         } finally {
             loadingReposts = false
         }
     }
 
-    suspend fun loadComments(reset: Boolean, force: Boolean = false, waitEnterTransition: Boolean = false) {
+    suspend fun loadComments(
+        reset: Boolean,
+        force: Boolean = false,
+        waitEnterTransition: Boolean = false,
+    ) {
+        if (reset) {
+            sortSwitchSeq++
+            sortSwitchJob?.cancel()
+            sortSwitchJob = null
+            switchingSort = false
+            if (sortContentAlpha.value < 1f) sortContentAlpha.snapTo(1f)
+        }
         if (loadingComments) return
-        if (!reset && switchingSort) return
+        if (!reset && (switchingSort || sort != displayedSort)) return
         loadingComments = true
         commentError = null
         val requestedSort = sort
+        val seq = sortSwitchSeq
         try {
             val page = App.repo.comments(
                 id = effectiveId(),
@@ -335,20 +364,25 @@ fun DetailScreen(
             // 若接口在卡片展开动画中途返回，先等展开落位再写入列表，避免动画中途大面积重组与排布掉帧。
             if (waitEnterTransition) awaitEnterTransitionSettled()
             // Another order took over while this page was on the wire; its rows are not ours.
-            if (sort != requestedSort) return
+            if (sort != requestedSort || sortSwitchSeq != seq) return
             if (reset) comments.clear()
             val known = comments.mapTo(HashSet()) { it.id }
             page.items.forEach { if (known.add(it.id)) comments.add(it) }
             maxId = page.maxId
             maxIdType = page.maxIdType
             nextCommentPage = page.nextPage
-            if (page.items.isEmpty() ||
-                (sort == CommentSort.Time && page.nextPage == 0)
-            ) {
-                commentsEnd = true
+            displayedSort = requestedSort
+            commentsEnd = if (reset) {
+                page.items.isEmpty() || (requestedSort == CommentSort.Time && page.nextPage == 0)
+            } else {
+                commentsEnd || page.items.isEmpty() || (requestedSort == CommentSort.Time && page.nextPage == 0)
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
-            commentError = t.message ?: "评论加载失败"
+            if (sortSwitchSeq == seq) {
+                commentError = t.message ?: "评论加载失败"
+            }
         } finally {
             loadingComments = false
         }
@@ -356,49 +390,82 @@ fun DetailScreen(
 
     fun switchSort(next: CommentSort) {
         if (sort == next) return
-        val previous = sort
-        val previousMaxId = maxId
-        val previousMaxIdType = maxIdType
-        val previousPage = nextCommentPage
-        val previousEnd = commentsEnd
+        val seq = ++sortSwitchSeq
+        sortSwitchJob?.cancel()
         sort = next
-        switchingSort = true
-        maxId = null
-        maxIdType = 0
-        nextCommentPage = 1
-        commentsEnd = false
-        commentError = null
-        // Keep the current rows on screen until the other order arrives; the header shows a
-        // slim progress line only if the wait is long enough to notice.
-        scope.launch {
-            // Let a page already on the wire for the old order land and be dropped first.
-            while (loadingComments) delay(30)
-            try {
-                loadComments(true, force = true)
-            } finally {
-                switchingSort = false
+        // 如果在目标排序还没加载完前用户又点回当前已展示的排序，直接保留现成列表，不重复请求也不闪烁。
+        if (next == displayedSort && (comments.isNotEmpty() || commentsEnd)) {
+            switchingSort = false
+            sortSwitchJob = if (sortContentAlpha.value < 1f) {
+                scope.launch {
+                    sortContentAlpha.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 160, easing = LinearOutSlowInEasing),
+                    )
+                }
+            } else {
+                null
             }
-            // The old rows are still on screen, so a failed switch must also put the control back
-            // instead of labelling hot comments as the newest ones.
-            val failure = commentError
-            if (failure != null && sort == next) {
-                sort = previous
-                maxId = previousMaxId
-                maxIdType = previousMaxIdType
-                nextCommentPage = previousPage
-                commentsEnd = previousEnd
-                commentError = null
-                App.toast(failure)
-            }
+            return
         }
-    }
-
-    LaunchedEffect(switchingSort) {
-        if (!switchingSort) {
-            showSwitchProgress = false
-        } else {
-            delay(180)
-            showSwitchProgress = true
+        switchingSort = true
+        sortSwitchJob = scope.launch {
+            // 若前一次切排序刚走到半透明就被打断，先平滑拉回满不透明度，保证等待新数据时旧列表始终清晰可见。
+            val restoreJob = if (sortContentAlpha.value < 1f) {
+                launch {
+                    sortContentAlpha.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = 140, easing = LinearOutSlowInEasing),
+                    )
+                }
+            } else {
+                null
+            }
+            // 先静默加载目标排序的第一页；数据没回来前绝不淡出旧列表，彻底避免淡出后的黑屏空窗。
+            val fetched = try {
+                App.repo.comments(
+                    id = effectiveId(),
+                    mid = effectiveMid(),
+                    sort = next,
+                    maxId = null,
+                    maxIdType = 0,
+                    page = 1,
+                    force = true,
+                )
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                restoreJob?.join()
+                if (sortSwitchSeq == seq) {
+                    switchingSort = false
+                    sort = displayedSort
+                    App.toast(t.message ?: "评论加载失败")
+                }
+                return@launch
+            }
+            restoreJob?.cancel()
+            if (sortSwitchSeq != seq) return@launch
+            // 目标列表已经就绪：旧列表淡出 -> 瞬时替换内存数据 -> 新列表淡入，全程无空白等待。
+            sortContentAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing),
+            )
+            if (sortSwitchSeq != seq) return@launch
+            comments.clear()
+            val known = HashSet<String>(fetched.items.size)
+            fetched.items.forEach { if (known.add(it.id)) comments.add(it) }
+            maxId = fetched.maxId
+            maxIdType = fetched.maxIdType
+            nextCommentPage = fetched.nextPage
+            commentsEnd = fetched.items.isEmpty() ||
+                (next == CommentSort.Time && fetched.nextPage == 0)
+            commentError = null
+            displayedSort = next
+            switchingSort = false
+            sortContentAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing),
+            )
         }
     }
 
@@ -461,10 +528,13 @@ fun DetailScreen(
         status = updated
     }
 
-    LaunchedEffect(listState.isScrollInProgress) {
-        if (listState.isScrollInProgress) {
-            userScrolled = true
-            pendingSectionJump = false
+    // 仅在检测到用户主动拖拽时中止自动校准，避免程序内 scrollToItem 误触发 isScrollInProgress。
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                userScrolled = true
+                pendingSectionJump = false
+            }
         }
     }
 
@@ -492,9 +562,34 @@ fun DetailScreen(
         lastEditHistoryVisible = nowHasHistory
     }
 
-    // 切到「转发」标签页时懒加载第一页转发列表。
-    LaunchedEffect(id, activeTab, status?.id) {
+    // 「评论 ↔ 转发」淡出淡入切换：若首次切到转发且尚未拉回数据，先等第一页转发加载完再播淡出淡入，避免中间空白。
+    LaunchedEffect(activeTab) {
+        if (activeTab == displayedTab) {
+            if (sectionTabAlpha.value < 1f) {
+                sectionTabAlpha.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 160, easing = LinearOutSlowInEasing),
+                )
+            }
+            return@LaunchedEffect
+        }
         if (activeTab == DetailSectionTab.Reposts && !repostsInitialized && (status != null || detailError != null)) {
+            loadReposts(reset = true, force = false)
+        }
+        sectionTabAlpha.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 150, easing = FastOutLinearInEasing),
+        )
+        displayedTab = activeTab
+        sectionTabAlpha.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing),
+        )
+    }
+
+    // 直接从外侧转发图标进入详情页（初始即处于转发态）时，等进场展开落位后懒加载第一页转发列表。
+    LaunchedEffect(id, displayedTab, status?.id) {
+        if (displayedTab == DetailSectionTab.Reposts && !repostsInitialized && (status != null || detailError != null)) {
             loadReposts(reset = true, force = false, waitEnterTransition = status != null)
         }
     }
@@ -531,13 +626,6 @@ fun DetailScreen(
             BottomFloatingToolbarDefaults.MinHeight,
             BottomFloatingNavigationBarDefaults.navigationBarPadding(),
         ),
-    )
-    // Rows dim only when the wait is long enough to show the header progress line; a cached or
-    // quick response swaps the list with no visible flash at all.
-    val commentsAlpha by animateFloatAsState(
-        targetValue = if (showSwitchProgress) 0.62f else 1f,
-        animationSpec = tween(durationMillis = 160),
-        label = "commentsAlpha",
     )
     val autoHideFloatingBars = App.settings.autoHideFloatingBars
     val detailBarScroll = rememberFloatingBarScrollController(
@@ -689,87 +777,72 @@ fun DetailScreen(
                         ) {
                             val repostCount = status?.reposts ?: reposts.size
                             val commentCount = status?.comments ?: comments.size
-                            Row(
+                            CommentFilterDropdownTitle(
+                                filter = commentFilter,
+                                defaultLabel = detailSectionTabLabel("评论", commentCount),
+                                showAuthorOption = !postAuthorUid.isNullOrBlank(),
+                                groupKey = "detail_comment_filter_$id",
+                                repostOptionLabel = detailSectionTabLabel("转发", repostCount),
+                                showingReposts = activeTab == DetailSectionTab.Reposts,
+                                onSelectReposts = {
+                                    preserveSectionPositionBeforeSwitch()
+                                    activeTab = DetailSectionTab.Reposts
+                                },
+                                onSelectAllComments = {
+                                    preserveSectionPositionBeforeSwitch()
+                                    activeTab = DetailSectionTab.Comments
+                                    commentFilter = CommentFilterState()
+                                },
+                                onChange = {
+                                    preserveSectionPositionBeforeSwitch()
+                                    activeTab = DetailSectionTab.Comments
+                                    commentFilter = it
+                                },
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                            )
+                            AnimatedVisibility(
+                                visible = activeTab == DetailSectionTab.Comments,
+                                enter = fadeIn(tween(180, easing = LinearOutSlowInEasing)) +
+                                    scaleIn(tween(180, easing = LinearOutSlowInEasing), initialScale = 0.92f) +
+                                    expandHorizontally(
+                                        animationSpec = tween(180, easing = LinearOutSlowInEasing),
+                                        expandFrom = Alignment.End,
+                                    ),
+                                exit = fadeOut(tween(130, easing = FastOutLinearInEasing)) +
+                                    scaleOut(tween(130, easing = FastOutLinearInEasing), targetScale = 0.92f) +
+                                    shrinkHorizontally(
+                                        animationSpec = tween(130, easing = FastOutLinearInEasing),
+                                        shrinkTowards = Alignment.End,
+                                    ),
                             ) {
-                                DetailSectionTabButton(
-                                    label = "转发",
-                                    count = repostCount,
-                                    selected = activeTab == DetailSectionTab.Reposts,
-                                    alignStartEdge = true,
-                                    onClick = {
-                                        preserveSectionPositionBeforeSwitch()
-                                        activeTab = DetailSectionTab.Reposts
-                                    },
-                                    modifier = Modifier.testTag("detail_tab_reposts"),
-                                )
-                                if (activeTab == DetailSectionTab.Comments) {
-                                    CommentFilterDropdownTitle(
-                                        filter = commentFilter,
-                                        defaultLabel = detailSectionTabLabel("评论", commentCount),
-                                        resetLabel = "显示全部评论",
-                                        showAuthorOption = !postAuthorUid.isNullOrBlank(),
-                                        groupKey = "detail_comment_filter_$id",
-                                        onChange = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Spacer(Modifier.width(8.dp))
+                                    // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
+                                    // so the two orders share one compact track instead.
+                                    SortSwitch(
+                                        selected = sort,
+                                        onSelect = {
                                             preserveSectionPositionBeforeSwitch()
-                                            commentFilter = it
+                                            switchSort(it)
                                         },
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.weight(1f, fill = false),
-                                    )
-                                } else {
-                                    DetailSectionTabButton(
-                                        label = "评论",
-                                        count = commentCount,
-                                        selected = false,
-                                        alignStartEdge = true,
-                                        onClick = {
-                                            preserveSectionPositionBeforeSwitch()
-                                            activeTab = DetailSectionTab.Comments
-                                        },
-                                        modifier = Modifier.testTag("detail_tab_comments"),
                                     )
                                 }
                             }
-                            if (activeTab == DetailSectionTab.Comments) {
-                                Spacer(Modifier.width(8.dp))
-                                // COUI's ChipTab is a 32dp, 14sp control that dwarfs a 13sp section label,
-                                // so the two orders share one compact track instead.
-                                SortSwitch(
-                                    selected = sort,
-                                    onSelect = {
-                                        preserveSectionPositionBeforeSwitch()
-                                        switchSort(it)
-                                    },
-                                )
-                            }
                         }
-                        // A hairline progress bar sits in the header's bottom padding, so a slow
-                        // order switch reads as "refreshing in place" instead of a spinner flash.
-                        SortProgressLine(
-                            visible = activeTab == DetailSectionTab.Comments && showSwitchProgress,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                // Drop into the list's 8dp item gap so the line is not glued to
-                                // the sort control's bottom edge.
-                                .offset(y = 2.dp)
-                                .padding(horizontal = if (keepCardFrame) 16.dp else FlatCommentInset)
-                                .fillMaxWidth()
-                                .height(2.dp),
-                        )
                     }
                 }
 
-                if (activeTab == DetailSectionTab.Comments) {
+                if (displayedTab == DetailSectionTab.Comments) {
                     itemsIndexed(visibleComments, key = { index, comment -> "${comment.id}#$index" }) { index, comment ->
                         CommentCard(
                             comment = comment,
                             statusId = id,
                             mid = effectiveMid(),
-                            modifier = Modifier.graphicsLayer { alpha = commentsAlpha },
+                            modifier = Modifier.graphicsLayer {
+                                alpha = sortContentAlpha.value * sectionTabAlpha.value
+                            },
                             likeTag = Modifier.testTag("comment_like_$index"),
                             replyTag = Modifier.testTag("comment_reply_$index"),
                             readOnly = readOnly,
@@ -806,54 +879,60 @@ fun DetailScreen(
                     }
 
                     item(key = "section_footer") {
-                        when {
-                            // An order switch keeps the old rows visible and reports progress in the
-                            // header, so it must not also drop a spinner under the list.
-                            switchingSort -> Unit
-                            loadingComments -> LoadingState()
-                            commentError != null -> ErrorState(commentError!!) {
-                                scope.launch { loadComments(true, force = true) }
-                            }
-                            commentFilter.isActive && unmutedComments.isNotEmpty() && visibleComments.isEmpty() -> Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                Text(
-                                    text = commentFilterEmptyMessage(commentFilter),
-                                    fontSize = 13.sp,
-                                    color = scheme.onSurfaceSecondary,
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    if (!commentsEnd) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = sortContentAlpha.value * sectionTabAlpha.value },
+                        ) {
+                            when {
+                                // An order switch keeps the old rows visible and reports progress in the
+                                // header, so it must not also drop a spinner under the list.
+                                switchingSort -> Unit
+                                loadingComments -> LoadingState()
+                                commentError != null -> ErrorState(commentError!!) {
+                                    scope.launch { loadComments(true, force = true) }
+                                }
+                                commentFilter.isActive && unmutedComments.isNotEmpty() && visibleComments.isEmpty() -> Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text(
+                                        text = commentFilterEmptyMessage(commentFilter),
+                                        fontSize = 13.sp,
+                                        color = scheme.onSurfaceSecondary,
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        if (!commentsEnd) {
+                                            TextButton(
+                                                text = "加载更多",
+                                                onClick = { scope.launch { loadComments(false, force = false) } },
+                                            )
+                                        }
                                         TextButton(
-                                            text = "加载更多",
-                                            onClick = { scope.launch { loadComments(false, force = false) } },
+                                            text = "显示全部评论",
+                                            onClick = {
+                                                preserveSectionPositionBeforeSwitch()
+                                                commentFilter = CommentFilterState()
+                                            },
                                         )
                                     }
-                                    TextButton(
-                                        text = "显示全部评论",
-                                        onClick = {
-                                            preserveSectionPositionBeforeSwitch()
-                                            commentFilter = CommentFilterState()
-                                        },
-                                    )
                                 }
+                                commentsEnd -> Text(
+                                    if (comments.isNotEmpty() && unmutedComments.isEmpty()) "当前评论已被屏蔽规则隐藏" else "没有更多评论",
+                                    fontSize = 12.sp,
+                                    color = scheme.onSurfaceSecondary,
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                )
+                                comments.isNotEmpty() && unmutedComments.isEmpty() -> Text(
+                                    "当前评论已被屏蔽规则隐藏",
+                                    fontSize = 12.sp,
+                                    color = scheme.onSurfaceSecondary,
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                )
                             }
-                            commentsEnd -> Text(
-                                if (comments.isNotEmpty() && unmutedComments.isEmpty()) "当前评论已被屏蔽规则隐藏" else "没有更多评论",
-                                fontSize = 12.sp,
-                                color = scheme.onSurfaceSecondary,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
-                            comments.isNotEmpty() && unmutedComments.isEmpty() -> Text(
-                                "当前评论已被屏蔽规则隐藏",
-                                fontSize = 12.sp,
-                                color = scheme.onSurfaceSecondary,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
                         }
                     }
                 } else {
@@ -861,6 +940,7 @@ fun DetailScreen(
                         RepostRowCard(
                             repost = repost,
                             keepFrame = keepCardFrame,
+                            modifier = Modifier.graphicsLayer { alpha = sectionTabAlpha.value },
                             onUser = { nav.push(Route.Profile(it.id)) },
                             onOpen = {
                                 nav.push(Route.Detail(repost.id, repost.mid, readOnly))
@@ -869,33 +949,39 @@ fun DetailScreen(
                     }
 
                     item(key = "section_footer") {
-                        when {
-                            loadingReposts -> LoadingState()
-                            repostError != null -> ErrorState(repostError!!) {
-                                scope.launch { loadReposts(true, force = true) }
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = sectionTabAlpha.value },
+                        ) {
+                            when {
+                                loadingReposts -> LoadingState()
+                                repostError != null -> ErrorState(repostError!!) {
+                                    scope.launch { loadReposts(true, force = true) }
+                                }
+                                repostsEnd -> Text(
+                                    when {
+                                        reposts.isEmpty() -> "暂无转发"
+                                        visibleReposts.isEmpty() -> "当前转发已被屏蔽规则隐藏"
+                                        else -> "没有更多转发"
+                                    },
+                                    fontSize = 12.sp,
+                                    color = scheme.onSurfaceSecondary,
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                )
+                                reposts.isNotEmpty() && visibleReposts.isEmpty() -> Text(
+                                    "当前转发已被屏蔽规则隐藏",
+                                    fontSize = 12.sp,
+                                    color = scheme.onSurfaceSecondary,
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                )
                             }
-                            repostsEnd -> Text(
-                                when {
-                                    reposts.isEmpty() -> "暂无转发"
-                                    visibleReposts.isEmpty() -> "当前转发已被屏蔽规则隐藏"
-                                    else -> "没有更多转发"
-                                },
-                                fontSize = 12.sp,
-                                color = scheme.onSurfaceSecondary,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
-                            reposts.isNotEmpty() && visibleReposts.isEmpty() -> Text(
-                                "当前转发已被屏蔽规则隐藏",
-                                fontSize = 12.sp,
-                                color = scheme.onSurfaceSecondary,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
                         }
                     }
                 }
 
                 val usableViewportPx = (lazyViewportHeightPx - fillerTopPadPx).coerceAtLeast(0)
-                val activeItemCount = if (activeTab == DetailSectionTab.Comments) {
+                val activeItemCount = if (displayedTab == DetailSectionTab.Comments) {
                     visibleComments.size
                 } else {
                     visibleReposts.size
@@ -1225,53 +1311,6 @@ internal val FlatCommentInset = 4.dp
 internal fun detailSectionTabLabel(label: String, count: Int): String =
     if (count > 0) "$label ${fmtCount(count)}" else label
 
-/** 详情页「转发 / 评论」切换标签，锁定粗体占位宽度防止切换选中态时右侧标签横向移位。 */
-@Composable
-private fun DetailSectionTabButton(
-    label: String,
-    count: Int,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    alignStartEdge: Boolean = false,
-) {
-    val scheme = COUITheme.colorScheme
-    val displayText = detailSectionTabLabel(label, count)
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(
-                start = if (alignStartEdge) 0.dp else 4.dp,
-                end = 4.dp,
-                top = 4.dp,
-                bottom = 4.dp,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(contentAlignment = Alignment.CenterStart) {
-            // 按 SemiBold 字重固定占位，防止切换选中态时字体宽度变化带动右侧评论标签左右移位。
-            Text(
-                text = displayText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.Transparent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clearAndSetSemantics {},
-            )
-            Text(
-                text = displayText,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) scheme.onSurface else scheme.onSurfaceSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
 /** 详情页转发列表条目，显示转发人信息、时间来源与转发态度正文，点击整条进入该转发详情。 */
 @Composable
 private fun RepostRowCard(
@@ -1279,13 +1318,14 @@ private fun RepostRowCard(
     keepFrame: Boolean,
     onUser: (User) -> Unit,
     onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val scheme = COUITheme.colorScheme
     val author = repost.user
     val displayName = UserRemarks.displayName(author?.id, author?.name.orEmpty())
     val body: @Composable () -> Unit = {
         Row(
-            modifier = Modifier
+            modifier = (if (keepFrame) Modifier else modifier)
                 .fillMaxWidth()
                 .let { mod ->
                     if (keepFrame) mod else mod.clickable(onClick = onOpen)
@@ -1351,7 +1391,7 @@ private fun RepostRowCard(
     }
     if (keepFrame) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth(),
             cornerRadius = CardDefaults.GroupCornerRadius,
             insideMargin = PaddingValues(0.dp),
             weight = CardDefaults.GroupWeight,
@@ -1593,15 +1633,16 @@ internal fun CommentMoreButton(
             )
         }
     }
-    val buttonSize = if (compact) 18.dp else 20.dp
-    val iconSize = if (compact) 16.dp else 18.dp
+    val buttonHeight = if (compact) 18.dp else 20.dp
+    val iconSize = if (compact) 14.dp else 15.dp
     val squircleEnabled = isSquircleEnabled()
     val moreButtonShape = remember(squircleEnabled) { SquircleShape(6.dp, squircleEnabled = squircleEnabled) }
 
     Box {
         Box(
             modifier = Modifier
-                .size(buttonSize)
+                .height(buttonHeight)
+                .widthIn(min = 24.dp)
                 .clip(moreButtonShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -1609,7 +1650,7 @@ internal fun CommentMoreButton(
                 ) { expanded = true }
                 .semantics { contentDescription = "更多" }
                 .testTag(if (compact) "reply_more_${comment.id}" else "comment_more_${comment.id}"),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.CenterEnd,
         ) {
             Icon(
                 imageVector = COUIIcons.More,
@@ -1814,6 +1855,7 @@ private fun CommentCard(    comment: Comment,
                         Text(
                             UserRemarks.displayName(comment.user?.id, comment.user?.name.orEmpty()),
                             fontSize = 15.sp,
+                            lineHeight = 20.sp,
                             // 跟楼中楼的 ID 同一档灰：评论正文才是主内容，ID 往后退一格。
                             color = scheme.onSurfaceSecondary,
                             fontWeight = FontWeight.SemiBold,
@@ -1949,12 +1991,12 @@ private fun CommentCard(    comment: Comment,
     }
     if (keepFrame) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth(),
             cornerRadius = CardDefaults.GroupCornerRadius,
             weight = CardDefaults.GroupWeight,
         ) { body() }
     } else {
-        body()
+        Box(modifier.fillMaxWidth()) { body() }
     }
 
     replyTarget?.let { target ->
@@ -2002,6 +2044,7 @@ internal fun ReplyRow(
     val avatarSize = if (compact) 22.dp else 36.dp
     val avatarGap = if (compact) 8.dp else 10.dp
     val nameSize = if (compact) 14.sp else 15.sp
+    val nameLineHeight = if (compact) 18.sp else 20.sp
     val nameWeight = if (compact) FontWeight.Medium else FontWeight.SemiBold
     val badgeSize = if (compact) 13.dp else 14.dp
     val bodyGap = if (compact) 2.dp else 4.dp
@@ -2033,6 +2076,7 @@ internal fun ReplyRow(
                     Text(
                         UserRemarks.displayName(reply.user?.id, reply.user?.name.orEmpty()),
                         fontSize = nameSize,
+                        lineHeight = nameLineHeight,
                         color = scheme.onSurfaceSecondary,
                         fontWeight = nameWeight,
                         maxLines = 1,
@@ -2184,33 +2228,87 @@ private fun SortSwitch(
 internal fun CommentFilterDropdownTitle(
     filter: CommentFilterState,
     defaultLabel: String,
-    resetLabel: String,
     showAuthorOption: Boolean,
     groupKey: String,
     onChange: (CommentFilterState) -> Unit,
     modifier: Modifier = Modifier,
     fontSize: TextUnit = 14.sp,
     fontWeight: FontWeight = FontWeight.SemiBold,
+    repostOptionLabel: String? = null,
+    showingReposts: Boolean = false,
+    onSelectReposts: (() -> Unit)? = null,
+    onSelectAllComments: (() -> Unit)? = null,
 ) {
     val scheme = COUITheme.colorScheme
     val dark = scheme.background.luminance() < 0.5f
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
     var expanded by remember(groupKey) { mutableStateOf(false) }
-
-    val active = filter.isActive
-    val triggerLabel = commentFilterTriggerLabel(filter, defaultLabel)
-    val triggerBg = if (active) {
-        scheme.primary.copy(alpha = if (dark) 0.22f else 0.13f)
-    } else {
-        Color.Transparent
+    var displayedTopIsReposts by remember(groupKey) { mutableStateOf(showingReposts) }
+    val topItemAlpha = remember(groupKey) { Animatable(1f) }
+    LaunchedEffect(showingReposts, expanded) {
+        if (!expanded) {
+            displayedTopIsReposts = showingReposts
+            if (topItemAlpha.value != 1f) topItemAlpha.snapTo(1f)
+            return@LaunchedEffect
+        }
+        if (displayedTopIsReposts == showingReposts) return@LaunchedEffect
+        topItemAlpha.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 120, easing = FastOutLinearInEasing),
+        )
+        displayedTopIsReposts = showingReposts
+        topItemAlpha.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+        )
     }
-    val textColor = if (active) scheme.primary else scheme.onSurface
-    val chevronColor = if (active) scheme.primary else scheme.onSurfaceSecondary
+
+    val filterActive = !showingReposts && filter.isActive
+    val triggerLabel = if (showingReposts && !repostOptionLabel.isNullOrBlank()) {
+        repostOptionLabel
+    } else {
+        commentFilterTriggerLabel(filter, defaultLabel)
+    }
+    val triggerBg by animateColorAsState(
+        targetValue = if (filterActive) {
+            scheme.primary.copy(alpha = if (dark) 0.22f else 0.13f)
+        } else {
+            Color.Transparent
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "commentFilterTriggerBg",
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (filterActive) scheme.primary else scheme.onSurface,
+        animationSpec = tween(durationMillis = 180),
+        label = "commentFilterTextColor",
+    )
+    val chevronColor by animateColorAsState(
+        targetValue = if (filterActive) scheme.primary else scheme.onSurfaceSecondary,
+        animationSpec = tween(durationMillis = 180),
+        label = "commentFilterChevronColor",
+    )
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = tween(durationMillis = 180),
         label = "commentFilterChevron",
     )
+
+    // 预先按菜单内所有可能出现的文案（含转发项与评论项）计算稳定最小宽度，
+    // 保证菜单初始展开宽度与选中某项后完全一致，不会在点选瞬间突然加宽。
+    val stableMenuMinWidth = remember(defaultLabel, repostOptionLabel, showAuthorOption, density) {
+        val candidates = buildList {
+            add(defaultLabel)
+            if (!repostOptionLabel.isNullOrBlank()) add(repostOptionLabel)
+            if (showAuthorOption) add("仅看博主")
+            add("仅看带图")
+        }
+        val style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Normal)
+        val maxTextPx = candidates.maxOfOrNull { textMeasurer.measure(it, style = style).size.width } ?: 0
+        with(density) { maxTextPx.toDp() } + 104.dp
+    }
 
     Row(
         modifier = modifier,
@@ -2226,24 +2324,35 @@ internal fun CommentFilterDropdownTitle(
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         expanded = !expanded
                     }
+                    .animateContentSize(animationSpec = tween(180, easing = LinearOutSlowInEasing))
                     .padding(
-                        start = if (active) 9.dp else 0.dp,
-                        end = if (active) 7.dp else 4.dp,
+                        start = if (filterActive) 9.dp else 0.dp,
+                        end = if (filterActive) 7.dp else 4.dp,
                         top = 4.dp,
                         bottom = 4.dp,
                     )
                     .testTag("comment_filter_trigger"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = triggerLabel,
-                    fontSize = fontSize,
-                    fontWeight = if (active) FontWeight.SemiBold else fontWeight,
-                    color = textColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                AnimatedContent(
+                    targetState = triggerLabel,
+                    transitionSpec = {
+                        (fadeIn(tween(170, easing = LinearOutSlowInEasing)) togetherWith
+                            fadeOut(tween(110, easing = FastOutLinearInEasing)))
+                            .using(SizeTransform(clip = false))
+                    },
+                    label = "commentFilterTriggerLabel",
                     modifier = Modifier.weight(1f, fill = false),
-                )
+                ) { label ->
+                    Text(
+                        text = label,
+                        fontSize = fontSize,
+                        fontWeight = if (filterActive) FontWeight.SemiBold else fontWeight,
+                        color = textColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Spacer(Modifier.width(3.dp))
                 Icon(
                     imageVector = CoboIcons.ChevronDown,
@@ -2262,95 +2371,132 @@ internal fun CommentFilterDropdownTitle(
             ) {
                 val dismiss = LocalDismissState.current
                 val menuScheme = COUITheme.colorScheme
-                val optionSize = (if (showAuthorOption) 1 else 0) + 1 + (if (active) 1 else 0)
+                val repostLabel = repostOptionLabel?.takeIf { it.isNotBlank() }
+                val repostSelectHandler = onSelectReposts
+                val hasSectionSwitchOption = repostLabel != null && repostSelectHandler != null
+                val optionSize = (if (hasSectionSwitchOption) 1 else 0) +
+                    (if (showAuthorOption) 1 else 0) +
+                    1
+                val itemWidthMod = Modifier.widthIn(min = stableMenuMinWidth)
                 var idx = 0
-                ListPopupColumn {
-                    if (showAuthorOption) {
-                        val authorTint = if (filter.authorOnly) menuScheme.primary else menuScheme.onSurfaceContainer
+                Box(
+                    modifier = Modifier.animateContentSize(
+                        animationSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+                    ),
+                ) {
+                    ListPopupColumn {
+                        // 首项互切：必须作为 ListPopupColumn 的直接子节点，以保留 COUI PopupListItemHandle 手势与点击注册；
+                        // 转发态点选「仅看博主 / 仅看带图」时菜单保持展开，首项通过 graphicsLayer 原地先淡出再淡入由「评论」切为「转发」。
+                        if (hasSectionSwitchOption) {
+                            val topLabel = if (displayedTopIsReposts) defaultLabel else repostLabel
+                            val topIcon = if (displayedTopIsReposts) CoboIcons.Comment else CoboIcons.Repost
+                            val topTag = if (displayedTopIsReposts) "detail_tab_comments" else "detail_tab_reposts"
+                            DropdownImpl(
+                                item = DropdownItem(
+                                    text = topLabel,
+                                    icon = { iconModifier ->
+                                        Box(iconModifier, contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = topIcon,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                                tint = menuScheme.onSurfaceContainer,
+                                            )
+                                        }
+                                    },
+                                ),
+                                optionSize = optionSize,
+                                isSelected = false,
+                                index = idx++,
+                                modifier = itemWidthMod
+                                    .graphicsLayer { alpha = topItemAlpha.value }
+                                    .testTag(topTag),
+                                groupKey = groupKey,
+                                role = Role.Button,
+                                onSelectedIndexChange = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.ToggleOn)
+                                    dismiss?.invoke()
+                                    expanded = false
+                                    if (showingReposts) {
+                                        if (onSelectAllComments != null) {
+                                            onSelectAllComments()
+                                        } else {
+                                            onChange(CommentFilterState())
+                                        }
+                                    } else {
+                                        repostSelectHandler()
+                                    }
+                                },
+                            )
+                        }
+                        if (showAuthorOption) {
+                            val authorSelected = !showingReposts && filter.authorOnly
+                            val authorTint = if (authorSelected) menuScheme.primary else menuScheme.onSurfaceContainer
+                            DropdownImpl(
+                                item = DropdownItem(
+                                    text = "仅看博主",
+                                    icon = { iconModifier ->
+                                        Box(iconModifier, contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = CoboIcons.ProfileOutline,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                                tint = authorTint,
+                                            )
+                                        }
+                                    },
+                                ),
+                                optionSize = optionSize,
+                                isSelected = authorSelected,
+                                index = idx++,
+                                modifier = itemWidthMod.testTag("comment_filter_author"),
+                                groupKey = groupKey,
+                                role = Role.Checkbox,
+                                onSelectedIndexChange = {
+                                    val next = if (showingReposts) true else !filter.authorOnly
+                                    haptic.performHapticFeedback(
+                                        if (next) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
+                                    )
+                                    if (showingReposts) {
+                                        onChange(CommentFilterState(authorOnly = true))
+                                    } else {
+                                        onChange(filter.copy(authorOnly = next))
+                                    }
+                                },
+                            )
+                        }
+                        val imageSelected = !showingReposts && filter.imagesOnly
+                        val imageTint = if (imageSelected) menuScheme.primary else menuScheme.onSurfaceContainer
                         DropdownImpl(
                             item = DropdownItem(
-                                text = "仅看博主",
+                                text = "仅看带图",
                                 icon = { iconModifier ->
                                     Box(iconModifier, contentAlignment = Alignment.Center) {
                                         Icon(
-                                            imageVector = CoboIcons.ProfileOutline,
+                                            imageVector = CoboIcons.Image,
                                             contentDescription = null,
                                             modifier = Modifier.size(18.dp),
-                                            tint = authorTint,
+                                            tint = imageTint,
                                         )
                                     }
                                 },
                             ),
                             optionSize = optionSize,
-                            isSelected = filter.authorOnly,
+                            isSelected = imageSelected,
                             index = idx++,
-                            modifier = Modifier.testTag("comment_filter_author"),
+                            modifier = itemWidthMod.testTag("comment_filter_images"),
                             groupKey = groupKey,
                             role = Role.Checkbox,
                             onSelectedIndexChange = {
-                                val next = !filter.authorOnly
+                                val next = if (showingReposts) true else !filter.imagesOnly
                                 haptic.performHapticFeedback(
                                     if (next) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
                                 )
-                                onChange(filter.copy(authorOnly = next))
-                            },
-                        )
-                    }
-                    val imageTint = if (filter.imagesOnly) menuScheme.primary else menuScheme.onSurfaceContainer
-                    DropdownImpl(
-                        item = DropdownItem(
-                            text = "仅看带图",
-                            icon = { iconModifier ->
-                                Box(iconModifier, contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = CoboIcons.Image,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
-                                        tint = imageTint,
-                                    )
+                                if (showingReposts) {
+                                    onChange(CommentFilterState(imagesOnly = true))
+                                } else {
+                                    onChange(filter.copy(imagesOnly = next))
                                 }
-                            },
-                        ),
-                        optionSize = optionSize,
-                        isSelected = filter.imagesOnly,
-                        index = idx++,
-                        modifier = Modifier.testTag("comment_filter_images"),
-                        groupKey = groupKey,
-                        role = Role.Checkbox,
-                        onSelectedIndexChange = {
-                            val next = !filter.imagesOnly
-                            haptic.performHapticFeedback(
-                                if (next) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff,
-                            )
-                            onChange(filter.copy(imagesOnly = next))
-                        },
-                    )
-                    if (active) {
-                        DropdownImpl(
-                            item = DropdownItem(
-                                text = resetLabel,
-                                icon = { iconModifier ->
-                                    Box(iconModifier, contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = CoboIcons.Comment,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                            tint = menuScheme.onSurfaceContainer,
-                                        )
-                                    }
-                                },
-                            ),
-                            optionSize = optionSize,
-                            isSelected = false,
-                            index = idx++,
-                            modifier = Modifier.testTag("comment_filter_reset"),
-                            groupKey = groupKey,
-                            role = Role.Button,
-                            onSelectedIndexChange = {
-                                haptic.performHapticFeedback(HapticFeedbackType.ToggleOff)
-                                dismiss?.invoke()
-                                expanded = false
-                                onChange(CommentFilterState())
                             },
                         )
                     }
@@ -2358,7 +2504,15 @@ internal fun CommentFilterDropdownTitle(
             }
         }
 
-        if (active) {
+        AnimatedVisibility(
+            visible = filterActive,
+            enter = fadeIn(tween(180, easing = LinearOutSlowInEasing)) +
+                scaleIn(tween(180, easing = LinearOutSlowInEasing), initialScale = 0.72f) +
+                expandHorizontally(tween(180, easing = LinearOutSlowInEasing)),
+            exit = fadeOut(tween(130, easing = FastOutLinearInEasing)) +
+                scaleOut(tween(130, easing = FastOutLinearInEasing), targetScale = 0.72f) +
+                shrinkHorizontally(tween(130, easing = FastOutLinearInEasing)),
+        ) {
             Box(
                 modifier = Modifier
                     .size(22.dp)
@@ -2502,42 +2656,6 @@ internal fun <T> CompactSortSwitch(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SortProgressLine(visible: Boolean, modifier: Modifier = Modifier) {
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 160),
-        label = "sortProgressAlpha",
-    )
-    if (alpha <= 0.01f) return
-    val transition = rememberInfiniteTransition(label = "sortProgress")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "sortProgressPhase",
-    )
-    val scheme = COUITheme.colorScheme
-    val trackAlpha = if (scheme.background.luminance() < 0.5f) 0.10f else 0.045f
-    Canvas(modifier.graphicsLayer { this.alpha = alpha }) {
-        val radius = CornerRadius(size.height / 2f)
-        drawRoundRect(
-            color = scheme.onSurface.copy(alpha = trackAlpha),
-            cornerRadius = radius,
-        )
-        val bar = size.width * 0.32f
-        drawRoundRect(
-            color = scheme.primary.copy(alpha = 0.48f),
-            topLeft = Offset((size.width + bar) * phase - bar, 0f),
-            size = Size(bar, size.height),
-            cornerRadius = radius,
-        )
     }
 }
 

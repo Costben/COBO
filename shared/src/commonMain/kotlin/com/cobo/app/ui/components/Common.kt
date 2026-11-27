@@ -467,7 +467,7 @@ val FullPageRefreshTexts = FullPagePullToRefreshTexts(
 )
 
 /** How long the success hint stays up before the page rebounds; COUI's 800ms default drags. */
-const val FullPageRefreshHoldMillis = 200L
+const val FullPageRefreshHoldMillis = 420L
 
 @Composable
 fun navBottomPadding(): Dp =

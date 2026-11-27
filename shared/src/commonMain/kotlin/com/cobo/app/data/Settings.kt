@@ -981,6 +981,8 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         collapseFollowGroups = collapseFollowGroups,
         hotBoardKeys = HotBoard.entries.filter { it in hotBoards }.map { it.filterType },
         reverseBrowse = reverseBrowse,
+        filterSeenRecommend = filterSeenRecommend,
+        recommendSeenRetentionDays = recommendSeenRetentionDays,
         feedCardFrame = feedCardFrame,
         detailCardFrame = detailCardFrame,
         foldLongText = foldLongText,
@@ -1058,6 +1060,8 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
             applyHotBoards(HotBoard.entries.filter { it.filterType in keySet }.toSet())
         }
         backup.reverseBrowse?.let(::applyReverseBrowse)
+        backup.filterSeenRecommend?.let(::applyFilterSeenRecommend)
+        backup.recommendSeenRetentionDays?.let(::applyRecommendSeenRetentionDays)
         backup.feedCardFrame?.let(::applyFeedCardFrame)
         backup.detailCardFrame?.let(::applyDetailCardFrame)
         backup.foldLongText?.let(::applyFoldLongText)

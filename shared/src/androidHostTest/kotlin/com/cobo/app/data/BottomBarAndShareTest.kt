@@ -8,6 +8,7 @@ import com.cobo.app.ui.components.ImageGridLayout
 import com.cobo.app.ui.components.ShareWidthMaxDp
 import com.cobo.app.ui.components.ShareWidthMinDp
 import com.cobo.app.ui.components.buildShareRichText
+import com.cobo.app.ui.components.buildShareWeiboAnnotated
 import com.cobo.app.ui.components.buildWeiboShareUrl
 import com.cobo.app.ui.components.formatShareBodyText
 import com.cobo.app.ui.components.formatShareDateTime
@@ -115,6 +116,22 @@ class BottomBarAndShareTest {
         assertEquals(960f / ShareWidthMaxDp, clampedHigh.density, 0.001f)
         val clampedLow = resolveSharePosterDensity(base, containerWidthPx = 960, targetWidthDp = 100)
         assertEquals(960f / ShareWidthMinDp, clampedLow.density, 0.001f)
+
+        val html = """看这个 <a href="https://example.com/a">网页链接</a> 和 [微笑] <img alt="[可爱]" src="https://face.t.sinajs.cn/cute.png"/> 还有 https://cobo.app/docs #话题#"""
+        val (shareAnnotated, inlineMap) = buildShareWeiboAnnotated(
+            html = html,
+            linkColor = Color.Blue,
+            prefixAuthor = "原博主",
+            emojiUrlOf = { if (it == "[微笑]") "https://face.t.sinajs.cn/smile.png" else null },
+        )
+        assertTrue("Expected 2 inline emojis, got ${inlineMap.keys}", inlineMap.size >= 2)
+        val styledPieces = shareAnnotated.spanStyles.map {
+            shareAnnotated.text.substring(it.start, it.end)
+        }
+        assertTrue("Expected @原博主 highlighted, got $styledPieces", "@原博主" in styledPieces)
+        assertTrue("Expected 网页链接 highlighted, got $styledPieces", "网页链接" in styledPieces)
+        assertTrue("Expected bare URL highlighted, got $styledPieces", "https://cobo.app/docs" in styledPieces)
+        assertTrue("Expected #话题# highlighted, got $styledPieces", "#话题#" in styledPieces)
     }
 
     @Test

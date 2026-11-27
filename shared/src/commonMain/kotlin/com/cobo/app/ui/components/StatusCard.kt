@@ -647,7 +647,7 @@ private fun StatusMoreButton(
                 imageVector = COUIIcons.More,
                 contentDescription = null,
                 tint = scheme.onSurfaceSecondary,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(15.dp),
             )
         }
         OverlayListPopup(

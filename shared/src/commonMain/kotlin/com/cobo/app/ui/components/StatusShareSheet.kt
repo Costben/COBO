@@ -885,8 +885,9 @@ private fun BentoTicketSharePoster(
     val chipBg = if (dark) Color(0x1AFFFFFF) else Color(0x0D0F172A)
 
     val user = status.user
-    val mainText = remember(status.textHtml) { formatShareBodyText(status.textHtml) }
-    val richBody = remember(mainText, linkColor) { buildShareRichText(mainText, linkColor) }
+    val hasMainBody = remember(status.textHtml) {
+        status.textHtml.isNotBlank() && (formatShareBodyText(status.textHtml).isNotBlank() || status.textHtml.contains("<img", ignoreCase = true))
+    }
     val absoluteDate = remember(status.createdAt) { formatShareDateTime(status.createdAt) }
     val subMeta = remember(status.region, status.source) {
         buildList {
@@ -957,13 +958,14 @@ private fun BentoTicketSharePoster(
                 }
             }
 
-            if (mainText.isNotBlank()) {
+            if (hasMainBody) {
                 Spacer(Modifier.height(13.dp))
-                Text(
-                    text = richBody,
+                ShareWeiboText(
+                    html = status.textHtml,
+                    color = textPrimary,
+                    linkColor = linkColor,
                     fontSize = 15.sp,
                     lineHeight = 24.sp,
-                    color = textPrimary,
                 )
             }
 
@@ -994,24 +996,19 @@ private fun BentoTicketSharePoster(
                         .padding(12.dp),
                 ) {
                     val quotedAuthor = quoted.user?.name.orEmpty()
-                    val quotedBody = remember(quoted.textHtml) { formatShareBodyText(quoted.textHtml) }
-                    val quotedCombined = buildString {
-                        if (quotedAuthor.isNotBlank()) {
-                            append("@")
-                            append(quotedAuthor)
-                            if (quotedBody.isNotBlank()) append("：")
-                        }
-                        append(quotedBody)
+                    val hasQuotedBody = remember(quoted.textHtml, quotedAuthor) {
+                        quotedAuthor.isNotBlank() ||
+                            formatShareBodyText(quoted.textHtml).isNotBlank() ||
+                            quoted.textHtml.contains("<img", ignoreCase = true)
                     }
-                    if (quotedCombined.isNotBlank()) {
-                        val richQuoted = remember(quotedCombined, linkColor) {
-                            buildShareRichText(quotedCombined, linkColor)
-                        }
-                        Text(
-                            text = richQuoted,
+                    if (hasQuotedBody) {
+                        ShareWeiboText(
+                            html = quoted.textHtml,
+                            prefixAuthor = quotedAuthor.takeIf { it.isNotBlank() },
+                            color = textPrimary.copy(alpha = 0.92f),
+                            linkColor = linkColor,
                             fontSize = 13.5.sp,
                             lineHeight = 20.5.sp,
-                            color = textPrimary.copy(alpha = 0.92f),
                         )
                     }
                     if (quoted.pics.isNotEmpty()) {
@@ -1176,8 +1173,9 @@ private fun EditorialSharePoster(
 ) {
     val bodyFont = if (serif) FontFamily.Serif else FontFamily.Default
     val user = status.user
-    val mainText = remember(status.textHtml) { formatShareBodyText(status.textHtml) }
-    val richBody = remember(mainText, theme.accent) { buildShareRichText(mainText, theme.accent) }
+    val hasMainBody = remember(status.textHtml) {
+        status.textHtml.isNotBlank() && (formatShareBodyText(status.textHtml).isNotBlank() || status.textHtml.contains("<img", ignoreCase = true))
+    }
     val absoluteDate = remember(status.createdAt) { formatShareDateTime(status.createdAt) }
     val mastheadDate = remember(status.createdAt) { formatShareMastheadDate(status.createdAt) }
     val hasTopMedia = status.pics.isNotEmpty() || status.video != null
@@ -1281,7 +1279,7 @@ private fun EditorialSharePoster(
                 }
 
                 // 纯文字视图：优雅书卷引号
-                if (isPureText && mainText.isNotBlank()) {
+                if (isPureText && hasMainBody) {
                     Spacer(Modifier.height(14.dp))
                     Text(
                         text = "“",
@@ -1293,14 +1291,15 @@ private fun EditorialSharePoster(
                     )
                 }
 
-                if (mainText.isNotBlank()) {
+                if (hasMainBody) {
                     Spacer(Modifier.height(if (isPureText) 2.dp else 14.dp))
-                    Text(
-                        text = richBody,
+                    ShareWeiboText(
+                        html = status.textHtml,
+                        color = theme.textPrimary,
+                        linkColor = theme.accent,
                         fontSize = if (serif) 15.5.sp else 15.sp,
                         lineHeight = 26.5.sp,
                         fontFamily = bodyFont,
-                        color = theme.textPrimary,
                     )
                 }
 
@@ -1332,17 +1331,18 @@ private fun EditorialSharePoster(
                                 )
                                 Spacer(Modifier.height(4.dp))
                             }
-                            val quotedBody = remember(quoted.textHtml) { formatShareBodyText(quoted.textHtml) }
-                            if (quotedBody.isNotBlank()) {
-                                val richQuoted = remember(quotedBody, theme.accent) {
-                                    buildShareRichText(quotedBody, theme.accent)
-                                }
-                                Text(
-                                    text = richQuoted,
+                            val hasQuotedBody = remember(quoted.textHtml) {
+                                formatShareBodyText(quoted.textHtml).isNotBlank() ||
+                                    quoted.textHtml.contains("<img", ignoreCase = true)
+                            }
+                            if (hasQuotedBody) {
+                                ShareWeiboText(
+                                    html = quoted.textHtml,
+                                    color = theme.textPrimary.copy(alpha = 0.86f),
+                                    linkColor = theme.accent,
                                     fontSize = 13.5.sp,
                                     lineHeight = 22.sp,
                                     fontFamily = bodyFont,
-                                    color = theme.textPrimary.copy(alpha = 0.86f),
                                 )
                             }
                             if (quoted.pics.isNotEmpty()) {

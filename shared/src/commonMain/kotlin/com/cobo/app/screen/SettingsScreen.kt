@@ -1619,13 +1619,22 @@ private fun feedGeneralEntries(
     ) + run {
         val retention = RecommendSeenRetention.fromDays(state.recommendSeenRetentionDays)
         val seenOwner = App.repo.session?.uid.orEmpty()
-        val seenCount = if (App.isRecommendSeenReady()) {
-            // 读取 version 使清空或后台写入后设置摘要中的条数能即时刷新。
-            @Suppress("UNUSED_VARIABLE")
-            val v = App.recommendSeen.version
-            App.recommendSeen.count(seenOwner, retention.millis)
-        } else {
-            0
+        val seenVersion = if (App.isRecommendSeenReady()) App.recommendSeen.version else 0
+        var seenCount by remember(seenOwner, retention, seenVersion) {
+            mutableIntStateOf(
+                if (App.isRecommendSeenReady()) {
+                    App.recommendSeen.countLoadedOrNull(seenOwner, retention.millis) ?: 0
+                } else {
+                    0
+                },
+            )
+        }
+        LaunchedEffect(seenOwner, retention, seenVersion) {
+            if (App.isRecommendSeenReady()) {
+                seenCount = withContext(ioDispatcher) {
+                    App.recommendSeen.count(seenOwner, retention.millis)
+                }
+            }
         }
         buildList {
             if (state.filterSeenRecommend) {

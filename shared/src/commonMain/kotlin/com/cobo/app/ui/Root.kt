@@ -999,6 +999,7 @@ private fun RouteLayer(
                     active = top.previewing || top.exiting,
                     exiting = top.exiting,
                     targetRadiusPx = targetRadiusPx,
+                    nowNanos = com.cobo.app.platform.nanoTime(),
                 )
             } else {
                 blurFilter.reset()

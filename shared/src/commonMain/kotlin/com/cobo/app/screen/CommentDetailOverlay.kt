@@ -419,6 +419,7 @@ private fun CommentDetailSheetContent(
                                             Text(
                                                 text = UserRemarks.displayName(rootComment.user?.id, rootComment.user?.name.orEmpty()),
                                                 fontSize = 15.sp,
+                                                lineHeight = 20.sp,
                                                 color = scheme.onSurfaceSecondary,
                                                 fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
@@ -534,7 +535,6 @@ private fun CommentDetailSheetContent(
                             CommentFilterDropdownTitle(
                                 filter = subFilter,
                                 defaultLabel = if (replyCount > 0) "全部回复 · $replyCount" else "全部回复",
-                                resetLabel = "显示全部回复",
                                 showAuthorOption = !postAuthorUid.isNullOrBlank(),
                                 groupKey = "sub_comment_filter_${initialRoot.id}",
                                 onChange = { subFilter = it },
