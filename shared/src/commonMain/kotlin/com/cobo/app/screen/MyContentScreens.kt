@@ -39,11 +39,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +72,8 @@ import com.cobo.app.ui.components.ErrorState
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
 import com.cobo.app.ui.components.LoadingState
+import com.cobo.app.ui.components.MediaWallFooter
+import com.cobo.app.ui.components.MediaWallFooterState
 import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.mediaAlbumGridItems
 import com.cobo.app.ui.components.navBottomPadding
@@ -113,6 +118,8 @@ import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal fun defaultFavoritesInitialTab(
@@ -674,20 +681,27 @@ private fun StatusFeedList(
         autoFilling = true
         autoFillExhausted = false
         try {
+            if (store.loading) {
+                snapshotFlow { store.loading }.first { !it }
+                withFrameNanos { }
+                withFrameNanos { }
+            }
             var fetched = 0
             while (fetched < maxPages && !store.end && store.error == null) {
                 val info = listState.layoutInfo
                 val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
                 val total = info.totalItemsCount
-                if (fetched > 0 && total > 0 && last < total - 2) break
+                if (fetched > 0 && total > 0 && last < total - 3) break
+                if (fetched >= 2) delay(180)
                 store.loadMore()
                 fetched++
+                withFrameNanos { }
                 withFrameNanos { }
             }
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
             val total = info.totalItemsCount
-            if (!store.end && store.error == null && total > 0 && last >= total - 2) {
+            if (!store.end && store.error == null && total > 0 && last >= total - 3) {
                 autoFillExhausted = true
             }
         } finally {
@@ -708,7 +722,7 @@ private fun StatusFeedList(
                 store.end,
             )
         }.collect { (last, total, ended) ->
-            if (total > 0 && last >= total - 2 && store.items.isNotEmpty() && !ended) {
+            if (total > 0 && last >= total - 3 && store.items.isNotEmpty() && !ended && store.error == null) {
                 if (!albumMode) {
                     if (!store.loading) store.loadMore()
                 } else if (!autoFillExhausted && !autoFilling) {
@@ -771,7 +785,13 @@ private fun StatusFeedList(
                     )
                 }
             }
-            val isLoadingMore = store.loading || autoFilling
+            val pendingAlbumAutoFill = albumMode &&
+                store.items.isNotEmpty() &&
+                !store.end &&
+                store.error == null &&
+                !autoFillExhausted &&
+                wallItems.isEmpty()
+            val isLoadingMore = store.loading || autoFilling || pendingAlbumAutoFill
             if (store.items.isEmpty()) {
                 item(key = "my_content_empty_state") {
                     when {
@@ -783,7 +803,7 @@ private fun StatusFeedList(
                     }
                 }
             } else if (albumMode) {
-                if (wallItems.isEmpty() && !isLoadingMore) {
+                if (wallItems.isEmpty() && !isLoadingMore && store.error == null) {
                     item(key = "album_filtered_empty") {
                         Column(
                             modifier = Modifier.fillMaxWidth(),
@@ -794,9 +814,15 @@ private fun StatusFeedList(
                                 else "当前收藏中暂无匹配的图片或视频",
                             )
                             if (!store.end) {
-                                TextButton(
-                                    text = "加载更多",
-                                    onClick = { scope.launch { loadAlbumBurst() } },
+                                Text(
+                                    text = "轻点继续加载更多",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = COUITheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { scope.launch { loadAlbumBurst() } }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
                                 )
                             }
                         }
@@ -846,30 +872,28 @@ private fun StatusFeedList(
                     )
                 }
             }
-            if (store.items.isNotEmpty() && (isLoadingMore || (shownItems.isNotEmpty() && (!albumMode || wallItems.isNotEmpty())))) {
+            if (store.items.isNotEmpty() && (isLoadingMore || store.error != null || (shownItems.isNotEmpty() && (!albumMode || wallItems.isNotEmpty())))) {
+                val footerMode = when {
+                    isLoadingMore -> MediaWallFooterState.Loading
+                    store.error != null -> MediaWallFooterState.ErrorRetry
+                    albumMode && autoFillExhausted && !store.end && wallItems.isNotEmpty() ->
+                        MediaWallFooterState.ManualLoadMore
+                    store.end -> MediaWallFooterState.End
+                    else -> MediaWallFooterState.Hidden
+                }
                 item(key = "my_content_footer") {
-                    when {
-                        isLoadingMore -> LoadingState()
-                        albumMode && autoFillExhausted && !store.end && wallItems.isNotEmpty() -> {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                TextButton(
-                                    text = "继续加载更多",
-                                    onClick = { scope.launch { loadAlbumBurst() } },
-                                )
+                    MediaWallFooter(
+                        state = footerMode,
+                        loadingText = "正在加载更多…",
+                        loadMoreText = "轻点继续加载更多",
+                        errorText = "加载失败，轻点重试",
+                        endText = if (albumMode) "长按任意缩略图可查看原微博" else "没有更多了",
+                        onLoadMore = {
+                            scope.launch {
+                                if (albumMode) loadAlbumBurst() else store.loadMore()
                             }
-                        }
-                        store.end -> {
-                            Text(
-                                text = if (albumMode) "长按任意缩略图可查看原微博" else "没有更多了",
-                                color = COUITheme.colorScheme.onSurfaceSecondary,
-                                fontSize = 12.sp,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                            )
-                        }
-                    }
+                        },
+                    )
                 }
             }
         }

@@ -2,7 +2,10 @@
 
 package com.cobo.app.ui.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -223,6 +227,105 @@ private fun MediaAlbumTile(
                     .background(Color.Black.copy(alpha = 0.52f))
                     .padding(horizontal = 5.dp, vertical = 2.dp),
             )
+        }
+    }
+}
+
+internal enum class MediaWallFooterState {
+    Hidden,
+    Loading,
+    ManualLoadMore,
+    ErrorRetry,
+    End,
+}
+
+/**
+ * 个人主页与相册/视频墙底部的统一状态栏：固定最小高度并通过柔和交叉淡入淡出切换，
+ * 消除分页加载中、手动继续与底部提示交替时的高度跳动与闪烁感。
+ */
+@Composable
+internal fun MediaWallFooter(
+    state: MediaWallFooterState,
+    loadingText: String = "正在加载更多…",
+    loadMoreText: String = "轻点继续加载更多",
+    errorText: String = "加载失败，轻点重试",
+    endText: String = "长按任意缩略图可查看原微博",
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit = onLoadMore,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = COUITheme.colorScheme
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Crossfade(
+            targetState = state,
+            animationSpec = tween(durationMillis = 180),
+            label = "media_wall_footer",
+        ) { target ->
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (target) {
+                    MediaWallFooterState.Hidden -> Unit
+                    MediaWallFooterState.Loading -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            CoboRefreshSpinner(
+                                size = 16.dp,
+                                strokeWidth = 2.dp,
+                                color = scheme.onSurfaceSecondary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = loadingText,
+                                fontSize = 13.sp,
+                                color = scheme.onSurfaceSecondary,
+                            )
+                        }
+                    }
+                    MediaWallFooterState.ManualLoadMore -> {
+                        Text(
+                            text = loadMoreText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(onClick = onLoadMore)
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                    MediaWallFooterState.ErrorRetry -> {
+                        Text(
+                            text = errorText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(onClick = onRetry)
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                    MediaWallFooterState.End -> {
+                        Text(
+                            text = endText,
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -383,21 +383,26 @@ private fun picOf(p: JSONObject): Pic? {
         .ifBlank { (thumbObj?.opt("url") as? String)?.trim().orEmpty() }
         .ifBlank { (large?.opt("url") as? String)?.trim().orEmpty() }
         .ifBlank { if (pid.isNotBlank()) "https://wx1.sinaimg.cn/orj360/$pid.jpg" else "" }
-    val videoInfo = if (p.str("type").equals("video", ignoreCase = true)) {
-        p.optJSONObject("video_info")?.let { extractVideoInfo(it) } ?: run {
-            val rawVideo = p.str("videoSrc").ifBlank { p.str("video") }.ifBlank { p.str("video_hd") }
-            val normalized = if (rawVideo.startsWith("//")) "https:$rawVideo" else rawVideo
-            if (normalized.isNotBlank()) {
-                VideoInfo(
-                    title = p.str("title"),
-                    cover = url,
-                    url = normalized,
-                    durationSec = videoDurationSec(p, p.optJSONObject("media_info")),
-                )
-            } else {
-                null
+    val isPicVideo = p.str("type").contains("video", ignoreCase = true) ||
+        p.optJSONObject("video_info") != null ||
+        p.optJSONObject("media_info") != null
+    val videoInfo = if (isPicVideo) {
+        p.optJSONObject("video_info")?.let { extractVideoInfo(it) }
+            ?: extractVideoInfo(p)
+            ?: run {
+                val rawVideo = p.str("videoSrc").ifBlank { p.str("video") }.ifBlank { p.str("video_hd") }
+                val normalized = if (rawVideo.startsWith("//")) "https:$rawVideo" else rawVideo
+                if (normalized.isNotBlank()) {
+                    VideoInfo(
+                        title = p.str("title"),
+                        cover = url,
+                        url = normalized,
+                        durationSec = videoDurationSec(p, p.optJSONObject("media_info")),
+                    )
+                } else {
+                    null
+                }
             }
-        }
     } else {
         null
     }
@@ -452,17 +457,33 @@ internal fun mixMediaPicsOf(o: JSONObject): List<Pic>? {
     for (i in 0 until items.length()) {
         val entry = items.optJSONObject(i) ?: continue
         val type = entry.str("type")
+        val entryId = entry.str("id")
         val data = entry.optJSONObject("data") ?: continue
+        val isVideoEntry = type.contains("video", ignoreCase = true) ||
+            data.str("object_type").equals("video", ignoreCase = true) ||
+            data.optJSONObject("media_info") != null
         when {
-            type.equals("video", ignoreCase = true) -> videoGridPicOf(data)?.let(out::add)
+            isVideoEntry -> videoGridPicOf(data, entryId)?.let(out::add)
             else -> picOf(data)?.let(out::add)
         }
     }
     return out.takeIf { it.isNotEmpty() }
 }
 
-private fun videoGridPicOf(data: JSONObject): Pic? {
-    val info = extractVideoInfo(data) ?: return null
+private fun videoGridPicOf(data: JSONObject, fallbackEntryId: String = ""): Pic? {
+    val parsed = extractVideoInfo(data)
+    val fallbackFid = fallbackEntryId.trim().takeIf { it.contains(":") }
+    val info = parsed ?: fallbackFid?.let { fid ->
+        val media = data.optJSONObject("media_info")
+        VideoInfo(
+            title = data.str("page_title").ifBlank { data.str("title") }.ifBlank { data.str("content1") },
+            cover = videoCoverUrl(data, media, emptyList()),
+            url = "https://video.weibo.com/show?fid=$fid",
+            durationSec = videoDurationSec(data, media),
+            fid = fid,
+        )
+    } ?: return null
+    val resolvedFid = info.fid.ifBlank { fallbackFid.orEmpty() }
     val media = data.optJSONObject("media_info")
     val pagePic = data.optJSONObject("page_pic")
     val picBig = media?.optJSONObject("pic_info")?.optJSONObject("pic_big")
@@ -480,7 +501,7 @@ private fun videoGridPicOf(data: JSONObject): Pic? {
         videoUrl = info.url,
         videoTitle = info.title,
         durationSec = info.durationSec,
-        videoFid = info.fid,
+        videoFid = resolvedFid,
     )
 }
 
@@ -609,6 +630,63 @@ internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyL
 
 private val WeiboVideoFidPattern = Regex("""^\d+:[0-9a-zA-Z_-]+$""")
 private val DigitsOnlyPattern = Regex("""^\d{6,}$""")
+
+internal fun extractExtraVideosFromUrlStruct(
+    urlStruct: JSONArray,
+    primaryVideo: VideoInfo?,
+    existingPics: List<Pic>,
+    statusId: String,
+): List<Pic> {
+    val knownFids = HashSet<String>()
+    primaryVideo?.fid?.trim()?.takeIf { it.isNotBlank() }?.let(knownFids::add)
+    primaryVideo?.url?.let { com.cobo.app.screen.extractWeiboVideoFid(it) }?.let(knownFids::add)
+    existingPics.forEach { p ->
+        p.videoFid.trim().takeIf { it.isNotBlank() }?.let(knownFids::add)
+        com.cobo.app.screen.extractWeiboVideoFid(p.videoUrl)?.let(knownFids::add)
+    }
+
+    val out = ArrayList<Pic>()
+    for (i in 0 until urlStruct.length()) {
+        val entry = urlStruct.optJSONObject(i) ?: continue
+        val actionOid = entry.optJSONObject("actionlog")?.str("oid").orEmpty()
+        val candidates = listOf(
+            entry.str("object_id"),
+            actionOid,
+            entry.str("ori_url"),
+            entry.str("long_url"),
+            entry.str("page_url"),
+            entry.str("short_url"),
+        )
+        val fid = candidates.firstNotNullOfOrNull { raw ->
+            val trimmed = raw.trim()
+            when {
+                trimmed.startsWith("1034:") -> trimmed.substringBefore('&').substringBefore(' ')
+                trimmed.isNotBlank() -> com.cobo.app.screen.extractWeiboVideoFid(trimmed)
+                else -> null
+            }
+        } ?: continue
+        if (!knownFids.add(fid)) continue
+
+        val nestedInfo = entry.optJSONObject("page_info")?.let { extractVideoInfo(it) }
+            ?: entry.optJSONObject("media_info")?.let { extractVideoInfo(entry) }
+        val title = nestedInfo?.title?.ifBlank { entry.str("url_title") } ?: entry.str("url_title")
+        val cover = nestedInfo?.cover.orEmpty()
+        val url = nestedInfo?.url?.ifBlank { "https://video.weibo.com/show?fid=$fid" }
+            ?: "https://video.weibo.com/show?fid=$fid"
+        out.add(
+            Pic(
+                thumb = cover,
+                large = cover,
+                videoUrl = url,
+                videoTitle = title,
+                durationSec = nestedInfo?.durationSec ?: 0,
+                videoFid = fid,
+                videoStatusId = statusId,
+            ),
+        )
+    }
+    return out
+}
 
 internal fun extractPageVideoFid(
     page: JSONObject,
@@ -1043,19 +1121,75 @@ data class Status(
                 }
             }
 
-            // 兼容同时返回 pics 与单条 page_info 视频的接口形态：把视频作为封面缩略图拼进网格。
-            if (mixPics == null && pics.isNotEmpty() && video != null && video.url.isNotBlank() && pics.none { it.isVideo }) {
-                val cover = video.cover.ifBlank { pics.first().thumb }
-                pics = pics + Pic(
-                    thumb = cover,
-                    large = cover,
-                    videoUrl = video.url,
-                    videoTitle = video.title,
-                    durationSec = video.durationSec,
-                    videoFid = video.fid,
-                    videoStatusId = video.statusId.ifBlank { id },
+            // 兼容同时返回 pics 与 page_info 视频的接口形态（含 m.weibo.cn 多视频 pics[] + 首条 page_info）：
+            // 若 pics 里已包含同条视频则合并补齐 fid 不重复添加，否则将 page_info 视频并入网格。
+            if (mixPics == null && pics.isNotEmpty() && video != null && video.url.isNotBlank()) {
+                val vidUrlKey = canonicalMediaUrl(video.url)
+                val vidFid = video.fid.trim()
+                val matchedIdx = pics.indexOfFirst { p ->
+                    p.isVideo && (
+                        (vidFid.isNotBlank() && p.videoFid == vidFid) ||
+                            (vidUrlKey.isNotBlank() && canonicalMediaUrl(p.videoUrl) == vidUrlKey)
+                        )
+                }
+                if (matchedIdx >= 0) {
+                    val existing = pics[matchedIdx]
+                    if (vidFid.isNotBlank() && existing.videoFid.isBlank()) {
+                        pics = pics.toMutableList().also { list ->
+                            list[matchedIdx] = existing.copy(
+                                videoFid = vidFid,
+                                videoTitle = existing.videoTitle.ifBlank { video.title },
+                                durationSec = if (existing.durationSec > 0) existing.durationSec else video.durationSec,
+                            )
+                        }
+                    }
+                    video = null
+                } else {
+                    val cover = video.cover.ifBlank { pics.first().thumb }
+                    pics = pics + Pic(
+                        thumb = cover,
+                        large = cover,
+                        videoUrl = video.url,
+                        videoTitle = video.title,
+                        durationSec = video.durationSec,
+                        videoFid = video.fid,
+                        videoStatusId = video.statusId.ifBlank { id },
+                    )
+                    video = null
+                }
+            }
+
+            // 兼容旧版客户端通道对多视频混排微博的降级：不返回 mix_media_info，仅在 page_info 放第 1 条视频，
+            // 同时在 url_struct 里挂出全部视频链接（每条带独立 1034:... fid）。发现额外视频时合并进 pics 网格，
+            // 避免正文和个人主页视频墙只渲染出第 1 个视频。
+            if (mixPics == null && retweeted == null && mergedUrlStruct != null && mergedUrlStruct.length() > 1) {
+                val extraVideos = extractExtraVideosFromUrlStruct(
+                    urlStruct = mergedUrlStruct,
+                    primaryVideo = video,
+                    existingPics = pics,
+                    statusId = id,
                 )
-                video = null
+                if (extraVideos.isNotEmpty()) {
+                    val merged = ArrayList<Pic>(pics.size + extraVideos.size + 1)
+                    val baseVideo = video
+                    if (baseVideo != null && baseVideo.url.isNotBlank()) {
+                        merged.add(
+                            Pic(
+                                thumb = baseVideo.cover,
+                                large = baseVideo.cover,
+                                videoUrl = baseVideo.url,
+                                videoTitle = baseVideo.title,
+                                durationSec = baseVideo.durationSec,
+                                videoFid = baseVideo.fid,
+                                videoStatusId = baseVideo.statusId.ifBlank { id },
+                            ),
+                        )
+                        video = null
+                    }
+                    merged.addAll(pics)
+                    merged.addAll(extraVideos)
+                    pics = merged
+                }
             }
             if (pics.any { it.isVideo && it.videoStatusId.isBlank() }) {
                 pics = pics.map { if (it.isVideo && it.videoStatusId.isBlank()) it.copy(videoStatusId = id) else it }
@@ -2869,8 +3003,12 @@ internal fun filterUserStatusesPage(uid: String, page: FeedPage): FeedPage {
     val targetUid = uid.trim()
     if (targetUid.isBlank()) return page
     val raw = page.items
-    val own = raw.filter { it.user?.id?.trim() == targetUid }
-    val trailingForeignCount = raw.asReversed().takeWhile { it.user?.id?.trim() != targetUid }.size
+    fun isForeign(status: Status): Boolean {
+        val authorId = status.user?.id?.trim().orEmpty()
+        return authorId.isNotBlank() && authorId != targetUid
+    }
+    val own = raw.filterNot(::isForeign)
+    val trailingForeignCount = raw.asReversed().takeWhile(::isForeign).size
     val nextSince = if (own.isEmpty() || trailingForeignCount >= 2) null else page.sinceId
     return page.copy(items = own, sinceId = nextSince)
 }

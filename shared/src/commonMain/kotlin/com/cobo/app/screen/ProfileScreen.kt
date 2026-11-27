@@ -52,7 +52,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,7 +85,7 @@ import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.MeIconStyle
-import com.cobo.app.data.MediaWallFilter
+import com.cobo.app.data.MediaWallItem
 import com.cobo.app.data.Membership
 import com.cobo.app.data.MuteUserMode
 import com.cobo.app.data.NotificationTab
@@ -102,7 +101,7 @@ import com.cobo.app.data.User
 import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.computeProfileRenameStatus
-import com.cobo.app.data.extractMediaWallItems
+import com.cobo.app.data.mediaWallDedupToken
 import com.cobo.app.ui.MeIconTint
 import com.cobo.app.ui.MeIcons
 import com.cobo.app.ui.NavState
@@ -138,6 +137,8 @@ import com.cobo.app.ui.components.StatusCard
 import com.cobo.app.ui.components.VerifiedBadge
 import com.cobo.app.ui.components.FullPageRefreshHoldMillis
 import com.cobo.app.ui.components.FullPageRefreshTexts
+import com.cobo.app.ui.components.MediaWallFooter
+import com.cobo.app.ui.components.MediaWallFooterState
 import com.cobo.app.ui.components.mediaAlbumGridItems
 import com.cobo.app.ui.components.navBottomPadding
 import com.cobo.app.ui.components.fmtCount
@@ -726,12 +727,21 @@ private fun reportUrl(uid: String): String {
  * 看过某个博主的相册或视频页后退出再进来，直接复用已拉取的微博列表与分页游标，
  * 避免反复向微博服务器重拉一整套分页；下拉刷新时强制覆盖更新。
  */
+internal data class CachedProfileMediaWall(
+    val items: List<MediaWallItem> = emptyList(),
+    val cursor: String? = null,
+    val end: Boolean = false,
+    val loaded: Boolean = false,
+)
+
 internal data class CachedProfileStatuses(
     val user: User?,
     val items: List<Status>,
     val sinceId: String?,
     val end: Boolean,
     val cachedAtMs: Long,
+    val albumWall: CachedProfileMediaWall = CachedProfileMediaWall(),
+    val videoWall: CachedProfileMediaWall = CachedProfileMediaWall(),
 )
 
 internal class ProfileStatusesCache(
@@ -768,6 +778,27 @@ private fun profileCacheKey(targetUid: String): String {
     return "$viewer:$targetUid"
 }
 
+@Stable
+class ProfileMediaWallState {
+    val items = mutableStateListOf<MediaWallItem>()
+    var cursor by mutableStateOf<String?>(null)
+    val seenCursors = HashSet<String>()
+    var loading by mutableStateOf(false)
+    var loaded by mutableStateOf(false)
+    var end by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+
+    fun reset() {
+        items.clear()
+        cursor = null
+        seenCursors.clear()
+        loading = false
+        loaded = false
+        end = false
+        error = null
+    }
+}
+
 /**
  * 个人主页内容状态，供主壳在切换底部 Tab 时保留已加载的资料与列表，避免切回时重置。
  */
@@ -782,6 +813,8 @@ class ProfileTabState {
     var error by mutableStateOf<String?>(null)
     var resolvedUid by mutableStateOf<String?>(null)
     var loadedUid by mutableStateOf<String?>(null)
+    val albumWall = ProfileMediaWallState()
+    val videoWall = ProfileMediaWallState()
 }
 
 private enum class ProfileContentTab(val label: String) {
@@ -808,8 +841,6 @@ fun ProfileContent(
     var selectedTab by remember(uid) { mutableStateOf(ProfileContentTab.Posts) }
     var displayedTab by remember(uid) { mutableStateOf(ProfileContentTab.Posts) }
     val tabContentAlpha = remember(uid) { Animatable(1f) }
-    var autoFilling by remember(uid, displayedTab) { mutableStateOf(false) }
-    var autoFillExhausted by remember(uid, displayedTab) { mutableStateOf(false) }
     val pullState = rememberFullPagePullToRefreshState()
 
     // 微博 / 相册 / 视频三栏切换时：先将原内容淡出，再切换目标视图并平滑淡入。
@@ -826,8 +857,12 @@ fun ProfileContent(
         )
     }
 
+    fun mediaWallStateFor(tab: ProfileContentTab): ProfileMediaWallState =
+        if (tab == ProfileContentTab.Videos) tabState.videoWall else tabState.albumWall
+
     fun persistProfileCache(target: String, cachedAtMs: Long = currentTimeMillis()) {
-        if (target.isBlank() || tabState.items.isEmpty()) return
+        if (target.isBlank()) return
+        if (tabState.items.isEmpty() && !tabState.albumWall.loaded && !tabState.videoWall.loaded) return
         SharedProfileStatusesCache.put(
             key = profileCacheKey(target),
             value = CachedProfileStatuses(
@@ -836,17 +871,29 @@ fun ProfileContent(
                 sinceId = tabState.sinceId,
                 end = tabState.end,
                 cachedAtMs = cachedAtMs,
+                albumWall = CachedProfileMediaWall(
+                    items = tabState.albumWall.items.toList(),
+                    cursor = tabState.albumWall.cursor,
+                    end = tabState.albumWall.end,
+                    loaded = tabState.albumWall.loaded,
+                ),
+                videoWall = CachedProfileMediaWall(
+                    items = tabState.videoWall.items.toList(),
+                    cursor = tabState.videoWall.cursor,
+                    end = tabState.videoWall.end,
+                    loaded = tabState.videoWall.loaded,
+                ),
             ),
         )
     }
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
-    suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
-        val target = tabState.resolvedUid ?: return
-        if (tabState.loading) return
+    suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false): Boolean {
+        val target = tabState.resolvedUid ?: return false
+        if (tabState.loading) return false
         if (!reset && tabState.sinceId.isNullOrBlank()) {
             tabState.end = true
-            return
+            return false
         }
         tabState.loading = true
         if (reset && showRefresh) tabState.refreshing = true
@@ -871,11 +918,77 @@ fun ProfileContent(
             tabState.error = null
             tabState.loadedUid = target
             persistProfileCache(target)
+            return true
         } catch (t: Throwable) {
             tabState.error = t.message ?: "加载失败"
+            return false
         } finally {
             tabState.loading = false
             tabState.refreshing = false
+        }
+    }
+
+    /** 加载个人主页专用「相册」或「视频」接口分页，避免逐页扫普通微博流。 */
+    suspend fun loadMediaWall(
+        tab: ProfileContentTab,
+        reset: Boolean,
+        force: Boolean = false,
+        showRefresh: Boolean = false,
+    ): Boolean {
+        if (tab == ProfileContentTab.Posts) return false
+        val target = tabState.resolvedUid ?: return false
+        val wall = mediaWallStateFor(tab)
+        if (wall.loading) return false
+        if (!reset && wall.cursor.isNullOrBlank()) {
+            wall.end = true
+            return false
+        }
+        val prevCursor = if (reset) null else wall.cursor
+        wall.loading = true
+        if (reset && showRefresh) tabState.refreshing = true
+        try {
+            val page = if (tab == ProfileContentTab.Videos) {
+                App.repo.userVideoWall(target, prevCursor, force = force)
+            } else {
+                App.repo.userAlbumWall(target, prevCursor, force = force)
+            }
+            if (reset) {
+                wall.items.clear()
+                wall.seenCursors.clear()
+                wall.end = false
+            }
+            val knownKeys = wall.items.mapTo(HashSet()) { it.key }
+            val knownTokens = wall.items.mapTo(HashSet()) { mediaWallDedupToken(it) }
+            var added = 0
+            page.items.forEach { entry ->
+                val token = mediaWallDedupToken(entry)
+                if (knownTokens.add(token)) {
+                    val finalKey = if (knownKeys.add(entry.key)) entry.key else "${entry.key}#${wall.items.size}"
+                    val uniqueEntry = if (finalKey == entry.key) entry else when (entry) {
+                        is MediaWallItem.Photo -> entry.copy(key = finalKey)
+                        is MediaWallItem.Video -> entry.copy(key = finalKey)
+                    }
+                    wall.items.add(uniqueEntry)
+                    added++
+                }
+            }
+            val candidateCursor = page.nextCursor?.takeIf { it.isNotBlank() && it != prevCursor && wall.seenCursors.add(it) }
+            if (page.items.isEmpty() || candidateCursor == null || (!reset && added == 0)) {
+                wall.cursor = null
+                wall.end = true
+            } else {
+                wall.cursor = candidateCursor
+            }
+            wall.loaded = true
+            wall.error = null
+            persistProfileCache(target)
+            return true
+        } catch (t: Throwable) {
+            wall.error = t.message ?: "加载失败"
+            return false
+        } finally {
+            wall.loading = false
+            if (reset && showRefresh) tabState.refreshing = false
         }
     }
 
@@ -890,7 +1003,7 @@ fun ProfileContent(
         if (tabState.loadedUid == target && tabState.user != null) {
             return@LaunchedEffect
         }
-        // 优先命中内存缓存：刚看过该博主的相册/视频再进来时直接复用已加载分页，减少重复请求。
+        // 优先命中内存缓存：刚看过该博主的微博/相册/视频再进来时直接复用已加载分页，减少重复请求。
         val cached = SharedProfileStatusesCache.get(profileCacheKey(target))
         if (cached != null && cached.items.isNotEmpty()) {
             val deleted = App.repo.deletedStatusIds
@@ -907,14 +1020,41 @@ fun ProfileContent(
                 tabState.end = cached.end
                 tabState.error = null
                 tabState.loadedUid = target
+                tabState.albumWall.apply {
+                    items.clear()
+                    items.addAll(cached.albumWall.items.filterNot { it.status.id in deleted })
+                    cursor = cached.albumWall.cursor
+                    end = cached.albumWall.end
+                    loaded = cached.albumWall.loaded
+                    error = null
+                }
+                tabState.videoWall.apply {
+                    items.clear()
+                    items.addAll(cached.videoWall.items.filterNot { it.status.id in deleted })
+                    cursor = cached.videoWall.cursor
+                    end = cached.videoWall.end
+                    loaded = cached.videoWall.loaded
+                    error = null
+                }
                 if (cached.user == null && tabState.user != null || liveItems.size != cached.items.size) {
                     persistProfileCache(target, cachedAtMs = cached.cachedAtMs)
                 }
                 return@LaunchedEffect
             }
         }
+        tabState.albumWall.reset()
+        tabState.videoWall.reset()
         tabState.user = runCatching { App.repo.profile(target) }.getOrNull()
         loadStatuses(true, force = false)
+    }
+
+    // 切到「相册」或「视频」页签时按需拉取官方专用相册/视频首屏。
+    LaunchedEffect(tabState.resolvedUid, displayedTab) {
+        if (displayedTab == ProfileContentTab.Posts) return@LaunchedEffect
+        val wall = mediaWallStateFor(displayedTab)
+        if (!wall.loaded && !wall.loading && !tabState.resolvedUid.isNullOrBlank()) {
+            loadMediaWall(displayedTab, reset = true)
+        }
     }
 
     // 顶栏菜单要用头像和昵称，资料加载完就往上同步一份。
@@ -936,49 +1076,29 @@ fun ProfileContent(
         }
     }
 
-    // 相册/视频页签按批连续补拉：整段补拉期间保持单一持续的加载状态，避免每翻一页进度条闪灭重建；
-    // 单次自动补拉最多连续翻 4 页，避免视频极少的账号无限循环拉取，未满屏时交由用户点按继续。
-    suspend fun loadMediaBurst(maxPages: Int = 4) {
-        if (autoFilling || tabState.end) return
-        autoFilling = true
-        autoFillExhausted = false
-        try {
-            var fetched = 0
-            while (fetched < maxPages && !tabState.end && tabState.error == null) {
-                val info = listState.layoutInfo
-                val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                val total = info.totalItemsCount
-                if (fetched > 0 && total > 0 && last < total - 2) break
-                loadStatuses(reset = false)
-                fetched++
-                withFrameNanos { }
-            }
+    LaunchedEffect(listState, displayedTab, tabState.resolvedUid) {
+        snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
             val total = info.totalItemsCount
-            if (!tabState.end && tabState.error == null && total > 0 && last >= total - 2) {
-                autoFillExhausted = true
-            }
-        } finally {
-            autoFilling = false
-        }
-    }
-
-    LaunchedEffect(listState, displayedTab, tabState.items.isNotEmpty()) {
-        snapshotFlow {
-            val info = listState.layoutInfo
-            Triple(
-                info.visibleItemsInfo.lastOrNull()?.index ?: -1,
-                info.totalItemsCount,
-                tabState.end,
-            )
-        }.collect { (last, total, ended) ->
-            if (total > 0 && last >= total - 2 && tabState.items.isNotEmpty() && !ended) {
-                if (displayedTab == ProfileContentTab.Posts) {
-                    if (!tabState.loading) loadStatuses(false)
-                } else if (!autoFillExhausted && !autoFilling) {
-                    loadMediaBurst()
+            val readyForMore = when (displayedTab) {
+                ProfileContentTab.Posts -> tabState.items.isNotEmpty() && !tabState.loading && !tabState.end && tabState.error == null
+                else -> {
+                    val wall = mediaWallStateFor(displayedTab)
+                    wall.loaded && wall.items.isNotEmpty() && !wall.loading && !wall.end && wall.error == null
                 }
+            }
+            val itemCount = when (displayedTab) {
+                ProfileContentTab.Posts -> tabState.items.size
+                else -> mediaWallStateFor(displayedTab).items.size
+            }
+            Triple(last >= total - 3 && total > 0, readyForMore, itemCount)
+        }.collect { (nearBottom, readyForMore, _) ->
+            if (!nearBottom || !readyForMore) return@collect
+            if (displayedTab == ProfileContentTab.Posts) {
+                loadStatuses(false)
+            } else {
+                loadMediaWall(displayedTab, reset = false)
             }
         }
     }
@@ -987,9 +1107,12 @@ fun ProfileContent(
         isRefreshing = tabState.refreshing,
         onRefresh = {
             scope.launch {
-                autoFillExhausted = false
                 tabState.resolvedUid?.let { tabState.user = runCatching { App.repo.profile(it, force = true) }.getOrNull() }
-                loadStatuses(true, force = true, showRefresh = true)
+                if (displayedTab == ProfileContentTab.Posts) {
+                    loadStatuses(true, force = true, showRefresh = true)
+                } else {
+                    loadMediaWall(displayedTab, reset = true, force = true, showRefresh = true)
+                }
             }
         },
         modifier = modifier,
@@ -1166,118 +1289,128 @@ fun ProfileContent(
                     segmentPadding = 6.dp,
                 )
             }
-            val wallItems = if (displayedTab == ProfileContentTab.Posts) {
-                emptyList()
-            } else {
-                extractMediaWallItems(
-                    statuses = tabState.items,
-                    includeRetweeted = false,
-                    filter = if (displayedTab == ProfileContentTab.Videos) MediaWallFilter.Videos else MediaWallFilter.All,
-                )
-            }
-            val isLoadingMore = tabState.loading || autoFilling
             val contentFadeModifier = Modifier.graphicsLayer { alpha = tabContentAlpha.value }
-            if (tabState.items.isEmpty()) {
-                item(key = "profile_empty_state") {
-                    Box(contentFadeModifier.fillMaxWidth()) {
-                        when {
-                            isLoadingMore || tabState.refreshing -> LoadingState()
-                            tabState.error != null -> ErrorState(tabState.error!!) {
-                                scope.launch { loadStatuses(true, force = true, showRefresh = true) }
+            if (displayedTab == ProfileContentTab.Posts) {
+                if (tabState.items.isEmpty()) {
+                    item(key = "profile_empty_state") {
+                        Box(contentFadeModifier.fillMaxWidth()) {
+                            when {
+                                tabState.loading || tabState.refreshing -> LoadingState()
+                                tabState.error != null -> ErrorState(tabState.error!!) {
+                                    scope.launch { loadStatuses(true, force = true, showRefresh = true) }
+                                }
+                                else -> EmptyState("还没有微博")
                             }
-                            else -> EmptyState("还没有微博")
                         }
                     }
+                } else {
+                    itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
+                        val origin = rememberExpandOrigin()
+                        val topBar = LocalTopBarBounds.current
+                        val bottomBar = LocalBottomBarBounds.current
+                        SideEffect {
+                            origin.listState = listState
+                            origin.rowKey = status.id
+                            origin.originKey = "card:${status.id}"
+                            origin.topBar = topBar
+                            origin.bottomBar = bottomBar
+                        }
+                        StatusCard(
+                            status = status,
+                            modifier = contentFadeModifier.padding(horizontal = 12.dp).expandOrigin(origin),
+                            onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onUser = { nav.push(Route.Profile(it.id)) },
+                            onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
+                            onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                            onLike = {
+                                scope.launch {
+                                    val updated = App.toggleStatusLike(status) ?: return@launch
+                                    val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
+                                    if (currentIdx >= 0) tabState.items[currentIdx] = updated
+                                }
+                            },
+                            onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                            onOpenQuoted = { quoted, quotedOrigin ->
+                                quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
+                                nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
+                            },
+                        )
+                    }
+                    val postsFooterMode = when {
+                        tabState.loading -> MediaWallFooterState.Loading
+                        tabState.error != null -> MediaWallFooterState.ErrorRetry
+                        tabState.end -> MediaWallFooterState.End
+                        else -> MediaWallFooterState.Hidden
+                    }
+                    item(key = "profile_footer") {
+                        MediaWallFooter(
+                            state = postsFooterMode,
+                            loadingText = "正在加载更多…",
+                            errorText = "加载失败，轻点重试",
+                            endText = "没有更多了",
+                            onLoadMore = {
+                                scope.launch {
+                                    tabState.error = null
+                                    loadStatuses(false)
+                                }
+                            },
+                            modifier = contentFadeModifier,
+                        )
+                    }
                 }
-            } else if (displayedTab != ProfileContentTab.Posts) {
-                if (wallItems.isEmpty() && !isLoadingMore) {
+            } else {
+                val wall = mediaWallStateFor(displayedTab)
+                val wallInitialLoading = !wall.loaded && wall.error == null
+                if (wall.items.isEmpty()) {
                     item(key = "profile_wall_empty") {
-                        Column(
-                            modifier = contentFadeModifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            EmptyState(
-                                if (displayedTab == ProfileContentTab.Videos) "已加载微博中暂无视频"
-                                else "已加载微博中暂无图片或视频",
-                            )
-                            if (!tabState.end) {
-                                TextButton(
-                                    text = "加载更多微博",
-                                    onClick = { scope.launch { loadMediaBurst() } },
+                        Box(contentFadeModifier.fillMaxWidth()) {
+                            when {
+                                wall.loading || wallInitialLoading || tabState.refreshing -> LoadingState()
+                                wall.error != null -> ErrorState(wall.error!!) {
+                                    scope.launch { loadMediaWall(displayedTab, reset = true, force = true) }
+                                }
+                                else -> EmptyState(
+                                    if (displayedTab == ProfileContentTab.Videos) "暂无视频" else "暂无图片",
                                 )
                             }
                         }
                     }
-                } else if (wallItems.isNotEmpty()) {
+                } else {
                     mediaAlbumGridItems(
-                        items = wallItems,
+                        items = wall.items,
                         horizontalPadding = 12.dp,
                         topOuterCornerRadius = CardDefaults.GroupCornerRadius,
                         topOuterWeight = CardDefaults.GroupWeight,
                         rowModifier = contentFadeModifier,
                         onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
                         onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                        onOpenPost = { nav.push(Route.Detail(it.id, it.mid)) },
+                        onOpenPost = {
+                            if (it.id.isNotBlank() || it.mid.isNotBlank()) {
+                                nav.push(Route.Detail(it.id, it.mid))
+                            }
+                        },
                     )
-                }
-            } else {
-                itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
-                    val origin = rememberExpandOrigin()
-                    val topBar = LocalTopBarBounds.current
-                    val bottomBar = LocalBottomBarBounds.current
-                    SideEffect {
-                        origin.listState = listState
-                        origin.rowKey = status.id
-                        origin.originKey = "card:${status.id}"
-                        origin.topBar = topBar
-                        origin.bottomBar = bottomBar
+                    val wallFooterMode = when {
+                        wall.loading -> MediaWallFooterState.Loading
+                        wall.error != null -> MediaWallFooterState.ErrorRetry
+                        wall.end -> MediaWallFooterState.End
+                        else -> MediaWallFooterState.Hidden
                     }
-                    StatusCard(
-                        status = status,
-                        modifier = contentFadeModifier.padding(horizontal = 12.dp).expandOrigin(origin),
-                        onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onUser = { nav.push(Route.Profile(it.id)) },
-                        onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                        onLike = {
-                            scope.launch {
-                                val updated = App.toggleStatusLike(status) ?: return@launch
-                                val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
-                                if (currentIdx >= 0) tabState.items[currentIdx] = updated
-                            }
-                        },
-                        onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onOpenQuoted = { quoted, quotedOrigin ->
-                            quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
-                            nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
-                        },
-                    )
-                }
-            }
-            if (tabState.items.isNotEmpty()) {
-                item(key = "profile_footer") {
-                    Box(contentFadeModifier.fillMaxWidth()) {
-                        when {
-                            isLoadingMore -> LoadingState()
-                            displayedTab != ProfileContentTab.Posts && autoFillExhausted && !tabState.end && wallItems.isNotEmpty() -> {
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    TextButton(
-                                        text = "继续加载更多",
-                                        onClick = { scope.launch { loadMediaBurst() } },
-                                    )
+                    item(key = "profile_footer") {
+                        MediaWallFooter(
+                            state = wallFooterMode,
+                            loadingText = "正在加载更多…",
+                            errorText = "加载失败，轻点重试",
+                            endText = "长按任意缩略图可查看原微博",
+                            onLoadMore = {
+                                scope.launch {
+                                    wall.error = null
+                                    loadMediaWall(displayedTab, reset = false)
                                 }
-                            }
-                            tabState.end && (displayedTab == ProfileContentTab.Posts || wallItems.isNotEmpty()) -> Text(
-                                if (displayedTab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
-                                fontSize = 12.sp,
-                                color = COUITheme.colorScheme.onSurfaceSecondary,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
-                        }
+                            },
+                            modifier = contentFadeModifier,
+                        )
                     }
                 }
             }

@@ -2076,7 +2076,49 @@ class Repo(private val context: PlatformContext, private val store: Store) {
                 null
             }
         }
-        return parsed
+        return parsed?.let { enrichDowngradedMultiVideoStatus(it) }
+    }
+
+    private fun needsMultiVideoEnrichment(status: Status): Boolean {
+        val videoPics = status.pics.filter { it.isVideo }
+        return videoPics.size >= 2 && videoPics.any { it.thumb.isBlank() || it.durationSec <= 0 }
+    }
+
+    /**
+     * 旧版客户端通道对多视频混排微博只返回第 1 条视频的封面与时长，其余视频以 `url_struct` 链接降级；
+     * 检测到此类微博时按需补拉一次标准详情（`weibo.com/ajax/statuses/show` 或 `m.weibo.cn/statuses/show`），
+     * 补齐全部子视频的封面、时长与直链。
+     */
+    private suspend fun enrichDowngradedMultiVideoStatus(status: Status): Status {
+        if (!needsMultiVideoEnrichment(status) || status.id.isBlank()) return status
+        val rich = runCatching {
+            val authCookie = desktopCookieOrNull() ?: visitorFor(null)
+            val root = Api.getDesktop(
+                Api.url("https://weibo.com/ajax/statuses/show", mapOf("id" to status.id)),
+                authCookie,
+            )
+            Status.from(root)
+        }.getOrNull()?.takeIf { it.pics.count { p -> p.isVideo } >= 2 }
+            ?: runCatching {
+                val root = get(
+                    Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to status.id)),
+                    cookie(),
+                    force = false,
+                )
+                Status.from(root.optJSONObject("data"))
+            }.getOrNull()?.takeIf { it.pics.count { p -> p.isVideo } >= 2 }
+            ?: return status
+        return status.copy(pics = rich.pics, video = rich.video)
+    }
+
+    private suspend fun enrichDowngradedMultiVideoStatuses(items: List<Status>): List<Status> {
+        if (items.none(::needsMultiVideoEnrichment)) return items
+        return coroutineScope {
+            items.map { st ->
+                if (needsMultiVideoEnrichment(st)) async { enrichDowngradedMultiVideoStatus(st) }
+                else async { st }
+            }.awaitAll()
+        }
     }
 
     suspend fun editHistory(mid: String, page: Int = 1): List<EditVersion> {
@@ -4481,7 +4523,8 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
             val root = containerGet("profile/statuses", params)
             enrichContainerLongTextCardsRoot(root)
-            return filterUserStatusesPage(uid, parseContainerCards(root))
+            val filtered = filterUserStatusesPage(uid, parseContainerCards(root))
+            return filtered.copy(items = enrichDowngradedMultiVideoStatuses(filtered.items))
         }
         if (session?.loginType == LOGIN_TYPE_CLIENT) {
             val desktop = runCatching { desktopUserStatuses(uid, sinceId) }.getOrNull()
@@ -4520,6 +4563,244 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             null
         }
         return FeedPage(items, nextCursor)
+    }
+
+    /**
+     * 个人主页「相册」专用接口：
+     * - 优先走官方相册图片墙容器 `107803<uid>_-_photoall`（客户端 `cardlist` / 移动端 `getSecond`，每页 24 张直出，附带原微博与实况图元数据）；
+     * - 不可用或无翻页游标时自动补充对比移动端 `getSecond` 与桌面端 `weibo.com/ajax/profile/getImageWall`，避免被单页预览截断。
+     */
+    suspend fun userAlbumWall(uid: String, cursor: String? = null, force: Boolean = false): ProfileMediaPage {
+        suspend fun fetchClientPhotoAll(page: Int, sinceId: String? = null): ProfileMediaPage {
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = "107803${uid}_-_photoall"
+            params["count"] = "24"
+            if (!sinceId.isNullOrBlank()) {
+                params["since_id"] = sinceId
+            } else {
+                params["page"] = page.toString()
+            }
+            val root = containerGet("cardlist", params)
+            return parseProfilePhotoAllPage(root, currentPage = page, cursorPrefix = "cpa")
+        }
+
+        suspend fun fetchMobilePhotoAll(page: Int, sinceId: String? = null): ProfileMediaPage {
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = "107803${uid}_-_photoall"
+            params["count"] = "24"
+            if (!sinceId.isNullOrBlank()) {
+                params["since_id"] = sinceId
+            } else {
+                params["page"] = page.toString()
+            }
+            val url = Api.url("https://m.weibo.cn/api/container/getSecond", params)
+            val root = get(url, cookie(), force)
+            return parseProfilePhotoAllPage(root, currentPage = page, cursorPrefix = "mpa")
+        }
+
+        suspend fun fetchDesktopImageWall(sinceId: String): ProfileMediaPage {
+            val authCookie = desktopCookieOrNull() ?: visitorFor(null)
+            val url = Api.url(
+                "https://weibo.com/ajax/profile/getImageWall",
+                mapOf("uid" to uid, "sinceid" to sinceId.ifBlank { "0" }),
+            )
+            val root = Api.getDesktop(url, authCookie)
+            return parseProfileImageWallPage(root)
+        }
+
+        if (!cursor.isNullOrBlank()) {
+            return when {
+                cursor.startsWith("cpa_s:") -> fetchClientPhotoAll(page = 1, sinceId = cursor.removePrefix("cpa_s:"))
+                cursor.startsWith("cpa_p:") -> {
+                    val page = cursor.removePrefix("cpa_p:").toIntOrNull()?.coerceAtLeast(1) ?: return ProfileMediaPage(emptyList(), null)
+                    fetchClientPhotoAll(page)
+                }
+                cursor.startsWith("cpa:") -> {
+                    val page = cursor.removePrefix("cpa:").toIntOrNull()?.coerceAtLeast(1) ?: return ProfileMediaPage(emptyList(), null)
+                    fetchClientPhotoAll(page)
+                }
+                cursor.startsWith("mpa_s:") -> fetchMobilePhotoAll(page = 1, sinceId = cursor.removePrefix("mpa_s:"))
+                cursor.startsWith("mpa_p:") -> {
+                    val page = cursor.removePrefix("mpa_p:").toIntOrNull()?.coerceAtLeast(1) ?: return ProfileMediaPage(emptyList(), null)
+                    fetchMobilePhotoAll(page)
+                }
+                cursor.startsWith("mpa:") -> {
+                    val page = cursor.removePrefix("mpa:").toIntOrNull()?.coerceAtLeast(1) ?: return ProfileMediaPage(emptyList(), null)
+                    fetchMobilePhotoAll(page)
+                }
+                cursor.startsWith("iw:") -> fetchDesktopImageWall(cursor.removePrefix("iw:"))
+                else -> ProfileMediaPage(emptyList(), null)
+            }
+        }
+
+        var best: ProfileMediaPage? = null
+        var lastError: Throwable? = null
+        fun consider(candidate: ProfileMediaPage): Boolean {
+            if (candidate.items.isNotEmpty() && !candidate.nextCursor.isNullOrBlank()) {
+                best = candidate
+                return true
+            }
+            val current = best
+            if (current == null || candidate.items.size > current.items.size) {
+                best = candidate
+            }
+            return false
+        }
+
+        if (isClientChannel()) {
+            runCatching { fetchClientPhotoAll(1) }
+                .onSuccess { if (consider(it)) return it }
+                .onFailure { lastError = it }
+        }
+        runCatching { fetchMobilePhotoAll(1) }
+            .onSuccess { if (consider(it)) return it }
+            .onFailure { lastError = it }
+        runCatching { fetchDesktopImageWall("0") }
+            .onSuccess { if (consider(it)) return it }
+            .onFailure { lastError = it }
+
+        best?.let { return it }
+        lastError?.let { throw it }
+        return ProfileMediaPage(emptyList(), null)
+    }
+
+    /**
+     * 个人主页「视频」专用接口：
+     * - 不同账号在 `230413<uid>_-_WEIBO_SECOND_PROFILE_WEIBO_VIDEO`、`231567<uid>`、
+     *   `mymblog?feature=3` 与 `getWaterFallContent` 下的覆盖范围存在差异（部分大 V 在 230413 仅返回 1–2 条无游标，
+     *   而普通/品牌号在 231567 返回 0 条）；首屏按优先级探查并择优选取带分页游标或条数最多的通道，后续翻页锁定该通道。
+     */
+    suspend fun userVideoWall(uid: String, cursor: String? = null, force: Boolean = false): ProfileMediaPage {
+        val secondVideoCid = "230413${uid}_-_WEIBO_SECOND_PROFILE_WEIBO_VIDEO"
+        val creatorVideoCid = "231567$uid"
+
+        suspend fun fetchClientVideo(path: String, cid: String, sinceId: String?, prefix: String): ProfileMediaPage {
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = cid
+            params["count"] = "20"
+            params["isGetLongText"] = "1"
+            if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
+            val root = containerGet(path, params)
+            enrichContainerLongTextCardsRoot(root)
+            val parsed = parseContainerCards(root)
+            val enriched = parsed.copy(items = enrichDowngradedMultiVideoStatuses(parsed.items))
+            val (items, rawNext) = extractProfileVideoWallItems(uid, enriched)
+            val next = rawNext?.takeIf { it != sinceId }
+            return ProfileMediaPage(items, next?.let { "$prefix:$it" })
+        }
+
+        suspend fun fetchDesktopVideoMymblog(page: Int, since: String): ProfileMediaPage? {
+            val desk = desktopCookieOrNull() ?: return null
+            val params = LinkedHashMap<String, String?>()
+            params["uid"] = uid
+            params["page"] = page.toString()
+            params["feature"] = "3"
+            if (since.isNotBlank()) params["since_id"] = since
+            val root = Api.getDesktop(Api.url("https://weibo.com/ajax/statuses/mymblog", params), desk)
+            if (root.optInt("ok", 0) != 1) return null
+            val data = root.optJSONObject("data") ?: return null
+            val raw = statusesOf(data.optJSONArray("list") ?: JSONArray())
+            val nextSince = data.str("since_id")
+            val nextRaw = if (raw.isNotEmpty() && nextSince.isNotBlank() && nextSince != "0" && nextSince != since) {
+                "${page + 1}:$nextSince"
+            } else {
+                null
+            }
+            val (items, next) = extractProfileVideoWallItems(uid, FeedPage(raw, nextRaw))
+            return ProfileMediaPage(items, next?.let { "wbv:$it" })
+        }
+
+        suspend fun fetchMobileVideo(cid: String, sinceId: String?, prefix: String, pageType: String? = null): ProfileMediaPage {
+            val params = LinkedHashMap<String, String?>()
+            params["containerid"] = cid
+            if (!pageType.isNullOrBlank()) params["page_type"] = pageType
+            if (!sinceId.isNullOrBlank()) params["since_id"] = sinceId
+            val root = get(Api.url("https://m.weibo.cn/api/container/getIndex", params), cookie(), force)
+            if (root.optInt("ok", 1) == -100) {
+                if (guest) return ProfileMediaPage(emptyList(), null)
+                throw ApiException(root.str("msg", LOGIN_REQUIRED), "-100")
+            }
+            val (items, rawNext) = extractProfileVideoWallItems(uid, parseCards(root))
+            val next = rawNext?.takeIf { it != sinceId }
+            return ProfileMediaPage(items, next?.let { "$prefix:$it" })
+        }
+
+        suspend fun fetchWaterFall(wfCursor: String): ProfileMediaPage {
+            val authCookie = desktopCookieOrNull() ?: visitorFor(null)
+            val url = Api.url(
+                "https://weibo.com/ajax/profile/getWaterFallContent",
+                mapOf("uid" to uid, "cursor" to wfCursor.ifBlank { "0" }),
+            )
+            val root = Api.getDesktop(url, authCookie)
+            if (root.optInt("ok", 0) != 1) return ProfileMediaPage(emptyList(), null)
+            val data = root.optJSONObject("data") ?: return ProfileMediaPage(emptyList(), null)
+            val raw = statusesOf(data.optJSONArray("list") ?: JSONArray())
+            val nextRaw = data.str("next_cursor").takeIf { it.isNotBlank() && it != "-1" && it != "0" && it != wfCursor }
+            val (items, next) = extractProfileVideoWallItems(uid, FeedPage(raw, nextRaw))
+            return ProfileMediaPage(items, next?.let { "wf:$it" })
+        }
+
+        if (!cursor.isNullOrBlank()) {
+            return when {
+                cursor.startsWith("vt:") -> fetchClientVideo("profile/statuses/tab", secondVideoCid, cursor.removePrefix("vt:"), "vt")
+                cursor.startsWith("vp:") -> fetchClientVideo("profile/statuses", secondVideoCid, cursor.removePrefix("vp:"), "vp")
+                cursor.startsWith("vc:") -> fetchClientVideo("cardlist", creatorVideoCid, cursor.removePrefix("vc:"), "vc")
+                cursor.startsWith("wbv:") -> {
+                    val rest = cursor.removePrefix("wbv:")
+                    val page = rest.substringBefore(':').toIntOrNull()?.coerceAtLeast(1) ?: return ProfileMediaPage(emptyList(), null)
+                    val since = rest.substringAfter(':', "")
+                    fetchDesktopVideoMymblog(page, since) ?: ProfileMediaPage(emptyList(), null)
+                }
+                cursor.startsWith("mv:") -> fetchMobileVideo(secondVideoCid, cursor.removePrefix("mv:"), "mv", pageType = "03")
+                cursor.startsWith("m23:") -> fetchMobileVideo(creatorVideoCid, cursor.removePrefix("m23:"), "m23")
+                cursor.startsWith("wf:") -> fetchWaterFall(cursor.removePrefix("wf:"))
+                else -> ProfileMediaPage(emptyList(), null)
+            }
+        }
+
+        var best: ProfileMediaPage? = null
+        var lastError: Throwable? = null
+        fun isBetter(candidate: ProfileMediaPage, current: ProfileMediaPage?): Boolean {
+            if (current == null) return true
+            val candPaginated = candidate.items.isNotEmpty() && !candidate.nextCursor.isNullOrBlank()
+            val currPaginated = current.items.isNotEmpty() && !current.nextCursor.isNullOrBlank()
+            if (candPaginated != currPaginated) return candPaginated
+            return candidate.items.size > current.items.size
+        }
+        fun consider(candidate: ProfileMediaPage): Boolean {
+            if (isBetter(candidate, best)) best = candidate
+            return candidate.items.size >= 3 && !candidate.nextCursor.isNullOrBlank()
+        }
+
+        if (isClientChannel()) {
+            runCatching { fetchClientVideo("profile/statuses/tab", secondVideoCid, null, "vt") }
+                .onSuccess { if (consider(it)) return it }
+                .onFailure { lastError = it }
+            runCatching { fetchClientVideo("profile/statuses", secondVideoCid, null, "vp") }
+                .onSuccess { if (consider(it)) return it }
+                .onFailure { lastError = it }
+            runCatching { fetchClientVideo("cardlist", creatorVideoCid, null, "vc") }
+                .onSuccess { if (consider(it)) return it }
+                .onFailure { lastError = it }
+        }
+        if (desktopCookieOrNull() != null) {
+            runCatching { fetchDesktopVideoMymblog(1, "") }
+                .onSuccess { if (it != null && consider(it)) return it }
+                .onFailure { lastError = it }
+        }
+        runCatching { fetchMobileVideo(secondVideoCid, null, "mv", pageType = "03") }
+            .onSuccess { if (consider(it)) return it }
+            .onFailure { lastError = it }
+        runCatching { fetchWaterFall("0") }
+            .onSuccess { if (consider(it)) return it }
+            .onFailure { lastError = it }
+        runCatching { fetchMobileVideo(creatorVideoCid, null, "m23") }
+            .onSuccess { if (consider(it)) return it }
+            .onFailure { lastError = it }
+
+        best?.let { return it }
+        lastError?.let { throw it }
+        return ProfileMediaPage(emptyList(), null)
     }
 
     /**
