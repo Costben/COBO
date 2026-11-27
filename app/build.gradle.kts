@@ -17,8 +17,8 @@ android {
         applicationId = "com.cobo.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 10147
-        versionName = "1.2.10-pre"
+        versionCode = 10148
+        versionName = "1.2.11-pre"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
