@@ -403,7 +403,7 @@ fun FloatingVideoOverlay(
         ) {
             PlatformVideoSurface(
                 player = player,
-                fillCrop = true,
+                fillCrop = false,
                 modifier = Modifier.fillMaxSize(),
             )
             AnimatedVisibility(
@@ -415,52 +415,66 @@ fun FloatingVideoOverlay(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f)),
+                        .background(Color.Black.copy(alpha = 0.28f))
+                        .padding(6.dp),
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(6.dp)
                             .align(Alignment.TopCenter),
                         horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         HighlightedIconButton(
-                            onClick = {
-                                nav.push(
-                                    Route.Video(
-                                        url = session.request.rawUrl,
-                                        title = session.request.title,
-                                        isLive = session.request.isLive,
-                                        fid = session.request.fid,
-                                        statusId = session.request.statusId,
-                                    ),
-                                )
-                            },
-                            modifier = Modifier.size(28.dp),
+                            onClick = { controller.dismiss() },
+                            size = 28.dp,
                         ) {
-                            Icon(COUIIcons.Play, "全屏", Modifier.size(16.dp), tint = Color.White)
+                            Icon(COUIIcons.Close, "关闭小窗", Modifier.size(14.dp))
                         }
                         HighlightedIconButton(
-                            onClick = { controller.dismiss() },
-                            modifier = Modifier.size(28.dp),
+                            onClick = { controller.requestSystemPip(session.aspectRatio) },
+                            size = 28.dp,
                         ) {
-                            Icon(COUIIcons.Close, "关闭小窗", Modifier.size(16.dp), tint = Color.White)
+                            Icon(CoboIcons.PictureInPicture, "画中画", Modifier.size(14.dp))
+                        }
+                    }
+                    if (!session.request.isLive) {
+                        HighlightedIconButton(
+                            onClick = {
+                                if (player.isPlaying) {
+                                    player.pause()
+                                } else {
+                                    if (player.isEnded) player.seekTo(0L)
+                                    player.play()
+                                }
+                                session.isPlaying = player.isPlaying
+                            },
+                            size = 36.dp,
+                            modifier = Modifier.align(Alignment.Center),
+                        ) {
+                            Icon(
+                                imageVector = if (session.isPlaying) COUIIcons.Pause else COUIIcons.Play,
+                                contentDescription = if (session.isPlaying) "暂停" else "播放",
+                                modifier = Modifier.size(16.dp),
+                            )
                         }
                     }
                     HighlightedIconButton(
                         onClick = {
-                            if (player.isPlaying) player.pause() else player.play()
+                            nav.push(
+                                Route.Video(
+                                    url = session.request.rawUrl,
+                                    title = session.request.title,
+                                    isLive = session.request.isLive,
+                                    fid = session.request.fid,
+                                    statusId = session.request.statusId,
+                                ),
+                            )
                         },
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(38.dp),
+                        size = 28.dp,
+                        modifier = Modifier.align(Alignment.BottomEnd),
                     ) {
-                        Icon(
-                            if (session.isPlaying) COUIIcons.Pause else COUIIcons.Play,
-                            if (session.isPlaying) "暂停" else "播放",
-                            Modifier.size(22.dp),
-                            tint = Color.White,
-                        )
+                        Icon(CoboIcons.ExpandFullscreen, "展开全屏", Modifier.size(14.dp))
                     }
                 }
             }
