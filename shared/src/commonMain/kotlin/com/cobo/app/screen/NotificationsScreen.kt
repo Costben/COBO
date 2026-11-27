@@ -77,15 +77,14 @@ import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.ChipTabData
-import io.github.suqi8.coui.kmp.basic.ChipTabGroup
 import io.github.suqi8.coui.kmp.basic.FullPagePullToRefresh
 import io.github.suqi8.coui.kmp.basic.HighlightedIconButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.LocalEdgeToEdge
+import io.github.suqi8.coui.kmp.basic.SearchFilterTopAppBar
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.basic.TextButton
 import io.github.suqi8.coui.kmp.basic.TopAppBarDefaults
-import io.github.suqi8.coui.kmp.basic.TwoRowTopAppBar
 import io.github.suqi8.coui.kmp.basic.TwoRowTopAppBarDefaults
 import io.github.suqi8.coui.kmp.basic.couiTopAppBarActionItem
 import io.github.suqi8.coui.kmp.basic.fullPagePullToRefreshColors
@@ -350,25 +349,23 @@ fun NotificationsScreen(
                 val barDensity = LocalDensity.current
                 val selectedIdx = pagerState.currentPage.coerceIn(0, tabs.lastIndex)
                 val currentTab = tabs[selectedIdx]
-                TwoRowTopAppBar(
+                // 复用 SearchFilterTopAppBar：顶栏材质先完成渐进模糊与提白，第二行筛选胶囊
+                // 不再单独采样原始页面底层，避免滚过纯黑图片时未选中标签变纯黑、字迹不可读。
+                SearchFilterTopAppBar(
+                    filters = chipTabs,
+                    selectedFilter = selectedIdx,
+                    onFilterSelected = { idx ->
+                        scope.launch { pagerState.animateScrollToPage(idx) }
+                    },
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                     firstRowHeight = TwoRowTopAppBarDefaults.FirstRowHeight,
-                    secondRowHeight = TwoRowTopAppBarDefaults.SecondRowHeight,
+                    filterRowHeight = TwoRowTopAppBarDefaults.SecondRowHeight,
+                    rowGap = TwoRowTopAppBarDefaults.SecondRowGap,
+                    filterContentPadding = PaddingValues(horizontal = horizontalPadding),
                     containerColor = pageContainerColor(),
                     scrollFraction = {
                         val activeTab = tabs[pagerState.currentPage.coerceIn(0, tabs.lastIndex)]
                         twoRowListScrollAlpha(listStateFor(activeTab), barDensity)
-                    },
-                    secondRow = {
-                        ChipTabGroup(
-                            tabs = chipTabs,
-                            selectedIndex = selectedIdx,
-                            onSelectedChange = { idx ->
-                                scope.launch { pagerState.animateScrollToPage(idx) }
-                            },
-                            contentPadding = PaddingValues(horizontal = horizontalPadding),
-                            backdrop = LocalBackdrop.current,
-                        )
                     },
                 ) {
                     Row(

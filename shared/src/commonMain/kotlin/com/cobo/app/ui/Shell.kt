@@ -29,19 +29,24 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -89,6 +94,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -160,12 +166,14 @@ import com.cobo.app.ui.components.navBottomPadding
 import io.github.suqi8.coui.kmp.anim.COUIInEase
 import io.github.suqi8.coui.kmp.anim.COUIOutEase
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
+import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlay
 import io.github.suqi8.coui.kmp.basic.AppBarBlurOverlayDefaults
 import io.github.suqi8.coui.kmp.basic.BindScrollToTop
 import io.github.suqi8.coui.kmp.basic.BottomFloatingAccessoryNavigationBar
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarDefaults
 import io.github.suqi8.coui.kmp.basic.BottomFloatingNavigationBarItem
 import io.github.suqi8.coui.kmp.basic.ChipTabDefaults
+import io.github.suqi8.coui.kmp.basic.ChipTabGroup
 import io.github.suqi8.coui.kmp.basic.DropdownEntry
 import io.github.suqi8.coui.kmp.basic.DropdownImpl
 import io.github.suqi8.coui.kmp.basic.DropdownItem
@@ -1706,160 +1714,260 @@ private fun FeedTitleRow(
         derivedStateOf { !searchExpanded && collapsed() < 0.95f }
     }
 
-    // 材质、两行布局与胶囊采样的顺序由 coui 的 SearchFilterTopAppBar 统一处理：材质先录进
-    // 栏自己的层，两行画在录制之外，胶囊采的是「模糊提白之后」的画面。这里只负责搜索框本身
-    // 与那一行筛选胶囊的内容。
-    SearchFilterTopAppBar(
-        filters = if (filtersVisible) rememberSearchFilterTabs() else null,
-        selectedFilter = resultsState.tab.ordinal,
-        onFilterSelected = { index ->
-            SearchTab.entries.getOrNull(index)?.let(resultsState::selectTab)
-        },
-        modifier = Modifier.fillMaxWidth(),
-        firstRowHeight = FeedTitleRowHeight,
-        rowGap = SearchChipRowGap,
-        leadingIcon = if (filtersVisible) COUIIcons.GridView else null,
-        onLeadingIconClick = onFilterMenuOpen,
-        filterContentPadding = PaddingValues(horizontal = searchHorizontalPadding()),
-        containerColor = pageContainerColor(),
-        scrollFraction = {
-            val base = panelAlpha()
-            if (base <= 0f) {
-                0f
+    val pageColor = pageContainerColor()
+    val upstreamBackdrop = LocalBackdrop.current
+    val upstreamLayer = upstreamBackdrop as? LayerBackdrop
+    val effectiveScrollFraction: () -> Float = {
+        val base = panelAlpha()
+        if (base <= 0f) {
+            0f
+        } else {
+            val scroll = if (filtersVisible) {
+                twoRowListScrollAlpha(searchListState, barDensity)
             } else {
-                val scroll = if (filtersVisible) {
-                    twoRowListScrollAlpha(searchListState, barDensity)
-                } else {
-                    listScrollAlpha(searchListState, barDensity)
-                }
-                base * scroll
+                listScrollAlpha(searchListState, barDensity)
             }
-        },
-        filtersAlpha = filtersAlpha,
-    ) {
-        Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
-                        val c = collapsed()
-                        translationY = -c * titleHeightPx / 2f
-                        alpha = 1f - c
-                    },
-            ) {
-                TopAppBarSearchBar(
-                    query = searchQuery,
-                    onQueryChange = onSearchQueryChange,
-                    expanded = searchExpanded,
-                    onExpandedChange = { isExpanded ->
-                        if (isExpanded) onSearchOpen() else onSearchCancel()
-                    },
+            base * scroll
+        }
+    }
+    val statusBarTop = with(barDensity) { WindowInsets.statusBars.getTop(this).toDp() }
+    val filterRowHeight = TwoRowTopAppBarDefaults.SecondRowHeight
+    val extraHeight = if (filtersVisible) {
+        TwoRowTopAppBarDefaults.ExtraHeight
+    } else {
+        AppBarBlurOverlayDefaults.ExtraHeight
+    }
+    val rowsHeight = FeedTitleRowHeight + if (filtersVisible) {
+        SearchChipRowGap + filterRowHeight + TwoRowTopAppBarDefaults.SecondRowBottom
+    } else {
+        0.dp
+    }
+    val barHeight = statusBarTop + rowsHeight
+    // 将顶栏渐进模糊与提白底色先录进 materialBackdrop，让搜索框和取消胶囊采样「模糊提白之后」的画面，
+    // 避免直接采样原始列表图片导致搜索栏比周围顶栏模糊更透、透出浓烈底色。
+    val materialBackdrop = if (upstreamLayer != null) {
+        rememberLayerBackdrop(upstream = upstreamLayer) {
+            if (effectiveScrollFraction() < 0.999f) drawRect(pageColor)
+            drawContent()
+        }
+    } else {
+        rememberLayerBackdrop {
+            if (effectiveScrollFraction() < 0.999f) drawRect(pageColor)
+            drawContent()
+        }
+    }
+    val materialVisible by remember {
+        derivedStateOf { effectiveScrollFraction() > 0.001f }
+    }
+    val searchRowBackdrop = if (blur) {
+        if (materialVisible) materialBackdrop else upstreamBackdrop
+    } else {
+        null
+    }
+    val searchFilterTabs = rememberSearchFilterTabs()
+
+    CompositionLocalProvider(LocalEdgeToEdge provides true) {
+        Layout(
+            modifier = Modifier.fillMaxWidth(),
+            content = {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onPreviewKeyEvent { event ->
-                            val enter = event.key == Key.Enter ||
-                                event.key == Key.NumPadEnter ||
-                                event.key == Key.Search
-                            if (searchExpanded && event.type == KeyEventType.KeyDown && enter) {
-                                onSearchSubmit(searchQuery)
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    placeholder = "搜索微博 / 图片 / 视频 / 用户 / 超话",
-                    cancelText = "取消",
-                    onSearch = onSearchSubmit,
-                    onCancel = onSearchCancel,
-                    enabled = searchBarEnabled,
-                    searchButtonContentDescription = "搜索",
-                    gradientColor = Color.Transparent,
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            val clearTint = scheme.onSurface.copy(alpha = 0.28f)
-                            Canvas(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .semantics { contentDescription = "清除" }
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                        role = Role.Button,
-                                        onClick = { onSearchQueryChange("") },
-                                    ),
-                            ) {
-                                val unit = size.width / 36f
-                                drawCircle(clearTint, radius = 9f * unit)
-                                val path = Path().apply {
-                                    moveTo(18f, 16.868f)
-                                    lineTo(15.031f, 13.898f)
-                                    lineTo(13.899f, 15.03f)
-                                    lineTo(16.869f, 18f)
-                                    lineTo(13.898f, 20.97f)
-                                    lineTo(15.03f, 22.101f)
-                                    lineTo(18f, 19.131f)
-                                    lineTo(20.97f, 22.101f)
-                                    lineTo(22.102f, 20.969f)
-                                    lineTo(19.132f, 18f)
-                                    lineTo(22.101f, 15.03f)
-                                    lineTo(20.969f, 13.899f)
-                                    close()
-                                }
-                                withTransform({ scale(unit, unit, Offset.Zero) }) {
-                                    drawPath(path, Color.White)
-                                }
-                            }
-                        }
-                    },
-                    titleContent = {
-                        // Only the title folds away under the status bar; clipping the whole row
-                        // cuts the search button's halo and shared transition overlay off.
+                        .height(barHeight + extraHeight)
+                        .layerBackdropIf(blur, materialBackdrop),
+                ) {
+                    if (blur) {
+                        AppBarBlurOverlay(
+                            scrollFraction = effectiveScrollFraction,
+                            modifier = Modifier.fillMaxWidth().height(barHeight),
+                            containerColor = pageColor,
+                            backdrop = upstreamBackdrop,
+                            extraHeight = extraHeight,
+                            platformRenderer = false,
+                        ) {}
+                    } else {
                         Box(
                             Modifier
                                 .fillMaxWidth()
-                                .height(FeedTitleRowHeight)
-                                .clipToBounds(),
-                        ) {
-                            Text(
-                                "Cobo",
-                                color = scheme.onSurface,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(bottom = 6.dp)
-                                    .graphicsLayer {
-                                        // 外层已移动 -collapsed * titleHeightPx / 2f，这里补齐另一半以保持原轨迹。
-                                        translationY = -collapsed() * titleHeightPx / 2f
-                                    },
-                            )
-                        }
-                    },
-                )
-            }
-            if (showSearchSemantics) {
-                val endInset = if (blur) 20.dp else 16.dp
-                Box(
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = endInset)
-                        .graphicsLayer { translationY = -collapsed() * titleHeightPx / 2f },
+                                .height(barHeight)
+                                .drawWithContent {
+                                    val a = effectiveScrollFraction().coerceIn(0f, 1f)
+                                    if (a > 0f) drawRect(pageColor, alpha = a)
+                                },
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+                        .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top)),
                 ) {
-                    Box(
-                        Modifier
-                            .size(40.dp)
-                            .semantics {
-                                role = Role.Button
-                                onClick {
-                                    onSearchOpen()
-                                    true
+                    CompositionLocalProvider(LocalBackdrop provides searchRowBackdrop) {
+                        Box(Modifier.fillMaxWidth().height(FeedTitleRowHeight)) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer {
+                                        // 按钮居中在标题行里，行高不变时折一半才是原来那条轨迹。
+                                        val c = collapsed()
+                                        translationY = -c * titleHeightPx / 2f
+                                        alpha = 1f - c
+                                    },
+                            ) {
+                                TopAppBarSearchBar(
+                                    query = searchQuery,
+                                    onQueryChange = onSearchQueryChange,
+                                    expanded = searchExpanded,
+                                    onExpandedChange = { isExpanded ->
+                                        if (isExpanded) onSearchOpen() else onSearchCancel()
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPreviewKeyEvent { event ->
+                                            val enter = event.key == Key.Enter ||
+                                                event.key == Key.NumPadEnter ||
+                                                event.key == Key.Search
+                                            if (searchExpanded && event.type == KeyEventType.KeyDown && enter) {
+                                                onSearchSubmit(searchQuery)
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        },
+                                    placeholder = "搜索微博 / 图片 / 视频 / 用户 / 超话",
+                                    cancelText = "取消",
+                                    onSearch = onSearchSubmit,
+                                    onCancel = onSearchCancel,
+                                    enabled = searchBarEnabled,
+                                    searchButtonContentDescription = "搜索",
+                                    backdrop = searchRowBackdrop,
+                                    gradientColor = Color.Transparent,
+                                    trailingIcon = {
+                                        if (searchQuery.isNotEmpty()) {
+                                            val clearTint = scheme.onSurface.copy(alpha = 0.28f)
+                                            Canvas(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .semantics { contentDescription = "清除" }
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null,
+                                                        role = Role.Button,
+                                                        onClick = { onSearchQueryChange("") },
+                                                    ),
+                                            ) {
+                                                val unit = size.width / 36f
+                                                drawCircle(clearTint, radius = 9f * unit)
+                                                val path = Path().apply {
+                                                    moveTo(18f, 16.868f)
+                                                    lineTo(15.031f, 13.898f)
+                                                    lineTo(13.899f, 15.03f)
+                                                    lineTo(16.869f, 18f)
+                                                    lineTo(13.898f, 20.97f)
+                                                    lineTo(15.03f, 22.101f)
+                                                    lineTo(18f, 19.131f)
+                                                    lineTo(20.97f, 22.101f)
+                                                    lineTo(22.102f, 20.969f)
+                                                    lineTo(19.132f, 18f)
+                                                    lineTo(22.101f, 15.03f)
+                                                    lineTo(20.969f, 13.899f)
+                                                    close()
+                                                }
+                                                withTransform({ scale(unit, unit, Offset.Zero) }) {
+                                                    drawPath(path, Color.White)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    titleContent = {
+                                        // Only the title folds away under the status bar; clipping the whole row
+                                        // cuts the search button's halo and shared transition overlay off.
+                                        Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .height(FeedTitleRowHeight)
+                                                .clipToBounds(),
+                                        ) {
+                                            Text(
+                                                "Cobo",
+                                                color = scheme.onSurface,
+                                                fontSize = 24.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .padding(bottom = 6.dp)
+                                                    .graphicsLayer {
+                                                        // 外层已移动 -collapsed * titleHeightPx / 2f，这里补齐另一半以保持原轨迹。
+                                                        translationY = -collapsed() * titleHeightPx / 2f
+                                                    },
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                            if (showSearchSemantics) {
+                                val endInset = if (blur) 20.dp else 16.dp
+                                Box(
+                                    Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .padding(end = endInset)
+                                        .graphicsLayer { translationY = -collapsed() * titleHeightPx / 2f },
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(40.dp)
+                                            .semantics {
+                                                role = Role.Button
+                                                onClick {
+                                                    onSearchOpen()
+                                                    true
+                                                }
+                                            }
+                                            .testTag("top_search"),
+                                    )
                                 }
                             }
-                            .testTag("top_search"),
-                    )
+                        }
+                    }
+                    if (filtersVisible) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    top = SearchChipRowGap,
+                                    bottom = TwoRowTopAppBarDefaults.SecondRowBottom,
+                                )
+                                .height(filterRowHeight)
+                                .graphicsLayer {
+                                    alpha = filtersAlpha().coerceIn(0f, 1f)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            ChipTabGroup(
+                                tabs = searchFilterTabs,
+                                selectedIndex = resultsState.tab.ordinal,
+                                onSelectedChange = { index ->
+                                    SearchTab.entries.getOrNull(index)?.let(resultsState::selectTab)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                leadingIcon = COUIIcons.GridView,
+                                onLeadingIconClick = onFilterMenuOpen,
+                                contentPadding = PaddingValues(horizontal = searchHorizontalPadding()),
+                                backdrop = null,
+                            )
+                        }
+                    }
                 }
+            },
+        ) { measurables, constraints ->
+            val material = measurables[0].measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+            val rows = measurables[1].measure(constraints.copy(minHeight = 0))
+            layout(rows.width, rows.height) {
+                material.placeRelative(0, 0)
+                rows.placeRelative(0, 0)
             }
         }
     }
