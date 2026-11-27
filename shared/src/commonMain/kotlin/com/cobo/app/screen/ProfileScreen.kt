@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +40,8 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,11 +54,15 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -299,12 +306,12 @@ fun ProfileScreen(nav: NavState, uid: String?) {
     val backdrop = rememberLayerBackdrop()
     val topBarHeight = pinnedHeight(TopAppBarDefaults.SmallTopAppBarCenterHeight)
     val listState = rememberLazyListState()
+    val tabState = remember(uid) { ProfileTabState() }
     val density = LocalDensity.current
     var activeCoverUrl by remember(uid) { mutableStateOf<String?>(null) }
-    val scrollAlpha = remember(listState, density) {
+    val scrollAlpha = remember(tabState, listState, density) {
         {
-            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE
-            else listState.firstVisibleItemScrollOffset.toFloat()
+            val scrolled = tabState.effectiveScrollOffsetPx(listState)
             AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
         }
     }
@@ -329,6 +336,7 @@ fun ProfileScreen(nav: NavState, uid: String?) {
                     modifier = Modifier.fillMaxSize(),
                     topInset = topBarHeight,
                     listState = listState,
+                    state = tabState,
                     onActiveCover = { activeCoverUrl = it },
                     onUser = { profileUser = it },
                 )
@@ -718,7 +726,7 @@ private fun reportUrl(uid: String): String {
 }
 
 /**
- * 个人主页内容状态，供主壳在切换底部 Tab 时保留已加载的资料与列表，避免切回时重置。
+ * 个人主页内容状态，供主壳在切换底部 Tab 时保留已加载的资料、分页与折叠偏移，避免切回时重置。
  */
 @Stable
 class ProfileTabState {
@@ -731,6 +739,29 @@ class ProfileTabState {
     var error by mutableStateOf<String?>(null)
     var resolvedUid by mutableStateOf<String?>(null)
     var loadedUid by mutableStateOf<String?>(null)
+
+    var selectedTabIndex by mutableIntStateOf(0)
+    var headerCollapsePx by mutableFloatStateOf(0f)
+    var usingTabbedLayout by mutableStateOf(false)
+    internal var pagerListStates: Map<Int, LazyListState> = emptyMap()
+
+    fun activeListStateOrNull(): LazyListState? =
+        if (usingTabbedLayout) pagerListStates[selectedTabIndex] else null
+
+    fun effectiveScrollOffsetPx(fallbackListState: LazyListState): Float {
+        if (!usingTabbedLayout) {
+            return if (fallbackListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
+            else fallbackListState.firstVisibleItemScrollOffset.toFloat()
+        }
+        val activeList = pagerListStates[selectedTabIndex] ?: fallbackListState
+        val subOffset = if (activeList.firstVisibleItemIndex > 0) Float.MAX_VALUE
+        else activeList.firstVisibleItemScrollOffset.toFloat()
+        return if (headerCollapsePx >= 1f) {
+            maxOf(headerCollapsePx, headerCollapsePx + subOffset)
+        } else {
+            subOffset
+        }
+    }
 }
 
 private enum class ProfileContentTab(val label: String) {
@@ -751,13 +782,35 @@ fun ProfileContent(
     onActiveCover: (String?) -> Unit = {},
     onUser: (User?) -> Unit = {},
 ) {
-    BindScrollToTop(listState)
     val scope = rememberCoroutineScope()
     val tabState = state ?: remember(uid) { ProfileTabState() }
-    var selectedTab by remember(uid) { mutableStateOf(ProfileContentTab.Posts) }
+    val tabs = remember { ProfileContentTab.entries }
+    val pagerState = rememberPagerState(initialPage = tabState.selectedTabIndex.coerceIn(0, tabs.lastIndex)) { tabs.size }
+    val selectedTab = tabs[pagerState.currentPage.coerceIn(0, tabs.lastIndex)]
+    val albumListState = rememberLazyListState()
+    val videoListState = rememberLazyListState()
     var autoFilling by remember(uid, selectedTab) { mutableStateOf(false) }
     var autoFillExhausted by remember(uid, selectedTab) { mutableStateOf(false) }
     val pullState = rememberFullPagePullToRefreshState()
+    val density = LocalDensity.current
+    val topInsetPx = with(density) { topInset.toPx() }
+    var fullHeaderHeightPx by remember { mutableIntStateOf(0) }
+
+    val pagerStatesMap = remember(listState, albumListState, videoListState) {
+        mapOf(0 to listState, 1 to albumListState, 2 to videoListState)
+    }
+    DisposableEffect(tabState, pagerStatesMap) {
+        tabState.pagerListStates = pagerStatesMap
+        tabState.usingTabbedLayout = true
+        onDispose {
+            if (tabState.pagerListStates === pagerStatesMap) {
+                tabState.usingTabbedLayout = false
+            }
+        }
+    }
+    LaunchedEffect(pagerState.currentPage) {
+        tabState.selectedTabIndex = pagerState.currentPage
+    }
 
     // showRefresh 只给用户主动刷新用：进入页面时的静默加载不驱动下拉动画。
     suspend fun loadStatuses(reset: Boolean, force: Boolean = false, showRefresh: Boolean = false) {
@@ -804,6 +857,9 @@ fun ProfileContent(
             tabState.error = "未登录"
             return@LaunchedEffect
         }
+        if (tabState.loadedUid != null && tabState.loadedUid != target) {
+            tabState.headerCollapsePx = 0f
+        }
         tabState.resolvedUid = target
         if (tabState.loadedUid == target && tabState.user != null) {
             return@LaunchedEffect
@@ -833,14 +889,14 @@ fun ProfileContent(
 
     // 相册/视频页签按批连续补拉：整段补拉期间保持单一持续的加载状态，避免每翻一页进度条闪灭重建；
     // 单次自动补拉最多连续翻 4 页，避免视频极少的账号无限循环拉取，未满屏时交由用户点按继续。
-    suspend fun loadMediaBurst(maxPages: Int = 4) {
+    suspend fun loadMediaBurst(targetListState: LazyListState, maxPages: Int = 4) {
         if (autoFilling || tabState.end) return
         autoFilling = true
         autoFillExhausted = false
         try {
             var fetched = 0
             while (fetched < maxPages && !tabState.end && tabState.error == null) {
-                val info = listState.layoutInfo
+                val info = targetListState.layoutInfo
                 val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
                 val total = info.totalItemsCount
                 if (fetched > 0 && total > 0 && last < total - 2) break
@@ -848,7 +904,7 @@ fun ProfileContent(
                 fetched++
                 withFrameNanos { }
             }
-            val info = listState.layoutInfo
+            val info = targetListState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
             val total = info.totalItemsCount
             if (!tabState.end && tabState.error == null && total > 0 && last >= total - 2) {
@@ -859,9 +915,15 @@ fun ProfileContent(
         }
     }
 
-    LaunchedEffect(listState, selectedTab, tabState.items.isNotEmpty()) {
+    val activeListState = when (selectedTab) {
+        ProfileContentTab.Posts -> listState
+        ProfileContentTab.Album -> albumListState
+        ProfileContentTab.Videos -> videoListState
+    }
+
+    LaunchedEffect(activeListState, selectedTab, tabState.items.isNotEmpty()) {
         snapshotFlow {
-            val info = listState.layoutInfo
+            val info = activeListState.layoutInfo
             Triple(
                 info.visibleItemsInfo.lastOrNull()?.index ?: -1,
                 info.totalItemsCount,
@@ -872,8 +934,46 @@ fun ProfileContent(
                 if (selectedTab == ProfileContentTab.Posts) {
                     if (!tabState.loading) loadStatuses(false)
                 } else if (!autoFillExhausted && !autoFilling) {
-                    loadMediaBurst()
+                    loadMediaBurst(activeListState)
                 }
+            }
+        }
+    }
+
+    // 下拉拉长封面时的实时高度需要扣掉，避免折叠上限被拉长后的临时高度污染。
+    val effectiveBaseHeaderHeightPx = (fullHeaderHeightPx - pullState.dragOffset.roundToInt()).coerceAtLeast(0)
+    val maxCollapsePx = (effectiveBaseHeaderHeightPx - topInsetPx).coerceAtLeast(0f)
+    LaunchedEffect(maxCollapsePx) {
+        if (tabState.headerCollapsePx > maxCollapsePx) {
+            tabState.headerCollapsePx = maxCollapsePx
+        }
+    }
+
+    val headerCollapseConnection = remember(tabState, maxCollapsePx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y >= 0f || pullState.dragOffset > 0.5f) return Offset.Zero
+                val (nextCollapse, consumedY) = ProfileHeaderCollapseMath.collapseDelta(
+                    currentCollapsePx = tabState.headerCollapsePx,
+                    maxCollapsePx = maxCollapsePx,
+                    deltaY = available.y,
+                )
+                tabState.headerCollapsePx = nextCollapse
+                return Offset(0f, consumedY)
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (available.y <= 0f) return Offset.Zero
+                val (nextCollapse, consumedY) = ProfileHeaderCollapseMath.expandDelta(
+                    currentCollapsePx = tabState.headerCollapsePx,
+                    deltaY = available.y,
+                )
+                tabState.headerCollapsePx = nextCollapse
+                return Offset(0f, consumedY)
             }
         }
     }
@@ -899,275 +999,342 @@ fun ProfileContent(
         refreshTexts = FullPageRefreshTexts,
         completeHoldDurationMillis = FullPageRefreshHoldMillis,
     ) {
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 // 先反向抵消 FullPagePullToRefresh 的下移，再套 overScrollVertical() 的 clipToBounds()，
                 // 避免下拉时把封面顶部裁掉只剩固定高度的窄条。
                 .offset { IntOffset(0, -pullState.dragOffset.roundToInt()) }
-                .scrollEndHaptic()
+                .nestedScroll(headerCollapseConnection)
                 .overScrollVertical(),
-            // 封面从屏幕最顶上铺起，顶栏的玻璃直接压在封面上；顶栏的高度由封面自己让出来。
-            contentPadding = PaddingValues(
-                top = 0.dp,
-                bottom = 16.dp + navBottomPadding() + extraBottom,
-            ),
-            verticalArrangement = Arrangement.spacedBy(if (selectedTab == ProfileContentTab.Posts) 8.dp else 3.dp),
         ) {
-            item {
-                val currentUser = tabState.user
-                val tag = FollowTags[currentUser?.id ?: uid]
-                val targetId = currentUser?.id ?: tabState.resolvedUid
-                val isSelf = !App.repo.guest && !targetId.isNullOrBlank() && targetId == App.repo.session?.uid
-                val currentFollowing = currentUser?.let { App.repo.isFollowingUser(it.id, it.following) } == true
-                ProfileHeader(
-                    user = currentUser?.copy(following = currentFollowing),
-                    tag = tag,
-                    topInset = topInset,
-                    pullState = pullState,
-                    editableProfile = isSelf,
-                    onActiveCover = onActiveCover,
-                    onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
-                    onAvatar = { avatarUrl ->
-                        nav.push(
-                            Route.Images(
-                                pics = listOf(Pic(thumb = avatarUrl, large = avatarUrl)),
-                                index = 0,
-                                editableAvatar = isSelf,
-                            ),
-                        )
-                    },
-                    onRename = if (isSelf) {
-                        { newName ->
-                            runCatching {
-                                App.repo.updateProfileBasic(
-                                    screenName = newName,
-                                    membership = currentUser?.membership ?: Membership.None,
-                                )
-                            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                        fullHeaderHeightPx = placeable.height
+                        val dragPx = pullState.dragOffset.roundToInt()
+                        val minVisible = (topInsetPx + dragPx).roundToInt().coerceAtLeast(0)
+                        val collapsed = tabState.headerCollapsePx.roundToInt()
+                        val visibleHeight = (placeable.height - collapsed).coerceIn(minVisible, placeable.height)
+                        val placeY = -(placeable.height - visibleHeight)
+                        layout(placeable.width, visibleHeight) {
+                            placeable.placeRelative(0, placeY)
                         }
-                    } else null,
-                    onRelations = { kind ->
-                        val target = currentUser?.id ?: tabState.resolvedUid
-                        if (!target.isNullOrBlank()) nav.push(Route.Relations(target, kind))
                     },
-                    followLabel = when {
-                        App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
-                        currentFollowing -> "已关注"
-                        else -> "关注"
-                    },
-                    onFollow = currentUser?.let { target ->
-                        if (App.repo.guest) {
-                            // 纯本地模式没有账号可关注，按钮直接切本机的「本地关注」标记。
-                            {
-                                val on = FollowTags[target.id] == FollowTag.Local
-                                FollowTags.set(target.id, if (on) null else FollowTag.Local)
-                                App.notifyFollowChanged()
-                                App.toast(if (on) "已取消本地关注" else "已加入本地关注")
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    val currentUser = tabState.user
+                    val tag = FollowTags[currentUser?.id ?: uid]
+                    val targetId = currentUser?.id ?: tabState.resolvedUid
+                    val isSelf = !App.repo.guest && !targetId.isNullOrBlank() && targetId == App.repo.session?.uid
+                    val currentFollowing = currentUser?.let { App.repo.isFollowingUser(it.id, it.following) } == true
+                    ProfileHeader(
+                        user = currentUser?.copy(following = currentFollowing),
+                        tag = tag,
+                        topInset = topInset,
+                        pullState = pullState,
+                        editableProfile = isSelf,
+                        onActiveCover = onActiveCover,
+                        onCover = { pics, i -> nav.push(Route.Images(pics, i)) },
+                        onAvatar = { avatarUrl ->
+                            nav.push(
+                                Route.Images(
+                                    pics = listOf(Pic(thumb = avatarUrl, large = avatarUrl)),
+                                    index = 0,
+                                    editableAvatar = isSelf,
+                                ),
+                            )
+                        },
+                        onRename = if (isSelf) {
+                            { newName ->
+                                runCatching {
+                                    App.repo.updateProfileBasic(
+                                        screenName = newName,
+                                        membership = currentUser?.membership ?: Membership.None,
+                                    )
+                                }
                             }
-                        } else if (target.id == App.repo.session?.uid) {
-                            null
-                        } else {
-                            {
-                                if (!App.repo.isFollowInFlight(target.id)) {
-                                    val targetFollow = !currentFollowing
-                                    scope.launch {
-                                        runCatching { App.repo.follow(target.id, targetFollow) }
-                                            .onSuccess { applied ->
-                                                if (applied) {
-                                                    tabState.user = target.copy(
-                                                        following = targetFollow,
-                                                        followers = (target.followers +
-                                                            if (targetFollow) 1 else -1).coerceAtLeast(0),
-                                                    )
-                                                    App.notifyFollowChanged()
-                                                    App.toast(if (targetFollow) "已关注" else "已取消关注")
+                        } else null,
+                        onStatusesClick = {
+                            scope.launch { pagerState.animateScrollToPage(0) }
+                        },
+                        onRelations = { kind ->
+                            val target = currentUser?.id ?: tabState.resolvedUid
+                            if (!target.isNullOrBlank()) nav.push(Route.Relations(target, kind))
+                        },
+                        followLabel = when {
+                            App.repo.guest -> if (tag == FollowTag.Local) "已本地关注" else "本地关注"
+                            currentFollowing -> "已关注"
+                            else -> "关注"
+                        },
+                        onFollow = currentUser?.let { target ->
+                            if (App.repo.guest) {
+                                // 纯本地模式没有账号可关注，按钮直接切本机的「本地关注」标记。
+                                {
+                                    val on = FollowTags[target.id] == FollowTag.Local
+                                    FollowTags.set(target.id, if (on) null else FollowTag.Local)
+                                    App.notifyFollowChanged()
+                                    App.toast(if (on) "已取消本地关注" else "已加入本地关注")
+                                }
+                            } else if (target.id == App.repo.session?.uid) {
+                                null
+                            } else {
+                                {
+                                    if (!App.repo.isFollowInFlight(target.id)) {
+                                        val targetFollow = !currentFollowing
+                                        scope.launch {
+                                            runCatching { App.repo.follow(target.id, targetFollow) }
+                                                .onSuccess { applied ->
+                                                    if (applied) {
+                                                        tabState.user = target.copy(
+                                                            following = targetFollow,
+                                                            followers = (target.followers +
+                                                                if (targetFollow) 1 else -1).coerceAtLeast(0),
+                                                        )
+                                                        App.notifyFollowChanged()
+                                                        App.toast(if (targetFollow) "已关注" else "已取消关注")
+                                                    }
                                                 }
-                                            }
-                                            .onFailure { App.toast(it.message ?: "操作失败") }
+                                                .onFailure { App.toast(it.message ?: "操作失败") }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    },
-                )
-            }
-            val extraTabSpacing = if (selectedTab == ProfileContentTab.Posts) 0.dp else 5.dp
-            val mutedUid = tabState.user?.id ?: tabState.resolvedUid ?: uid.orEmpty()
-            val isProfileSelf = !App.repo.guest && mutedUid.isNotBlank() && mutedUid == App.repo.session?.uid
-            val activeMuteMode = if (!isProfileSelf) ContentFilters.muteMode(mutedUid) else null
-            if (activeMuteMode != null) {
-                item(key = "profile_mute_banner") {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, top = extraTabSpacing, end = 12.dp),
-                        cornerRadius = CardDefaults.GroupCornerRadius,
-                        insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        weight = CardDefaults.GroupWeight,
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
+                        },
+                    )
+                    val mutedUid = tabState.user?.id ?: tabState.resolvedUid ?: uid.orEmpty()
+                    val isProfileSelf = !App.repo.guest && mutedUid.isNotBlank() && mutedUid == App.repo.session?.uid
+                    val activeMuteMode = if (!isProfileSelf) ContentFilters.muteMode(mutedUid) else null
+                    if (activeMuteMode != null) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, top = 8.dp, end = 12.dp),
+                            cornerRadius = CardDefaults.GroupCornerRadius,
+                            insideMargin = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            weight = CardDefaults.GroupWeight,
                         ) {
-                            Text(
-                                text = if (activeMuteMode == MuteUserMode.All) {
-                                    "已本地静音该用户（主页内容仍可见）"
-                                } else {
-                                    "已屏蔽该用户的转发（主页内容仍可见）"
-                                },
-                                fontSize = 13.sp,
-                                color = COUITheme.colorScheme.onSurfaceSecondary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "解除",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = COUITheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        ContentFilters.setMutedUser(mutedUid, "", null)
-                                        App.toast("已取消本地屏蔽")
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = if (activeMuteMode == MuteUserMode.All) {
+                                        "已本地静音该用户（主页内容仍可见）"
+                                    } else {
+                                        "已屏蔽该用户的转发（主页内容仍可见）"
+                                    },
+                                    fontSize = 13.sp,
+                                    color = COUITheme.colorScheme.onSurfaceSecondary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "解除",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = COUITheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            ContentFilters.setMutedUser(mutedUid, "", null)
+                                            App.toast("已取消本地屏蔽")
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
                         }
                     }
                 }
             }
-            item(key = "profile_content_tabs") {
-                // 相册/视频网格行距为 3dp（微博列表为 8dp），补齐上下各 5dp，确保三个页签切换时
-                // 标签栏自身位置与标签栏到下方内容顶部的间距完全一致。
+
+            // 胶囊标签栏吸顶保留在头部下缘，点击或左右滑下方列表同步联动切换。
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(pageContainerColor())
+                    .padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 6.dp),
+            ) {
                 TabRowWithContour(
-                    tabs = ProfileContentTab.entries.map { it.label },
-                    selectedTabIndex = selectedTab.ordinal,
-                    onTabSelected = { idx -> selectedTab = ProfileContentTab.entries[idx] },
+                    tabs = tabs.map { it.label },
+                    selectedTabIndex = pagerState.currentPage.coerceIn(0, tabs.lastIndex),
+                    onTabSelected = { idx -> scope.launch { pagerState.animateScrollToPage(idx) } },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(
-                            start = 12.dp,
-                            top = 4.dp + extraTabSpacing,
-                            end = 12.dp,
-                            bottom = 5.dp + extraTabSpacing,
-                        )
                         .testTag("profile_content_tabs"),
                     height = TabRowDefaults.TabRowWithContourTinyHeight,
                     cornerRadius = TabRowDefaults.TabRowWithContourTinyCornerRadius,
                     contourPadding = TabRowDefaults.TabRowWithContourTinyPadding,
                     segmentPadding = 6.dp,
+                    backdrop = null,
                 )
             }
-            val wallItems = if (selectedTab == ProfileContentTab.Posts) {
-                emptyList()
-            } else {
-                extractMediaWallItems(
-                    statuses = tabState.items,
-                    includeRetweeted = false,
-                    filter = if (selectedTab == ProfileContentTab.Videos) MediaWallFilter.Videos else MediaWallFilter.All,
+
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) { page ->
+                val pageTab = tabs[page]
+                val pageListState = when (page) {
+                    0 -> listState
+                    1 -> albumListState
+                    else -> videoListState
+                }
+                BindScrollToTop(pageListState, enabled = pagerState.settledPage == page)
+                ProfileMediaPagerTab(
+                    nav = nav,
+                    tab = pageTab,
+                    tabState = tabState,
+                    listState = pageListState,
+                    extraBottom = extraBottom,
+                    isLoadingMore = tabState.loading || autoFilling,
+                    autoFillExhausted = autoFillExhausted,
+                    onRefreshAll = {
+                        scope.launch { loadStatuses(true, force = true, showRefresh = true) }
+                    },
+                    onLoadMediaBurst = {
+                        scope.launch { loadMediaBurst(pageListState) }
+                    },
                 )
             }
-            val isLoadingMore = tabState.loading || autoFilling
-            if (tabState.items.isEmpty()) {
-                item(key = "profile_empty_state") {
-                    when {
-                        isLoadingMore || tabState.refreshing -> LoadingState()
-                        tabState.error != null -> ErrorState(tabState.error!!) {
-                            scope.launch { loadStatuses(true, force = true, showRefresh = true) }
-                        }
-                        else -> EmptyState("还没有微博")
-                    }
-                }
-            } else if (selectedTab != ProfileContentTab.Posts) {
-                if (wallItems.isEmpty() && !isLoadingMore) {
-                    item(key = "profile_wall_empty") {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            EmptyState(
-                                if (selectedTab == ProfileContentTab.Videos) "已加载微博中暂无视频"
-                                else "已加载微博中暂无图片或视频",
-                            )
-                            if (!tabState.end) {
-                                TextButton(
-                                    text = "加载更多微博",
-                                    onClick = { scope.launch { loadMediaBurst() } },
-                                )
-                            }
-                        }
-                    }
-                } else if (wallItems.isNotEmpty()) {
-                    mediaAlbumGridItems(
-                        items = wallItems,
-                        horizontalPadding = 12.dp,
-                        topOuterCornerRadius = CardDefaults.GroupCornerRadius,
-                        topOuterWeight = CardDefaults.GroupWeight,
-                        onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
-                        onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                        onOpenPost = { nav.push(Route.Detail(it.id, it.mid)) },
-                    )
-                }
-            } else {
-                itemsIndexed(tabState.items, key = { _, s -> s.id }) { index, status ->
-                    val origin = rememberExpandOrigin()
-                    val topBar = LocalTopBarBounds.current
-                    val bottomBar = LocalBottomBarBounds.current
-                    SideEffect {
-                        origin.listState = listState
-                        origin.rowKey = status.id
-                        origin.originKey = "card:${status.id}"
-                        origin.topBar = topBar
-                        origin.bottomBar = bottomBar
-                    }
-                    StatusCard(
-                        status = status,
-                        modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
-                        onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onUser = { nav.push(Route.Profile(it.id)) },
-                        onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                        onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                        onLike = {
-                            scope.launch {
-                                val updated = App.toggleStatusLike(status) ?: return@launch
-                                val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
-                                if (currentIdx >= 0) tabState.items[currentIdx] = updated
-                            }
-                        },
-                        onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
-                        onOpenQuoted = { quoted, quotedOrigin ->
-                            quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
-                            nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
-                        },
-                    )
+        }
+    }
+}
+
+@Composable
+private fun ProfileMediaPagerTab(
+    nav: NavState,
+    tab: ProfileContentTab,
+    tabState: ProfileTabState,
+    listState: LazyListState,
+    extraBottom: Dp,
+    isLoadingMore: Boolean,
+    autoFillExhausted: Boolean,
+    onRefreshAll: () -> Unit,
+    onLoadMediaBurst: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val wallItems = if (tab == ProfileContentTab.Posts) {
+        emptyList()
+    } else {
+        extractMediaWallItems(
+            statuses = tabState.items,
+            includeRetweeted = false,
+            filter = if (tab == ProfileContentTab.Videos) MediaWallFilter.Videos else MediaWallFilter.All,
+        )
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxSize()
+            .scrollEndHaptic(),
+        contentPadding = PaddingValues(
+            top = if (tab == ProfileContentTab.Posts) 2.dp else 4.dp,
+            bottom = 16.dp + navBottomPadding() + extraBottom,
+        ),
+        verticalArrangement = Arrangement.spacedBy(if (tab == ProfileContentTab.Posts) 8.dp else 3.dp),
+    ) {
+        if (tabState.items.isEmpty()) {
+            item(key = "profile_empty_state_${tab.name}") {
+                when {
+                    isLoadingMore || tabState.refreshing -> LoadingState()
+                    tabState.error != null -> ErrorState(tabState.error!!, onRetry = onRefreshAll)
+                    else -> EmptyState("还没有微博")
                 }
             }
-            if (tabState.items.isNotEmpty()) {
-                item(key = "profile_footer") {
-                    when {
-                        isLoadingMore -> LoadingState()
-                        selectedTab != ProfileContentTab.Posts && autoFillExhausted && !tabState.end && wallItems.isNotEmpty() -> {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                TextButton(
-                                    text = "继续加载更多",
-                                    onClick = { scope.launch { loadMediaBurst() } },
-                                )
-                            }
-                        }
-                        tabState.end && (selectedTab == ProfileContentTab.Posts || wallItems.isNotEmpty()) -> Text(
-                            if (selectedTab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
-                            fontSize = 12.sp,
-                            color = COUITheme.colorScheme.onSurfaceSecondary,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+        } else if (tab != ProfileContentTab.Posts) {
+            if (wallItems.isEmpty() && !isLoadingMore) {
+                item(key = "profile_wall_empty_${tab.name}") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        EmptyState(
+                            if (tab == ProfileContentTab.Videos) "已加载微博中暂无视频"
+                            else "已加载微博中暂无图片或视频",
                         )
+                        if (!tabState.end) {
+                            TextButton(
+                                text = "加载更多微博",
+                                onClick = onLoadMediaBurst,
+                            )
+                        }
                     }
+                }
+            } else if (wallItems.isNotEmpty()) {
+                mediaAlbumGridItems(
+                    items = wallItems,
+                    horizontalPadding = 12.dp,
+                    topOuterCornerRadius = CardDefaults.GroupCornerRadius,
+                    topOuterWeight = CardDefaults.GroupWeight,
+                    onPhotoClick = { pics, idx -> nav.push(Route.Images(pics, idx)) },
+                    onVideoClick = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                    onOpenPost = { nav.push(Route.Detail(it.id, it.mid)) },
+                )
+            }
+        } else {
+            itemsIndexed(tabState.items, key = { _, s -> s.id }) { _, status ->
+                val origin = rememberExpandOrigin()
+                val topBar = LocalTopBarBounds.current
+                val bottomBar = LocalBottomBarBounds.current
+                SideEffect {
+                    origin.listState = listState
+                    origin.rowKey = status.id
+                    origin.originKey = "card:${status.id}"
+                    origin.topBar = topBar
+                    origin.bottomBar = bottomBar
+                }
+                StatusCard(
+                    status = status,
+                    modifier = Modifier.padding(horizontal = 12.dp).expandOrigin(origin),
+                    onOpen = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                    onUser = { nav.push(Route.Profile(it.id)) },
+                    onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
+                    onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
+                    onLike = {
+                        scope.launch {
+                            val updated = App.toggleStatusLike(status) ?: return@launch
+                            val currentIdx = tabState.items.indexOfFirst { it.id == status.id }
+                            if (currentIdx >= 0) tabState.items[currentIdx] = updated
+                        }
+                    },
+                    onRepost = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                    onComment = { nav.push(Route.Detail(status.id, status.mid), origin) },
+                    onOpenQuoted = { quoted, quotedOrigin ->
+                        quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
+                        nav.push(Route.Detail(quoted.id, quoted.mid), quotedOrigin)
+                    },
+                )
+            }
+        }
+        if (tabState.items.isNotEmpty()) {
+            item(key = "profile_footer_${tab.name}") {
+                when {
+                    isLoadingMore -> LoadingState()
+                    tab != ProfileContentTab.Posts && autoFillExhausted && !tabState.end && wallItems.isNotEmpty() -> {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TextButton(
+                                text = "继续加载更多",
+                                onClick = onLoadMediaBurst,
+                            )
+                        }
+                    }
+                    tabState.end && (tab == ProfileContentTab.Posts || wallItems.isNotEmpty()) -> Text(
+                        if (tab == ProfileContentTab.Posts) "没有更多了" else "长按任意缩略图可查看原微博",
+                        fontSize = 12.sp,
+                        color = COUITheme.colorScheme.onSurfaceSecondary,
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    )
                 }
             }
         }

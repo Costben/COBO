@@ -476,10 +476,9 @@ fun MainShell(nav: NavState) {
     var editProfileOpen by remember { mutableStateOf(false) }
     val profileListState = rememberLazyListState()
     var profileActiveCover by remember { mutableStateOf<String?>(null) }
-    val profileScrolledPast by remember(profileListState, barDensity) {
+    val profileScrolledPast by remember(profileTabState, profileListState, barDensity) {
         derivedStateOf {
-            val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
-            else profileListState.firstVisibleItemScrollOffset.toFloat()
+            val scrolled = profileTabState.effectiveScrollOffsetPx(profileListState)
             AppBarBlurOverlayDefaults.scrollAlpha(scrolled, barDensity) >= 0.45f
         }
     }
@@ -697,7 +696,7 @@ fun MainShell(nav: NavState) {
             timelineScrollHolder.listStateFor(slotKey)
         }
         1 -> if (guest) null else messagesState.listState
-        else -> profileListState
+        else -> profileTabState.activeListStateOrNull() ?: profileListState
     }
     val mainTopSafeZone = if (tab == 0) FeedTitleRowHeight + 8.dp else 16.dp
     val mainBarScroll = rememberFloatingBarScrollController(
@@ -817,6 +816,7 @@ fun MainShell(nav: NavState) {
                     timelineScrollHolder = timelineScrollHolder,
                     messagesState = messagesState,
                     profileListState = profileListState,
+                    profileTabState = profileTabState,
                     searchExpanded = feedSearchExpanded,
                     panelCovering = feedPanelCovering,
                     bounds = topBarBounds,
@@ -1143,6 +1143,7 @@ private fun MainBarUnderlay(
     timelineScrollHolder: TimelineScrollHolder,
     messagesState: MessagesTabState,
     profileListState: LazyListState,
+    profileTabState: ProfileTabState,
     searchExpanded: Boolean,
     panelCovering: Boolean,
     bounds: TopBarBounds,
@@ -1196,10 +1197,9 @@ private fun MainBarUnderlay(
             }
         }
     }
-    val profileScrollAlpha = remember(profileListState, density) {
+    val profileScrollAlpha = remember(profileTabState, profileListState, density) {
         {
-            val scrolled = if (profileListState.firstVisibleItemIndex > 0) Float.MAX_VALUE
-            else profileListState.firstVisibleItemScrollOffset.toFloat()
+            val scrolled = profileTabState.effectiveScrollOffsetPx(profileListState)
             AppBarBlurOverlayDefaults.scrollAlpha(scrolled, density)
         }
     }
