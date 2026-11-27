@@ -117,6 +117,7 @@ import com.cobo.app.data.UserRemarks
 import com.cobo.app.data.VerifiedKind
 import com.cobo.app.data.commentFilterEmptyMessage
 import com.cobo.app.data.commentFilterTriggerLabel
+import com.cobo.app.data.computeDetailSectionFillerHeightPx
 import com.cobo.app.data.detailSectionHeaderIndex
 import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
@@ -252,9 +253,24 @@ fun DetailScreen(
     var commentFilter by remember(id) { mutableStateOf(CommentFilterState()) }
     val listState = rememberLazyListState()
     BindScrollToTop(listState)
+    var lazyViewportHeightPx by remember(id) { mutableIntStateOf(0) }
+    var pinSectionMinHeight by remember(id, initialSection) {
+        mutableStateOf(initialSection != DetailInitialSection.Body)
+    }
     var userScrolled by remember(id) { mutableStateOf(false) }
     var pendingSectionJump by remember(id, initialSection) {
         mutableStateOf(initialSection != DetailInitialSection.Body)
+    }
+
+    // 切换评论筛选、排序或「评论 / 转发」标签前保持互动区高度兜底，防止列表因条目减少被拉回正文顶部。
+    fun preserveSectionPositionBeforeSwitch() {
+        if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
+            pinSectionMinHeight = true
+            val headerIdx = detailSectionHeaderIndex((status?.editCount ?: 0) > 0)
+            if (listState.firstVisibleItemIndex > headerIdx) {
+                scope.launch { listState.scrollToItem(headerIdx, 0) }
+            }
+        }
     }
     // The bar floats over this list too, so the quoted post inside the card below has to be able to
     // read where the bar ends when a page returns into it.
@@ -534,6 +550,10 @@ fun DetailScreen(
     val detailBarHidden by remember(detailHideProgress) {
         derivedStateOf { detailHideProgress.value >= FloatingBarNonInteractiveThreshold }
     }
+    val layoutDensity = LocalDensity.current
+    val fillerTopPadPx = with(layoutDensity) { (topBarHeight + 8.dp).roundToPx() }
+    val fillerHeaderAndFooterPx = with(layoutDensity) { 104.dp.roundToPx() }
+    val fillerMinItemHeightPx = with(layoutDensity) { 80.dp.roundToPx() }
 
     // 进场期间由根部 ExitSnapshotHost 冻结单帧快照，无需切换 liveBackdropEnabled，
     // 避免展开结束瞬间底部悬浮工具栏从纯色跳变到玻璃材质闪一下。
@@ -549,7 +569,10 @@ fun DetailScreen(
             CompositionLocalProvider(LocalBackdrop provides if (liveBackdropEnabled) backdrop else null) {
                 LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().scrollEndHaptic(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { lazyViewportHeightPx = it.height }
+                    .scrollEndHaptic(),
                 contentPadding = PaddingValues(
                     start = 12.dp,
                     top = topBarHeight + 8.dp,
@@ -676,7 +699,10 @@ fun DetailScreen(
                                         resetLabel = "显示全部评论",
                                         showAuthorOption = !postAuthorUid.isNullOrBlank(),
                                         groupKey = "detail_comment_filter_$id",
-                                        onChange = { commentFilter = it },
+                                        onChange = {
+                                            preserveSectionPositionBeforeSwitch()
+                                            commentFilter = it
+                                        },
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.weight(1f, fill = false),
@@ -687,7 +713,10 @@ fun DetailScreen(
                                         count = status?.comments ?: comments.size,
                                         selected = false,
                                         alignStartEdge = true,
-                                        onClick = { activeTab = DetailSectionTab.Comments },
+                                        onClick = {
+                                            preserveSectionPositionBeforeSwitch()
+                                            activeTab = DetailSectionTab.Comments
+                                        },
                                         modifier = Modifier.testTag("detail_tab_comments"),
                                     )
                                 }
@@ -695,7 +724,10 @@ fun DetailScreen(
                                     label = "转发",
                                     count = status?.reposts ?: reposts.size,
                                     selected = activeTab == DetailSectionTab.Reposts,
-                                    onClick = { activeTab = DetailSectionTab.Reposts },
+                                    onClick = {
+                                        preserveSectionPositionBeforeSwitch()
+                                        activeTab = DetailSectionTab.Reposts
+                                    },
                                     modifier = Modifier.testTag("detail_tab_reposts"),
                                 )
                             }
@@ -705,7 +737,10 @@ fun DetailScreen(
                                 // so the two orders share one compact track instead.
                                 SortSwitch(
                                     selected = sort,
-                                    onSelect = ::switchSort,
+                                    onSelect = {
+                                        preserveSectionPositionBeforeSwitch()
+                                        switchSort(it)
+                                    },
                                 )
                             }
                         }
@@ -767,7 +802,7 @@ fun DetailScreen(
                         }
                     }
 
-                    item {
+                    item(key = "section_footer") {
                         when {
                             // An order switch keeps the old rows visible and reports progress in the
                             // header, so it must not also drop a spinner under the list.
@@ -797,7 +832,10 @@ fun DetailScreen(
                                     }
                                     TextButton(
                                         text = "显示全部评论",
-                                        onClick = { commentFilter = CommentFilterState() },
+                                        onClick = {
+                                            preserveSectionPositionBeforeSwitch()
+                                            commentFilter = CommentFilterState()
+                                        },
                                     )
                                 }
                             }
@@ -827,7 +865,7 @@ fun DetailScreen(
                         )
                     }
 
-                    item {
+                    item(key = "section_footer") {
                         when {
                             loadingReposts -> LoadingState()
                             repostError != null -> ErrorState(repostError!!) {
@@ -850,6 +888,26 @@ fun DetailScreen(
                                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                             )
                         }
+                    }
+                }
+
+                val usableViewportPx = (lazyViewportHeightPx - fillerTopPadPx).coerceAtLeast(0)
+                val activeItemCount = if (activeTab == DetailSectionTab.Comments) {
+                    visibleComments.size
+                } else {
+                    visibleReposts.size
+                }
+                val fillerPx = computeDetailSectionFillerHeightPx(
+                    usableViewportPx = usableViewportPx,
+                    activeItemCount = activeItemCount,
+                    preservePosition = pinSectionMinHeight,
+                    headerAndFooterPx = fillerHeaderAndFooterPx,
+                    minItemHeightPx = fillerMinItemHeightPx,
+                )
+                if (fillerPx > 0) {
+                    val fillerDp = with(layoutDensity) { fillerPx.toDp() }
+                    item(key = "section_tail_filler") {
+                        Spacer(Modifier.height(fillerDp))
                     }
                 }
             }

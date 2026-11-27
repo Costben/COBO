@@ -2454,6 +2454,23 @@ data class RepostPage(
 internal fun detailSectionHeaderIndex(hasEditHistory: Boolean): Int =
     if (hasEditHistory) 2 else 1
 
+/**
+ * 计算详情页互动区底部所需的最小占位高度（px），确保从外侧直达评论/转发区或原地切换筛选/标签时，
+ * 分组头下方内容总高度不低于可视区高度，避免 LazyColumn 反向夹紧滚动位置将画面拉回正文顶部。
+ */
+internal fun computeDetailSectionFillerHeightPx(
+    usableViewportPx: Int,
+    activeItemCount: Int,
+    preservePosition: Boolean,
+    headerAndFooterPx: Int,
+    minItemHeightPx: Int,
+): Int {
+    if (!preservePosition || usableViewportPx <= 0) return 0
+    val estimatedBodyPx = headerAndFooterPx.coerceAtLeast(0) +
+        activeItemCount.coerceAtLeast(0) * minItemHeightPx.coerceAtLeast(0)
+    return (usableViewportPx - estimatedBodyPx).coerceAtLeast(0)
+}
+
 /** 解析 Share 客户端 `statuses/repost_timeline` 返回的一页转发微博。 */
 internal fun parseRepostsClient(root: JSONObject, curPage: Int): RepostPage {
     val arr = root.optJSONArray("reposts") ?: JSONArray()

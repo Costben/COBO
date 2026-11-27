@@ -13,6 +13,53 @@ class DetailSectionJumpTest {
     }
 
     @Test
+    fun computeDetailSectionFillerHeightKeepsHeaderAnchoredOnSparseTabs() {
+        // 未启用稳锚模式时返回 0
+        assertEquals(
+            0,
+            computeDetailSectionFillerHeightPx(
+                usableViewportPx = 1800,
+                activeItemCount = 0,
+                preservePosition = false,
+                headerAndFooterPx = 200,
+                minItemHeightPx = 160,
+            ),
+        )
+        // 空列表或仅剩极少条目时填满余量，防止 LazyColumn 拉回正文顶部
+        assertEquals(
+            1600,
+            computeDetailSectionFillerHeightPx(
+                usableViewportPx = 1800,
+                activeItemCount = 0,
+                preservePosition = true,
+                headerAndFooterPx = 200,
+                minItemHeightPx = 160,
+            ),
+        )
+        assertEquals(
+            1280,
+            computeDetailSectionFillerHeightPx(
+                usableViewportPx = 1800,
+                activeItemCount = 2,
+                preservePosition = true,
+                headerAndFooterPx = 200,
+                minItemHeightPx = 160,
+            ),
+        )
+        // 当列表条目总预估高度足够撑满视口时不再增加额外尾部占位
+        assertEquals(
+            0,
+            computeDetailSectionFillerHeightPx(
+                usableViewportPx = 1800,
+                activeItemCount = 12,
+                preservePosition = true,
+                headerAndFooterPx = 200,
+                minItemHeightPx = 160,
+            ),
+        )
+    }
+
+    @Test
     fun parseRepostsClientExtractsItemsAndNextPageByTotalAndCursor() {
         val jsonMoreByTotal = JSONObject(
             """
