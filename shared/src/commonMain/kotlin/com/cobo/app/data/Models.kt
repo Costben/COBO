@@ -631,6 +631,8 @@ internal fun extractVideoInfo(page: JSONObject, fallbackPics: List<Pic> = emptyL
 private val WeiboVideoFidPattern = Regex("""^\d+:[0-9a-zA-Z_-]+$""")
 private val DigitsOnlyPattern = Regex("""^\d{6,}$""")
 
+private val StrictWeiboVideoFidPattern = Regex("""\b(1034:[0-9a-zA-Z_-]{6,})\b""")
+
 internal fun extractExtraVideosFromUrlStruct(
     urlStruct: JSONArray,
     primaryVideo: VideoInfo?,
@@ -639,31 +641,34 @@ internal fun extractExtraVideosFromUrlStruct(
 ): List<Pic> {
     val knownFids = HashSet<String>()
     primaryVideo?.fid?.trim()?.takeIf { it.isNotBlank() }?.let(knownFids::add)
-    primaryVideo?.url?.let { com.cobo.app.screen.extractWeiboVideoFid(it) }?.let(knownFids::add)
+    primaryVideo?.url?.let { StrictWeiboVideoFidPattern.find(com.cobo.app.platform.urlDecode(it))?.groupValues?.getOrNull(1) }
+        ?.let(knownFids::add)
     existingPics.forEach { p ->
         p.videoFid.trim().takeIf { it.isNotBlank() }?.let(knownFids::add)
-        com.cobo.app.screen.extractWeiboVideoFid(p.videoUrl)?.let(knownFids::add)
+        StrictWeiboVideoFidPattern.find(com.cobo.app.platform.urlDecode(p.videoUrl))?.groupValues?.getOrNull(1)
+            ?.let(knownFids::add)
     }
 
     val out = ArrayList<Pic>()
     for (i in 0 until urlStruct.length()) {
         val entry = urlStruct.optJSONObject(i) ?: continue
+        val oriUrl = entry.str("ori_url")
+        if (oriUrl.contains("100808") || entry.str("url_title").endsWith("超话")) continue
         val actionOid = entry.optJSONObject("actionlog")?.str("oid").orEmpty()
         val candidates = listOf(
             entry.str("object_id"),
             actionOid,
-            entry.str("ori_url"),
+            oriUrl,
             entry.str("long_url"),
             entry.str("page_url"),
             entry.str("short_url"),
         )
+        // 只认微博视频专属对象前缀 1034:...，绝不把超话（1022:100808...）、文章或外部网页链接误判为视频。
         val fid = candidates.firstNotNullOfOrNull { raw ->
-            val trimmed = raw.trim()
-            when {
-                trimmed.startsWith("1034:") -> trimmed.substringBefore('&').substringBefore(' ')
-                trimmed.isNotBlank() -> com.cobo.app.screen.extractWeiboVideoFid(trimmed)
-                else -> null
-            }
+            if (raw.isBlank()) return@firstNotNullOfOrNull null
+            val decoded = runCatching { com.cobo.app.platform.urlDecode(raw) }.getOrDefault(raw)
+            StrictWeiboVideoFidPattern.find(decoded)?.groupValues?.getOrNull(1)
+                ?: StrictWeiboVideoFidPattern.find(raw)?.groupValues?.getOrNull(1)
         } ?: continue
         if (!knownFids.add(fid)) continue
 

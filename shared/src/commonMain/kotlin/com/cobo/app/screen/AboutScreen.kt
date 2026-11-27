@@ -1,10 +1,13 @@
 package com.cobo.app.screen
 
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.cobo.app.platform.PlatformContext
 import com.cobo.app.platform.copyToClipboard
 import com.cobo.app.platform.currentAppVersionCode
+import com.cobo.app.platform.loadAppIconBitmap
 import com.cobo.app.ui.CoboIcons
+import com.cobo.app.ui.isDarkTheme
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -104,6 +107,12 @@ private val DESIGN_REFERENCES = listOf(
         summary = "Costben/BiliCO · 同源 COUI 17 搜索过渡与界面骨架参考",
         status = "GitHub",
         url = "https://github.com/Costben/BiliCO",
+    ),
+    UpstreamRef(
+        title = "SEE",
+        summary = "funcenter/See · 经典第三方微博客户端交互与样式参考",
+        status = "GitHub",
+        url = "https://github.com/funcenter/See",
     ),
 )
 
@@ -316,5 +325,9 @@ private fun currentVersionCode(@Suppress("UNUSED_PARAMETER") context: PlatformCo
     currentAppVersionCode()
 
 @Composable
-private fun rememberAppIconPainter(@Suppress("UNUSED_PARAMETER") context: PlatformContext): androidx.compose.ui.graphics.painter.Painter =
-    rememberVectorPainter(CoboIcons.Weibo)
+private fun rememberAppIconPainter(@Suppress("UNUSED_PARAMETER") context: PlatformContext): Painter {
+    val dark = isDarkTheme()
+    val bitmap = remember(dark) { loadAppIconBitmap(dark) }
+    val fallback = rememberVectorPainter(CoboIcons.Weibo)
+    return remember(bitmap, fallback) { bitmap?.let(::BitmapPainter) ?: fallback }
+}

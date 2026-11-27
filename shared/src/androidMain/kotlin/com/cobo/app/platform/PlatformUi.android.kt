@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas as AndroidCanvas
@@ -131,6 +132,27 @@ actual fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap? = ru
         }
     }
     Bitmap.createBitmap(pixels, safeSize, safeSize, Bitmap.Config.ARGB_8888).asImageBitmap()
+}.getOrNull()
+
+actual fun loadAppIconBitmap(darkTheme: Boolean): ImageBitmap? = runCatching {
+    val ctx = AndroidPlatformHolder.currentActivity() ?: AndroidPlatformHolder.appContext ?: return null
+    val cfg = Configuration(ctx.resources.configuration).apply {
+        uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            if (darkTheme) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+    }
+    val themed = ctx.createConfigurationContext(cfg)
+    val iconRes = ctx.applicationInfo.icon
+    val drawable = if (iconRes != 0) {
+        runCatching { themed.resources.getDrawable(iconRes, themed.theme) }.getOrNull()
+    } else {
+        null
+    } ?: ctx.packageManager.getApplicationIcon(ctx.applicationInfo)
+    val sizePx = 256
+    val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(bmp)
+    drawable.setBounds(0, 0, sizePx, sizePx)
+    drawable.draw(canvas)
+    bmp.asImageBitmap()
 }.getOrNull()
 
 actual fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = runCatching {

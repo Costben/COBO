@@ -70,6 +70,7 @@ expect fun shareText(text: String, title: String = "")
 expect fun shareImageBytes(bytes: ByteArray, fileName: String, mime: String = "image/jpeg")
 
 expect fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap?
+expect fun loadAppIconBitmap(darkTheme: Boolean): ImageBitmap?
 expect fun decodeImageBitmap(bytes: ByteArray): ImageBitmap?
 expect fun encodeImageBitmapToPng(bitmap: ImageBitmap): ByteArray?
 expect fun decodeImageDimensions(bytes: ByteArray): Pair<Int, Int>?

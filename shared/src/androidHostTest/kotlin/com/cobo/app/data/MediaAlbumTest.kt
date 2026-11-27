@@ -398,4 +398,33 @@ class MediaAlbumTest {
         assertEquals(2, parsed.pics.size)
         assertEquals("1034:5225411265888289", parsed.pics[0].videoFid)
     }
+
+    @Test
+    fun superTopicAndWebLinksInUrlStructAreNeverMistakenForVideos() {
+        val raw = JSONObject()
+            .put("idstr", "5369885504832384")
+            .put("text", "2026/27赛季英超第12轮转播信息 http://t.cn/AXp5gyp1 #英超[超话]#")
+            .put("pic_ids", JSONArray().put("0041L2zSgy1ijgrxiukadj60u01hc11g02"))
+            .put(
+                "url_struct",
+                JSONArray()
+                    .put(
+                        JSONObject()
+                            .put("url_title", "网页链接")
+                            .put("short_url", "http://t.cn/AXp5gyp1")
+                            .put("ori_url", "https://m.miguvideo.com/m/home/d41f29dcb45c453da301a8069c516595"),
+                    )
+                    .put(
+                        JSONObject()
+                            .put("url_title", "英超超话")
+                            .put("ori_url", "sinaweibo://pageinfo?containerid=1008086c62665ba777fd19db5c71c7b94fcce5")
+                            .put("actionlog", JSONObject().put("oid", "1022:1008086c62665ba777fd19db5c71c7b94fcce5")),
+                    ),
+            )
+
+        val parsed = Status.from(raw)!!
+        assertNull(parsed.video)
+        assertEquals(1, parsed.pics.size)
+        assertTrue(parsed.pics.none { it.isVideo })
+    }
 }

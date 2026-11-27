@@ -47,6 +47,7 @@ import platform.CoreLocation.CLLocationManagerDelegateProtocol
 import platform.CoreLocation.kCLAuthorizationStatusAuthorizedAlways
 import platform.CoreLocation.kCLAuthorizationStatusAuthorizedWhenInUse
 import platform.CoreLocation.kCLLocationAccuracyHundredMeters
+import platform.Foundation.NSBundle
 import platform.Foundation.NSData
 import platform.Foundation.NSMutableData
 import platform.Foundation.NSItemProviderReadingProtocol
@@ -182,6 +183,29 @@ actual fun generateQrCodeBitmap(content: String, sizePx: Int): ImageBitmap? {
         CGImageRelease(cgImage)
     }
 }
+
+actual fun loadAppIconBitmap(darkTheme: Boolean): ImageBitmap? = runCatching {
+    val bundle = NSBundle.mainBundle
+    val trait = UITraitCollection.traitCollectionWithUserInterfaceStyle(
+        if (darkTheme) UIUserInterfaceStyle.UIUserInterfaceStyleDark else UIUserInterfaceStyle.UIUserInterfaceStyleLight,
+    )
+    val infoIcons = (bundle.infoDictionary?.get("CFBundleIcons") as? Map<*, *>)
+        ?.get("CFBundlePrimaryIcon") as? Map<*, *>
+    val iconFiles = (infoIcons?.get("CFBundleIconFiles") as? List<*>)
+        ?.mapNotNull { it as? String }
+        .orEmpty()
+    val candidates = buildList {
+        addAll(iconFiles.asReversed())
+        add("AppIcon")
+        add("AppIcon60x60")
+    }.distinct()
+    val uiImage = candidates.firstNotNullOfOrNull { name ->
+        UIImage.imageNamed(name, inBundle = bundle, compatibleWithTraitCollection = trait)
+            ?: UIImage.imageNamed(name)
+    } ?: return null
+    val pngData = UIImagePNGRepresentation(uiImage) ?: return null
+    Image.makeFromEncoded(pngData.toByteArray()).toComposeImageBitmap()
+}.getOrNull()
 
 actual fun decodeImageBitmap(bytes: ByteArray): ImageBitmap? = runCatching {
     if (bytes.isEmpty()) return null
