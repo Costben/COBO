@@ -53,7 +53,13 @@ import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedGap
 import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FilterSurface
+import com.cobo.app.data.RecommendFilterMaxExtraPages
+import com.cobo.app.data.RecommendLoadMoreMinFreshTarget
+import com.cobo.app.data.RecommendRefreshMinFreshTarget
+import com.cobo.app.data.RecommendSeenDwellMillis
 import com.cobo.app.data.Status
+import com.cobo.app.data.evaluateDwellSeenIds
+import com.cobo.app.data.fetchUnseenRecommendPages
 import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.LocalBottomBarBounds
@@ -84,8 +90,10 @@ import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -154,9 +162,15 @@ class FeedStore(
     val resumable: Boolean = false,
     /** 时间排序流才支持「倒序浏览」（刷新时在原位置上方插新微博与断点）。 */
     val supportsReverseBrowse: Boolean = false,
+    /** 是否追踪并持久化信息流曝光记录（仅推荐流开启）。 */
+    val tracksSeen: Boolean = false,
     private val reverseBrowseEnabled: () -> Boolean = { App.isReverseBrowseEnabled() },
     private val snapshotOwner: () -> String = { App.repo.session?.uid.orEmpty() },
     private val isStatusDeleted: (String) -> Boolean = { id -> App.isRepoReady() && App.repo.isDeleted(id) },
+    private val filterSeenEnabled: () -> Boolean = { false },
+    private val isStatusSeen: (owner: String, id: String) -> Boolean = { _, _ -> false },
+    private val onMarkSeen: ((owner: String, ids: Collection<String>) -> Unit)? = null,
+    private val onAllSeenFiltered: ((filteredCount: Int) -> Unit)? = null,
     private val loader: suspend (cursor: String?, force: Boolean) -> FeedPage = { cursor, force ->
         App.repo.container(key, sinceId = cursor, force = force)
     },
@@ -265,6 +279,28 @@ class FeedStore(
      * 永远停在「刷新中」，页面再也不回落。现在改成排队等前一次收尾，再补一次强制刷新。
      */
     private val lock = Mutex()
+    private val seenWriteScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val seenLock = Mutex()
+
+    internal fun isSeenFilterActive(): Boolean = filterSeenEnabled()
+
+    internal suspend fun markSeenBatch(ids: Collection<String>) {
+        val handler = onMarkSeen ?: return
+        val distinct = ids.asSequence().filter { it.isNotBlank() }.distinct().toList()
+        if (distinct.isEmpty()) return
+        val ownerId = snapshotOwner()
+        seenLock.withLock {
+            withContext(ioDispatcher) {
+                handler(ownerId, distinct)
+            }
+        }
+    }
+
+    internal fun markSeenDetached(ids: Collection<String>) {
+        if (onMarkSeen == null || ids.isEmpty()) return
+        val batch = ids.toList()
+        seenWriteScope.launch { markSeenBatch(batch) }
+    }
 
     suspend fun loadInitial() {
         if (loaded) return
@@ -367,6 +403,53 @@ class FeedStore(
                 return
             }
             val previousHeadId = items.firstOrNull()?.id
+            if (filterSeenEnabled()) {
+                val ownerId = snapshotOwner()
+                val batch = fetchUnseenRecommendPages(
+                    initialCursor = null,
+                    forceFirst = force,
+                    existingIds = emptySet(),
+                    isDeleted = isStatusDeleted,
+                    isSeen = { id -> isStatusSeen(ownerId, id) },
+                    minFreshTarget = RecommendRefreshMinFreshTarget,
+                    maxExtraPages = RecommendFilterMaxExtraPages,
+                    loader = loader,
+                )
+                if (batch.freshItems.isEmpty() && batch.filteredCount > 0) {
+                    if (items.isNotEmpty()) {
+                        // 候选池暂全部命中已看：保留原有推荐列表与位置不动，避免整屏刷新成空白。
+                        onAllSeenFiltered?.invoke(batch.filteredCount)
+                        return
+                    }
+                    sinceId = batch.nextCursor
+                    end = batch.exhausted && batch.nextCursor == null
+                    lastAppliedLikeSeq = if (App.isRepoReady()) App.repo.currentLikeSeq() else 0L
+                    loaded = true
+                    resumed = false
+                    persist()
+                    onAllSeenFiltered?.invoke(batch.filteredCount)
+                    return
+                }
+                gaps.clear()
+                items.clear()
+                items.addAll(batch.freshItems)
+                lastReadBeforeStatusId = if (
+                    previousHeadId != null && batch.freshItems.indexOfFirst { it.id == previousHeadId } > 0
+                ) {
+                    previousHeadId
+                } else {
+                    null
+                }
+                sinceId = batch.nextCursor
+                end = batch.freshItems.isEmpty() || (batch.exhausted && batch.nextCursor == null)
+                lastAppliedLikeSeq = if (App.isRepoReady()) App.repo.currentLikeSeq() else 0L
+                loaded = true
+                // 这次是真的拉回来了，列表不再代表「上次的快照」，后面的刷新该照常回顶。
+                resumed = false
+                generation++
+                persist()
+                return
+            }
             val page = loader(null, force)
             val known = HashSet<String>()
             val unique = page.items.filter { !isStatusDeleted(it.id) && known.add(it.id) }
@@ -546,6 +629,34 @@ class FeedStore(
         error = null
         try {
             lock.withLock {
+                if (filterSeenEnabled()) {
+                    val ownerId = snapshotOwner()
+                    val batch = fetchUnseenRecommendPages(
+                        initialCursor = cursor,
+                        forceFirst = false,
+                        existingIds = items.mapTo(HashSet()) { it.id },
+                        isDeleted = isStatusDeleted,
+                        isSeen = { id -> isStatusSeen(ownerId, id) },
+                        minFreshTarget = RecommendLoadMoreMinFreshTarget,
+                        maxExtraPages = RecommendFilterMaxExtraPages,
+                        loader = loader,
+                    )
+                    if (batch.freshItems.isNotEmpty()) {
+                        items.addAll(batch.freshItems)
+                        sinceId = batch.nextCursor
+                        if (batch.exhausted && batch.nextCursor == null) end = true
+                        persist()
+                    } else {
+                        // 即使本批均被过滤也要推进游标，防止停留在旧游标死循环。
+                        sinceId = batch.nextCursor
+                        if (batch.nextCursor == null || batch.exhausted) end = true
+                        persist()
+                        if (batch.filteredCount > 0) {
+                            onAllSeenFiltered?.invoke(batch.filteredCount)
+                        }
+                    }
+                    return@withLock
+                }
                 val page = loader(cursor, false)
                 val known = items.mapTo(HashSet()) { it.id }
                 page.items.forEach { if (known.add(it.id)) items.add(it) }
@@ -890,6 +1001,7 @@ fun TimelineScreen(
             listState = listState,
             memory = pageMemory.getOrNull(page) ?: return@HorizontalPager,
             onPullState = { if (page < pullStates.size) pullStates[page] = it },
+            isActivePage = page == pagerState.settledPage,
         )
     }
 }
@@ -981,6 +1093,7 @@ private fun TimelinePage(
     listState: LazyListState,
     memory: PageMemory,
     onPullState: (FullPagePullToRefreshState) -> Unit,
+    isActivePage: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val pullState = rememberFullPagePullToRefreshState()
@@ -1047,6 +1160,59 @@ private fun TimelinePage(
     // 停在哪要记住：进程被杀或切换账号后再回来，快照填好就直接落到这里。滚动中不写，停稳一会儿再写，
     // 离开页面或切换账号时立刻补写一次，避免刚停下来就切号丢失位置。
     val scrollOwner = remember(store) { store.owner() }
+    val seenTrackingActive = store.tracksSeen && store.isSeenFilterActive() && isActivePage
+    val trackedEnterAt = remember(store) { HashMap<String, Long>() }
+    val recordedSeenIds = remember(store) { HashSet<String>() }
+    val pendingSeenFlush = remember(store) { LinkedHashSet<String>() }
+    val currentPostIds by rememberUpdatedState(store.items.mapTo(HashSet()) { it.id })
+    val currentSeenTrackingActive by rememberUpdatedState(seenTrackingActive)
+    LaunchedEffect(listState, store, seenTrackingActive) {
+        if (!seenTrackingActive) {
+            trackedEnterAt.clear()
+            return@LaunchedEffect
+        }
+        snapshotFlow {
+            val postIds = currentPostIds
+            listState.layoutInfo.visibleItemsInfo
+                .mapNotNull { info -> (info.key as? String)?.takeIf { it in postIds } }
+                .toSet()
+        }.collectLatest { visibleIds ->
+            val now = currentTimeMillis()
+            val newlyReady = evaluateDwellSeenIds(visibleIds, trackedEnterAt, now, RecommendSeenDwellMillis)
+                .filter { recordedSeenIds.add(it) }
+            pendingSeenFlush.addAll(newlyReady)
+            if (visibleIds.isNotEmpty()) {
+                delay(RecommendSeenDwellMillis)
+                val afterDelay = evaluateDwellSeenIds(
+                    visibleIds,
+                    trackedEnterAt,
+                    currentTimeMillis(),
+                    RecommendSeenDwellMillis,
+                ).filter { recordedSeenIds.add(it) }
+                pendingSeenFlush.addAll(afterDelay)
+            }
+            if (pendingSeenFlush.isNotEmpty()) {
+                val batch = pendingSeenFlush.toList()
+                pendingSeenFlush.clear()
+                store.markSeenBatch(batch)
+            }
+        }
+    }
+    DisposableEffect(store, seenTrackingActive) {
+        onDispose {
+            val now = currentTimeMillis()
+            if (trackedEnterAt.isNotEmpty() && currentSeenTrackingActive) {
+                val flushedOnExit = evaluateDwellSeenIds(emptySet(), trackedEnterAt, now, RecommendSeenDwellMillis)
+                    .filter { recordedSeenIds.add(it) }
+                pendingSeenFlush.addAll(flushedOnExit)
+            }
+            if (pendingSeenFlush.isNotEmpty()) {
+                val batch = pendingSeenFlush.toList()
+                pendingSeenFlush.clear()
+                store.markSeenDetached(batch)
+            }
+        }
+    }
     LaunchedEffect(listState, store, scrollReady, scrollOwner) {
         if (!store.resumable || !scrollReady) return@LaunchedEffect
         snapshotFlow {
@@ -1162,18 +1328,42 @@ private fun TimelinePage(
                             origin.topBar = topBar
                             origin.bottomBar = bottomBar
                         }
+                        val recordInteractionSeen: () -> Unit = {
+                            if (store.tracksSeen && store.isSeenFilterActive() && recordedSeenIds.add(status.id)) {
+                                store.markSeenDetached(listOf(status.id))
+                            }
+                        }
                         StatusCard(
                             status = status,
                             modifier = Modifier.expandOrigin(origin).testTag("feed_card_$index"),
-                            onOpen = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                            onOpen = {
+                                recordInteractionSeen()
+                                nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin)
+                            },
                             onUser = { nav.push(Route.Profile(it.id)) },
-                            onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
-                            onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
-                            onLike = { scope.launch { store.like(index) } },
-                            onRepost = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
-                            onComment = { nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin) },
+                            onImage = { pics, i ->
+                                recordInteractionSeen()
+                                nav.push(Route.Images(pics, i))
+                            },
+                            onVideo = {
+                                recordInteractionSeen()
+                                nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId))
+                            },
+                            onLike = {
+                                recordInteractionSeen()
+                                scope.launch { store.like(index) }
+                            },
+                            onRepost = {
+                                recordInteractionSeen()
+                                nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin)
+                            },
+                            onComment = {
+                                recordInteractionSeen()
+                                nav.push(Route.Detail(status.id, status.mid, store.readOnly), origin)
+                            },
                             actionsEnabled = !store.readOnly,
                             onOpenQuoted = { quoted, quotedOrigin ->
+                                recordInteractionSeen()
                                 quotedOrigin.attachToRow(listState, status.id, topBar, bottomBar)
                                 nav.push(Route.Detail(quoted.id, quoted.mid, store.readOnly), quotedOrigin)
                             },

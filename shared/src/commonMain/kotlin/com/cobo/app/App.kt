@@ -14,6 +14,7 @@ import com.cobo.app.data.FeedSnapshotStore
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.IncomingShare
 import com.cobo.app.data.ReadLater
+import com.cobo.app.data.RecommendSeenStore
 import com.cobo.app.data.Repo
 import com.cobo.app.data.Settings
 import com.cobo.app.data.Status
@@ -70,8 +71,12 @@ object App {
         private set
     lateinit var snapshots: FeedSnapshotStore
         private set
+    lateinit var recommendSeen: RecommendSeenStore
+        private set
 
     fun isRepoReady(): Boolean = ::repo.isInitialized
+
+    fun isRecommendSeenReady(): Boolean = ::recommendSeen.isInitialized
 
     fun imageHeadersForHost(host: String): Map<String, String> {
         val lower = host.lowercase()
@@ -303,6 +308,7 @@ object App {
         ReadLater.attach(store)
         cache = CacheStore(this.context)
         snapshots = FeedSnapshotStore(this.context)
+        recommendSeen = RecommendSeenStore(this.context)
         repo = Repo(this.context, store)
         settings = Settings(this.context)
         WeiboEmojiBitmaps.attach(this.context)

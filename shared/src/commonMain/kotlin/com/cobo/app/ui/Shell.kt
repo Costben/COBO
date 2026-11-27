@@ -131,6 +131,7 @@ import com.cobo.app.data.FeedPage
 import com.cobo.app.data.FeedTabItem
 import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
+import com.cobo.app.data.RecommendSeenRetention
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.WEIBO_PROFILE_EDIT_URL
 import com.cobo.app.data.feedTabOptions
@@ -340,7 +341,35 @@ fun MainShell(nav: NavState) {
         val favStore = filterStores[FeedFilter.Favorites] ?: return@LaunchedEffect
         if (favoritesVersion > 0 && favStore.loaded) favStore.refresh()
     }
-    val recommendStore = remember { FeedStore("102803", readOnly = guest, resumable = true, snapshotOwner = { accountOwner }) }
+    val recommendStore = remember {
+        FeedStore(
+            key = "102803",
+            readOnly = guest,
+            resumable = true,
+            snapshotOwner = { accountOwner },
+            tracksSeen = true,
+            filterSeenEnabled = { App.settings.filterSeenRecommend },
+            isStatusSeen = { owner, id ->
+                App.isRecommendSeenReady() && App.recommendSeen.isSeen(
+                    owner,
+                    id,
+                    RecommendSeenRetention.fromDays(App.settings.recommendSeenRetentionDays).millis,
+                )
+            },
+            onMarkSeen = { owner, ids ->
+                if (App.isRecommendSeenReady() && App.settings.filterSeenRecommend) {
+                    App.recommendSeen.markSeen(
+                        owner,
+                        ids,
+                        RecommendSeenRetention.fromDays(App.settings.recommendSeenRetentionDays).millis,
+                    )
+                }
+            },
+            onAllSeenFiltered = { filtered ->
+                App.toast("已过滤 $filtered 条看过的内容，暂无新推荐")
+            },
+        )
+    }
     val circleStore = filterStores.getValue(FeedFilter.Circle)
     val followStore = filterStores.getValue(filter)
 

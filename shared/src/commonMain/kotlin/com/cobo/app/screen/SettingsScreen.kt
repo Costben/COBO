@@ -84,6 +84,7 @@ import com.cobo.app.data.AnimationSpeed
 import com.cobo.app.data.LocalBackupBundle
 import com.cobo.app.data.MeIconStyle
 import com.cobo.app.data.ReadLater
+import com.cobo.app.data.RecommendSeenRetention
 import com.cobo.app.data.SearchPanelAnimation
 import com.cobo.app.data.Updater
 import com.cobo.app.data.VideoTopBarButton
@@ -214,6 +215,8 @@ private class SettingsUiState(context: PlatformContext) {
     var profileTabAvatar by mutableStateOf(App.settings.profileTabAvatar)
     var profileShowStatuses by mutableStateOf(App.settings.profileShowStatuses)
     var reverseBrowse by mutableStateOf(App.settings.reverseBrowse)
+    var filterSeenRecommend by mutableStateOf(App.settings.filterSeenRecommend)
+    var recommendSeenRetentionDays by mutableIntStateOf(App.settings.recommendSeenRetentionDays)
     var collapseFollowGroups by mutableStateOf(App.settings.collapseFollowGroups)
     var feedCardFrame by mutableStateOf(App.settings.feedCardFrame)
     var detailCardFrame by mutableStateOf(App.settings.detailCardFrame)
@@ -235,6 +238,7 @@ private class SettingsUiState(context: PlatformContext) {
     var pickSearchPanelAnimation by mutableStateOf(false)
     var pickBottomLeftAction by mutableStateOf(false)
     var pickImageBrowseQuality by mutableStateOf(false)
+    var pickRecommendSeenRetention by mutableStateOf(false)
     var pickHotBoards by mutableStateOf(false)
     var pickAccentColor by mutableStateOf(false)
     var syncingLocalFavorites by mutableStateOf(false)
@@ -263,6 +267,8 @@ private class SettingsUiState(context: PlatformContext) {
         profileTabAvatar = App.settings.profileTabAvatar
         profileShowStatuses = App.settings.profileShowStatuses
         reverseBrowse = App.settings.reverseBrowse
+        filterSeenRecommend = App.settings.filterSeenRecommend
+        recommendSeenRetentionDays = App.settings.recommendSeenRetentionDays
         collapseFollowGroups = App.settings.collapseFollowGroups
         feedCardFrame = App.settings.feedCardFrame
         detailCardFrame = App.settings.detailCardFrame
@@ -1555,7 +1561,86 @@ private fun feedGeneralEntries(
                 cardListPosition = pos,
             )
         },
-    )
+        SettingsEntry(
+            id = "filter_seen_recommend",
+            title = "过滤看过的推荐微博",
+            summary = "实验性功能，按微博 ID 在本地自动过滤已看过的推荐内容",
+            keywords = "推荐 过滤 去重 看过 已看 重复 实验 recommend seen filter",
+        ) { pos ->
+            SettingsSwitchRow(
+                checked = state.filterSeenRecommend,
+                onCheckedChange = {
+                    state.filterSeenRecommend = it
+                    App.settings.applyFilterSeenRecommend(it)
+                },
+                title = "过滤看过的推荐微博",
+                summary = "实验性功能，按微博 ID 在本地自动过滤已看过的推荐内容",
+                modifier = Modifier.testTag("settings_filter_seen_recommend"),
+                cardListPosition = pos,
+            )
+        },
+    ) + run {
+        val retention = RecommendSeenRetention.fromDays(state.recommendSeenRetentionDays)
+        val seenOwner = App.repo.session?.uid.orEmpty()
+        val seenCount = if (App.isRecommendSeenReady()) {
+            // 读取 version 使清空或后台写入后设置摘要中的条数能即时刷新。
+            @Suppress("UNUSED_VARIABLE")
+            val v = App.recommendSeen.version
+            App.recommendSeen.count(seenOwner, retention.millis)
+        } else {
+            0
+        }
+        buildList {
+            if (state.filterSeenRecommend) {
+                add(
+                    SettingsEntry(
+                        id = "recommend_seen_retention",
+                        title = "推荐已看记录保留时长",
+                        summary = "自动清理超过 ${retention.label} 的本地已看记录",
+                        keywords = "推荐 已看 保留 时长 天数 recommend seen retention",
+                    ) { pos ->
+                        SettingsArrowRow(
+                            title = "推荐已看记录保留时长",
+                            summary = "自动清理超过 ${retention.label} 的本地已看记录",
+                            modifier = Modifier.testTag("settings_recommend_seen_retention"),
+                            cardListPosition = pos,
+                            onClick = { state.pickRecommendSeenRetention = true },
+                        )
+                    },
+                )
+            }
+            if (state.filterSeenRecommend || seenCount > 0) {
+                val clearSummary = if (seenCount > 0) {
+                    "当前账号已记录 $seenCount 条，清空后将重新展示"
+                } else {
+                    "当前暂无已看推荐记录"
+                }
+                add(
+                    SettingsEntry(
+                        id = "clear_recommend_seen",
+                        title = "清空已看推荐记录",
+                        summary = clearSummary,
+                        keywords = "清空 重置 推荐 已看 记录 recommend seen clear",
+                    ) { pos ->
+                        SettingsArrowRow(
+                            title = "清空已看推荐记录",
+                            summary = clearSummary,
+                            modifier = Modifier.testTag("settings_clear_recommend_seen"),
+                            cardListPosition = pos,
+                            onClick = {
+                                if (App.isRecommendSeenReady() && seenCount > 0) {
+                                    App.recommendSeen.clear(seenOwner)
+                                    App.toast("已清空推荐已看记录")
+                                } else {
+                                    App.toast("当前没有可清空的已看记录")
+                                }
+                            },
+                        )
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -2289,6 +2374,23 @@ private fun SettingsDialogs(
                 val picked = ImageBrowseQuality.fromKey(key)
                 App.settings.applyImageBrowseQuality(picked)
                 state.pickImageBrowseQuality = false
+            },
+        )
+    }
+
+    if (state.pickRecommendSeenRetention) {
+        OptionPicker(
+            title = "推荐已看记录保留时长",
+            options = RecommendSeenRetention.entries.map { it.days.toString() to it.label },
+            selectedKey = RecommendSeenRetention.fromDays(state.recommendSeenRetentionDays).days.toString(),
+            tagPrefix = "recommend_seen_retention",
+            groupKey = "recommend-seen-retention",
+            onDismiss = { state.pickRecommendSeenRetention = false },
+            onPick = { key ->
+                val picked = RecommendSeenRetention.fromDays(key.toIntOrNull() ?: RecommendSeenRetention.Days7.days)
+                App.settings.applyRecommendSeenRetentionDays(picked.days)
+                state.recommendSeenRetentionDays = picked.days
+                state.pickRecommendSeenRetention = false
             },
         )
     }
