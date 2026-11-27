@@ -1,13 +1,23 @@
 package com.cobo.app.data
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Density
 import com.cobo.app.screen.CachedProfileStatuses
 import com.cobo.app.screen.ProfileStatusesCache
 import com.cobo.app.ui.components.ImageGridLayout
+import com.cobo.app.ui.components.ShareWidthMaxDp
+import com.cobo.app.ui.components.ShareWidthMinDp
+import com.cobo.app.ui.components.buildShareRichText
 import com.cobo.app.ui.components.buildWeiboShareUrl
 import com.cobo.app.ui.components.formatShareBodyText
+import com.cobo.app.ui.components.formatShareDateTime
+import com.cobo.app.ui.components.formatShareMastheadDate
 import com.cobo.app.ui.components.resolveImageGridLayout
+import com.cobo.app.ui.components.resolveSharePosterDensity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BottomBarAndShareTest {
@@ -66,6 +76,45 @@ class BottomBarAndShareTest {
         assertEquals("https://m.weibo.cn/detail/5001", buildWeiboShareUrl(status))
         assertEquals("https://m.weibo.cn/detail/1001", buildWeiboShareUrl(status.copy(mid = "")))
         assertEquals("第一段\n第二段\n第三段 #话题#", formatShareBodyText(status.textHtml))
+    }
+
+    @Test
+    fun shareDateFormatterAlwaysEmitsAbsoluteDates() {
+        // 2026-11-27 18:00:00 +0800
+        val fixedNow = 1795687200000L
+        val rfcDate = formatShareDateTime("Fri Nov 27 17:42:00 +0800 2026", fixedNow)
+        assertTrue("Expected yyyy-MM-dd HH:mm, got $rfcDate", Regex("""^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$""").matches(rfcDate))
+        assertFalse(rfcDate.contains("今天"))
+        assertFalse(rfcDate.contains("分钟前"))
+
+        val todayRel = formatShareDateTime("今天 09:05", fixedNow)
+        assertTrue("Expected absolute date for 今天, got $todayRel", todayRel.endsWith(" 09:05"))
+        assertFalse(todayRel.contains("今天"))
+
+        val yesterdayRel = formatShareDateTime("昨天 22:15", fixedNow)
+        assertTrue("Expected absolute date for 昨天, got $yesterdayRel", yesterdayRel.endsWith(" 22:15"))
+        assertFalse(yesterdayRel.contains("昨天"))
+
+        val justNow = formatShareDateTime("刚刚", fixedNow)
+        assertTrue("Expected yyyy-MM-dd HH:mm for 刚刚, got $justNow", Regex("""^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$""").matches(justNow))
+
+        val masthead = formatShareMastheadDate("2026-11-27 17:42:00", fixedNow)
+        assertEquals("2026.11.27", masthead)
+
+        val rich = buildShareRichText("晚霞很美 #秋日扫街# @Cobo客户端", Color.Blue)
+        assertEquals(2, rich.spanStyles.size)
+        assertEquals("#秋日扫街#", rich.text.substring(rich.spanStyles[0].start, rich.spanStyles[0].end))
+        assertEquals("@Cobo客户端", rich.text.substring(rich.spanStyles[1].start, rich.spanStyles[1].end))
+
+        val base = Density(density = 3.0f, fontScale = 1.1f)
+        assertEquals(base, resolveSharePosterDensity(base, containerWidthPx = 960, targetWidthDp = null))
+        val wider = resolveSharePosterDensity(base, containerWidthPx = 960, targetWidthDp = 480)
+        assertEquals(2.0f, wider.density, 0.001f)
+        assertEquals(1.1f, wider.fontScale, 0.001f)
+        val clampedHigh = resolveSharePosterDensity(base, containerWidthPx = 960, targetWidthDp = 9999)
+        assertEquals(960f / ShareWidthMaxDp, clampedHigh.density, 0.001f)
+        val clampedLow = resolveSharePosterDensity(base, containerWidthPx = 960, targetWidthDp = 100)
+        assertEquals(960f / ShareWidthMinDp, clampedLow.density, 0.001f)
     }
 
     @Test
