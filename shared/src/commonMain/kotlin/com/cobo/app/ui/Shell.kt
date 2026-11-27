@@ -212,6 +212,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Settings
 import io.github.suqi8.coui.kmp.overlay.OverlayCascadingListPopup
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.LocalContentColor
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import io.github.suqi8.coui.kmp.utils.overScrollVertical
 import kotlin.math.PI
@@ -1577,7 +1578,7 @@ private fun MainTitleRow(
                                             Modifier
                                                 .size(3.5.dp)
                                                 .clip(CircleShape)
-                                                .background(meTitleColor),
+                                                .background(LocalContentColor.current),
                                         )
                                     }
                                 }
