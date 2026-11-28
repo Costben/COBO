@@ -83,4 +83,45 @@ class PromotionFilterTest {
         val promoted = status("2", mark = "999_reallog_mark_ad:999|WeiboADNatural")
         assertNotNull(Status.from(promoted))
     }
+
+    @Test
+    fun isPromotedStatusCatchesClientPromotionPayloadsWithoutBreakingOrganicAdState() {
+        val arr = JSONArray()
+            .put(status("organic_ad_state", adState = 1))
+            .put(status("with_promotion_obj").put("promotion", JSONObject().put("type", "ad")))
+            .put(status("mblogtype_ad").put("mblogtype", 1))
+            .put(status("ad_marked").put("ad_marked", true))
+            .put(status("is_ad_flag").put("is_ad", 1))
+            .put(status("ad_title").put("title", JSONObject().put("text", "品牌推广")))
+            .put(status("readtimetype_ad").put("readtimetype", "adMblog"))
+
+        assertEquals(listOf("organic_ad_state"), statusesOf(arr).map { it.id })
+    }
+
+    @Test
+    fun followFeedDropsUnfollowedInjectedPostsWhileKeepingFollowedAndSelfAndRetweets() {
+        fun statusWithUser(id: String, uid: String, following: Boolean?, adState: Int? = null): JSONObject {
+            val u = JSONObject().put("id", uid).put("screen_name", "用户$uid")
+            if (following != null) u.put("following", following)
+            return status(id, adState = adState).put("user", u)
+        }
+
+        val retweetOfUnfollowed = statusWithUser("retweet_ok", uid = "100", following = true).put(
+            "retweeted_status",
+            statusWithUser("inner_unfollowed", uid = "999", following = false),
+        )
+        val arr = JSONArray()
+            .put(statusWithUser("followed_organic", uid = "100", following = true))
+            .put(statusWithUser("followed_brand_ad_state", uid = "101", following = true, adState = 1))
+            .put(statusWithUser("self_post", uid = "777", following = false))
+            .put(statusWithUser("no_following_field", uid = "102", following = null))
+            .put(retweetOfUnfollowed)
+            .put(statusWithUser("huawei_unfollowed_ad", uid = "888", following = false, adState = 1))
+            .put(statusWithUser("stealth_unfollowed_inject", uid = "889", following = false))
+
+        assertEquals(
+            listOf("followed_organic", "followed_brand_ad_state", "self_post", "no_following_field", "retweet_ok"),
+            statusesOf(arr, requireFollowedAuthor = true, selfUid = "777").map { it.id },
+        )
+    }
 }

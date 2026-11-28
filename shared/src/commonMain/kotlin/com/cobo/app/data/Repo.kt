@@ -1233,10 +1233,18 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         enrichContainerLongTextObjects(mblogs)
     }
 
-    private suspend fun parseContainerStatusPage(root: JSONObject, boundaryId: String? = null): FeedPage {
+    private suspend fun parseContainerStatusPage(
+        root: JSONObject,
+        boundaryId: String? = null,
+        requireFollowedAuthor: Boolean = false,
+    ): FeedPage {
         val arr = root.optJSONArray("statuses") ?: JSONArray()
         enrichContainerLongTextArray(arr)
-        val rawItems = statusesOf(arr)
+        val rawItems = statusesOf(
+            arr = arr,
+            requireFollowedAuthor = requireFollowedAuthor,
+            selfUid = session?.uid,
+        )
         val items = if (boundaryId.isNullOrBlank()) rawItems else rawItems.filter { it.id != boundaryId }
         val cursor = root.str("next_cursor_str")
             .ifBlank { root.str("next_cursor") }
@@ -1303,9 +1311,9 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val root = containerGet("statuses/friends/timeline", params)
-            return parseContainerStatusPage(root, maxId)
+            return parseContainerStatusPage(root, maxId, requireFollowedAuthor = true)
         }
-        return statusFeed("https://m.weibo.cn/feed/friends", maxId, force)
+        return statusFeed("https://m.weibo.cn/feed/friends", maxId, force, requireFollowedAuthor = true)
     }
 
     /** The "好友圈" feed: 客户端登录走 `groups/timeline`（`10009<uid>`），网页登录走 `/feed/circle`。 */
@@ -1318,9 +1326,9 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
             val root = containerGet("groups/timeline", params)
-            return parseContainerStatusPage(root, maxId)
+            return parseContainerStatusPage(root, maxId, requireFollowedAuthor = true)
         }
-        return statusFeed("https://m.weibo.cn/feed/circle", maxId, force)
+        return statusFeed("https://m.weibo.cn/feed/circle", maxId, force, requireFollowedAuthor = true)
     }
 
     /**
@@ -1336,7 +1344,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             params["count"] = GROUP_FEED_PAGE_SIZE.toString()
             params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
-            val page = parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
+            val page = parseContainerStatusPage(containerGet("groups/timeline", params), maxId, requireFollowedAuthor = true)
             val localUids = FollowTags.uids(FollowTag.Special)
             if (maxId.isNullOrBlank() && localUids.isNotEmpty()) {
                 val extra = byUsers(localUids.toSet(), maxId = null, force = force)
@@ -1396,9 +1404,16 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         return groups
     }
 
-    private fun parseDesktopTimeline(root: JSONObject): FeedPage {
+    private fun parseDesktopTimeline(
+        root: JSONObject,
+        requireFollowedAuthor: Boolean = false,
+    ): FeedPage {
         val statuses = root.optJSONArray("statuses") ?: JSONArray()
-        val items = statusesOf(statuses)
+        val items = statusesOf(
+            arr = statuses,
+            requireFollowedAuthor = requireFollowedAuthor,
+            selfUid = session?.uid,
+        )
         if (items.isEmpty() && root.optInt("ok", 1) != 1) {
             // 网页版两种字段名都出现过：老接口回 msg，新接口回 message。
             val message = root.str("msg").ifBlank { root.str("message") }.ifBlank { "加载失败" }
@@ -1427,7 +1442,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             params["count"] = GROUP_FEED_PAGE_SIZE.toString()
             params["isGetLongText"] = "1"
             if (!maxId.isNullOrBlank()) params["max_id"] = maxId
-            return parseContainerStatusPage(containerGet("groups/timeline", params), maxId)
+            return parseContainerStatusPage(containerGet("groups/timeline", params), maxId, requireFollowedAuthor = true)
         }
         val params = LinkedHashMap<String, String?>()
         params["list_id"] = gid
@@ -1446,7 +1461,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             if (message.contains("列表不存在")) throw ApiException("这个分组已经不存在了，在「更多」里换一个")
             throw e
         }
-        return parseDesktopTimeline(root)
+        return parseDesktopTimeline(root, requireFollowedAuthor = true)
     }
 
     /**
@@ -1694,6 +1709,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         force: Boolean,
         cookie: String? = this.cookie(),
         extra: Map<String, String?> = emptyMap(),
+        requireFollowedAuthor: Boolean = false,
     ): FeedPage {
         val params = LinkedHashMap<String, String?>()
         if (!maxId.isNullOrBlank()) params["max_id"] = maxId
@@ -1712,7 +1728,11 @@ class Repo(private val context: PlatformContext, private val store: Store) {
             throw ApiException("加载失败", "-100")
         }
         val arr = data.optJSONArray("statuses") ?: JSONArray()
-        val items = statusesOf(arr)
+        val items = statusesOf(
+            arr = arr,
+            requireFollowedAuthor = requireFollowedAuthor,
+            selfUid = if (cookie == this.cookie()) session?.uid else null,
+        )
         val next = data.str("max_id").ifBlank { data.str("since_id") }
         return FeedPage(items, next.ifBlank { null })
     }

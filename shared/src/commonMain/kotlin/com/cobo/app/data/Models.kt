@@ -2966,24 +2966,75 @@ fun formatWeiboTime(raw: String?): String {
     return formatEpochMillis(millis, pattern)
 }
 
+private val PromotedTypeNames = setOf("广告", "推广", "品牌推广", "热推", "商业推广")
+private val PromotedTitleKeywords = setOf("广告", "推广", "品牌推广", "热推", "商业推广", "为你推荐", "你可能感兴趣", "猜你喜欢")
+
 /**
- * 服务端塞进时间线的推广博。
+ * 服务端塞进时间线的推广博 / 信息流广告。
  *
- * 信息流广告的 `mark` 形如 `999_reallog_mark_ad:999|WeiboAD`（广告位）或
- * `...|WeiboADNatural`（自然流投放）。只认这个标记：`ad_state` 同样打在明星、
- * 品牌自己发的商业博上，那些在关注流和主页里是正常内容，不能一起删掉。
+ * 除 `mark` 里的 `reallog_mark_ad` / `WeiboAD*` 外，客户端与网页接口还可能通过 `promotion`、
+ * `promotion_info`、`ad_info`、`mblogtype == 1`、`ad_marked`、`is_ad`、`ad_type`、
+ * `mblogtypename` 或 `title.text` 标记商业投放。
+ *
+ * 单独的 `ad_state == 1` 仍不直接作为全局删除条件（明星/品牌自己发的商业博也带该字段），
+ * 仅在关注流未关注作者过滤中结合 `following == false` 兜底拦截。
  */
 internal fun JSONObject.isPromotedStatus(): Boolean {
     val mark = optString("mark")
-    return mark.contains("reallog_mark_ad") || mark.contains("WeiboAD")
+    if (
+        mark.contains("reallog_mark_ad", ignoreCase = true) ||
+        mark.contains("WeiboAD", ignoreCase = true) ||
+        mark.contains("_ad:", ignoreCase = true) ||
+        mark.contains("is_ad_pos", ignoreCase = true)
+    ) {
+        return true
+    }
+    if (
+        optJSONObject("promotion") != null ||
+        optJSONObject("promotion_info") != null ||
+        optJSONObject("ad_info") != null ||
+        optBoolean("ad_marked", false) ||
+        optInt("is_ad", 0) == 1 ||
+        optInt("mblogtype", 0) == 1 ||
+        optInt("ad_type", 0) != 0
+    ) {
+        return true
+    }
+    val typeName = str("mblogtypename").trim()
+    if (typeName in PromotedTypeNames) return true
+    val titleText = optJSONObject("title")?.str("text")?.trim().orEmpty()
+    if (titleText.isNotEmpty() && (titleText in PromotedTitleKeywords || titleText.startsWith("广告") || titleText.startsWith("推广"))) {
+        return true
+    }
+    if (str("readtimetype").equals("adMblog", ignoreCase = true)) return true
+    return false
 }
 
-/** `statuses` 数组 → 微博列表，顺手丢掉推广博。时间线和分组流共用。 */
-internal fun statusesOf(arr: JSONArray): List<Status> {
+/**
+ * 关注流（关注 / 好友圈 / 特别关注 / 关注分组）专用兜底：
+ * 若服务端明确下发了外层作者 `user.following == false` 且不是本人发博，
+ * 属于未关注的硬塞广告、粉丝通或平台推荐，直接丢弃（转发博的外层作者仍是已关注好友，不会误伤）。
+ */
+internal fun JSONObject.isUnfollowedInjectedInFollowFeed(selfUid: String? = null): Boolean {
+    val user = optJSONObject("user") ?: return false
+    if (!user.has("following") || user.isNull("following")) return false
+    if (user.optBoolean("following", true)) return false
+    val authorId = user.str("idstr").ifBlank { user.str("id") }
+    if (!selfUid.isNullOrBlank() && authorId == selfUid) return false
+    return true
+}
+
+/** `statuses` 数组 → 微博列表，顺手丢掉推广博；关注流额外拦截未关注作者的硬塞投放。 */
+internal fun statusesOf(
+    arr: JSONArray,
+    requireFollowedAuthor: Boolean = false,
+    selfUid: String? = null,
+): List<Status> {
     val items = ArrayList<Status>(arr.length())
     for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
         if (o.isPromotedStatus()) continue
+        if (requireFollowedAuthor && o.isUnfollowedInjectedInFollowFeed(selfUid)) continue
         Status.from(o)?.let(items::add)
     }
     return items
@@ -3074,6 +3125,9 @@ private fun parseCardsFromData(data: JSONObject?): FeedPage {
     if (cards != null) {
         for (i in 0 until cards.length()) {
             val card = cards.optJSONObject(i) ?: continue
+            if (card.str("itemid").contains("is_ad_pos") || card.str("card_type_name").trim() in PromotedTypeNames) {
+                continue
+            }
             card.optJSONObject("mblog")?.takeUnless { it.isPromotedStatus() }
                 ?.let { Status.from(it)?.let(items::add) }
             collectCardUsers(card)
@@ -3082,6 +3136,9 @@ private fun parseCardsFromData(data: JSONObject?): FeedPage {
             if (group != null) {
                 for (j in 0 until group.length()) {
                     val g = group.optJSONObject(j) ?: continue
+                    if (g.str("itemid").contains("is_ad_pos") || g.str("card_type_name").trim() in PromotedTypeNames) {
+                        continue
+                    }
                     g.optJSONObject("mblog")
                         ?.takeUnless { it.isPromotedStatus() }
                         ?.let { Status.from(it)?.let(items::add) }
