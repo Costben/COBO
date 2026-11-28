@@ -72,7 +72,7 @@ Cobo COUI/
 - JDK 21、Gradle 9.8.2（仓库自带 `./gradlew`）
 - Android：API 37 + Build Tools 37.0.0，在 `local.properties` 设置 `sdk.dir`
 - iOS：macOS + Xcode 16+ (iOS 17.0+)
-- COUI 17 依赖 `io.github.suqi8.coui.kmp:*:1.2.0-SNAPSHOT`，上级目录存在 `../coui/build/repository/local` 时优先读取本地产物，外部环境自动回退到 [Costben/coui17 `maven-repo`](https://github.com/Costben/coui17/tree/maven-repo) 分支
+- COUI 17 依赖 `io.github.costben.coui17:*:1.2.0-SNAPSHOT`，上级目录存在 `../coui/build/repository/local` 时优先读取本地产物，外部环境自动回退到 [Costben/coui17 `maven-repo`](https://github.com/Costben/coui17/tree/maven-repo) 分支
 
 ### Android
 

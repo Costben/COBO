@@ -43,7 +43,7 @@ dependencyResolutionManagement {
                 }
             }
             filter {
-                includeGroup("io.github.suqi8.coui.kmp")
+                includeGroup("io.github.costben.coui17")
             }
         }
     }
