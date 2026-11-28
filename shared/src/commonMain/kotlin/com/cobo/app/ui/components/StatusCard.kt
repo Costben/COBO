@@ -73,6 +73,7 @@ import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.FeedVideoCandidate
 import com.cobo.app.data.FollowTag
 import com.cobo.app.data.MuteUserMode
+import com.cobo.app.data.OverNineImageDisplayMode
 import com.cobo.app.data.Pic
 import com.cobo.app.data.FollowTags
 import com.cobo.app.data.Membership
@@ -1028,6 +1029,7 @@ fun StatusMedia(
     onVideo: (VideoInfo) -> Unit,
     onCard: Boolean = true,
     compressPicsToGridThumb: Boolean = false,
+    cropSingleImageToSquare: Boolean = App.settings.singleImageSquareCrop,
 ) {
     val video = status.video?.let { info ->
         if (info.statusId.isBlank() && status.id.isNotBlank()) info.copy(statusId = status.id) else info
@@ -1068,22 +1070,28 @@ fun StatusMedia(
             onImage = onImage,
             onVideo = onVideo,
             forceGridThumbSize = compressPicsToGridThumb,
+            cropSingleImageToSquare = cropSingleImageToSquare,
         )
     }
     val bigPic = status.bigPic
     if (bigPic != null && bigPic.url.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
         if (bigPic.isLarge) {
-            if (compressPicsToGridThumb) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            when {
+                compressPicsToGridThumb -> Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Box(modifier = Modifier.weight(1f).aspectRatio(1f)) {
                         BigPicCard(bigPic, onImage, compactThumb = true)
                     }
                     Spacer(Modifier.weight(1f))
                     Spacer(Modifier.weight(1f))
                 }
-            } else {
-                BigPicCard(bigPic, onImage)
+                cropSingleImageToSquare -> Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(modifier = Modifier.weight(1f).aspectRatio(1f)) {
+                        BigPicCard(bigPic, onImage, compactThumb = true)
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
+                else -> BigPicCard(bigPic, onImage)
             }
         } else {
             PageLinkCard(bigPic, compact = compact, onCard = onCard)
@@ -1247,6 +1255,25 @@ internal data class ImageGridLayout(
     val itemsPerRow: Int,
 )
 
+internal data class ImageGridDisplaySpec(
+    val visibleCount: Int,
+    val overflowCount: Int,
+)
+
+/** 计算配图网格实际渲染的缩略图张数与第 9 张上需要叠加的剩余数量（`+X`）。 */
+internal fun resolveImageGridDisplay(
+    totalCount: Int,
+    mode: OverNineImageDisplayMode,
+): ImageGridDisplaySpec {
+    val safeTotal = totalCount.coerceAtLeast(0)
+    if (safeTotal <= 9) return ImageGridDisplaySpec(visibleCount = safeTotal, overflowCount = 0)
+    return when (mode) {
+        OverNineImageDisplayMode.CollapseNine -> ImageGridDisplaySpec(visibleCount = 9, overflowCount = 0)
+        OverNineImageDisplayMode.CollapseWithCount -> ImageGridDisplaySpec(visibleCount = 9, overflowCount = safeTotal - 9)
+        OverNineImageDisplayMode.ExpandAll -> ImageGridDisplaySpec(visibleCount = safeTotal, overflowCount = 0)
+    }
+}
+
 /** 计算配图网格每行总槽位数与每行实际放置张数；开启压缩时一律按九宫格 3 列单格尺寸排版。 */
 internal fun resolveImageGridLayout(picCount: Int, forceGridThumbSize: Boolean): ImageGridLayout {
     if (forceGridThumbSize) {
@@ -1264,6 +1291,8 @@ fun ImageGrid(
     onImage: (List<Pic>, Int) -> Unit,
     onVideo: (VideoInfo) -> Unit = {},
     forceGridThumbSize: Boolean = false,
+    cropSingleImageToSquare: Boolean = false,
+    overNineDisplayMode: OverNineImageDisplayMode = App.settings.overNineImageDisplayMode,
 ) {
     val urls = pics.map { it.large }
     val imageItems = remember(pics) {
@@ -1274,7 +1303,7 @@ fun ImageGrid(
     // 长按任意一张图片缩略图就能弹出保存菜单（实况图按实况保存），视频条目不走图片保存。
     val saver = LocalImageSaver.current
     val origins = LocalImageOrigins.current
-    if (pics.size == 1 && !forceGridThumbSize) {
+    if (pics.size == 1 && !forceGridThumbSize && !cropSingleImageToSquare) {
         val pic = pics.first()
         val ratio = if (pic.width > 0 && pic.height > 0) {
             (pic.width.toFloat() / pic.height.toFloat()).coerceIn(0.62f, 1.9f)
@@ -1356,17 +1385,25 @@ fun ImageGrid(
         return
     }
 
-    val layout = resolveImageGridLayout(pics.size, forceGridThumbSize)
-    val rows = (pics.size + layout.itemsPerRow - 1) / layout.itemsPerRow
+    val display = resolveImageGridDisplay(pics.size, overNineDisplayMode)
+    val visibleCount = display.visibleCount
+    val layout = resolveImageGridLayout(visibleCount, forceGridThumbSize)
+    val rows = (visibleCount + layout.itemsPerRow - 1) / layout.itemsPerRow
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (row in 0 until rows) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (col in 0 until layout.totalSlotsPerRow) {
                     val index = if (col < layout.itemsPerRow) row * layout.itemsPerRow + col else -1
-                    if (index in pics.indices) {
+                    if (index in 0 until visibleCount) {
                         val precise = rememberPreciseClickState()
                         val pic = pics[index]
-                        val shown = pic.thumb.ifBlank { pic.large }
+                        val isOverflowCell = display.overflowCount > 0 && index == visibleCount - 1
+                        // 单图裁成四宫格方图时占半行宽，优先使用高清大图避免小缩略图发糊。
+                        val shown = if (visibleCount == 1 && !forceGridThumbSize) {
+                            pic.large.ifBlank { pic.thumb }
+                        } else {
+                            pic.thumb.ifBlank { pic.large }
+                        }
                         val declaredAspect = if (pic.width > 0 && pic.height > 0) {
                             pic.width.toFloat() / pic.height
                         } else {
@@ -1424,23 +1461,39 @@ fun ImageGrid(
                                 },
                                 modifier = Modifier.fillMaxSize(),
                             )
-                            when {
-                                pic.isVideo -> {
-                                    GridPlayBadge(34.dp, 18.dp, Modifier.align(Alignment.Center))
-                                    if (pic.durationSec > 0) {
-                                        VideoDurationBadge(
-                                            seconds = pic.durationSec,
-                                            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
-                                        )
+                            if (!isOverflowCell) {
+                                when {
+                                    pic.isVideo -> {
+                                        GridPlayBadge(34.dp, 18.dp, Modifier.align(Alignment.Center))
+                                        if (pic.durationSec > 0) {
+                                            VideoDurationBadge(
+                                                seconds = pic.durationSec,
+                                                modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        if (pic.isLive) {
+                                            LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
+                                        }
+                                        if (isLong) {
+                                            LongImageBadge(urls[index], Modifier.align(Alignment.BottomEnd).padding(4.dp))
+                                        }
                                     }
                                 }
-                                else -> {
-                                    if (pic.isLive) {
-                                        LiveBadge(urls[index], Modifier.align(Alignment.BottomStart).padding(GridBadgeInset))
-                                    }
-                                    if (isLong) {
-                                        LongImageBadge(urls[index], Modifier.align(Alignment.BottomEnd).padding(4.dp))
-                                    }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color(0x8A3A3A3A)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "+${display.overflowCount}",
+                                        color = Color.White,
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
                                 }
                             }
                         }

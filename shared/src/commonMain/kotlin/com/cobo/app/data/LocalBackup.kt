@@ -56,6 +56,8 @@ data class SettingsBackup(
     val profileShowStatuses: Boolean? = null,
     val imageBrowseQualityKey: String? = null,
     val retweetImageCompact: Boolean? = null,
+    val singleImageSquareCrop: Boolean? = null,
+    val overNineImageDisplayModeKey: String? = null,
     val livePhotoAutoPlay: Boolean? = null,
     val livePhotoSound: Boolean? = null,
     val videoAutoFloatOnBack: Boolean? = null,
@@ -461,6 +463,8 @@ private fun encodeSettingsBackup(s: SettingsBackup): JSONObject = JSONObject().a
     s.profileShowStatuses?.let { put("profileShowStatuses", it) }
     s.imageBrowseQualityKey?.let { put("imageBrowseQualityKey", it) }
     s.retweetImageCompact?.let { put("retweetImageCompact", it) }
+    s.singleImageSquareCrop?.let { put("singleImageSquareCrop", it) }
+    s.overNineImageDisplayModeKey?.let { put("overNineImageDisplayModeKey", it) }
     s.livePhotoAutoPlay?.let { put("livePhotoAutoPlay", it) }
     s.livePhotoSound?.let { put("livePhotoSound", it) }
     s.videoAutoFloatOnBack?.let { put("videoAutoFloatOnBack", it) }
@@ -557,6 +561,8 @@ private fun decodeSettingsBackup(o: JSONObject): SettingsBackup {
         profileShowStatuses = optBoolOrNull("profileShowStatuses"),
         imageBrowseQualityKey = optStrOrNull("imageBrowseQualityKey"),
         retweetImageCompact = optBoolOrNull("retweetImageCompact"),
+        singleImageSquareCrop = optBoolOrNull("singleImageSquareCrop"),
+        overNineImageDisplayModeKey = optStrOrNull("overNineImageDisplayModeKey"),
         livePhotoAutoPlay = optBoolOrNull("livePhotoAutoPlay"),
         livePhotoSound = optBoolOrNull("livePhotoSound"),
         videoAutoFloatOnBack = optBoolOrNull("videoAutoFloatOnBack"),

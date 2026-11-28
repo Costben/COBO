@@ -330,6 +330,8 @@ private fun unwrapLivePhoto(raw: String): String = livePlayUrl(raw)
  * `pic_ids` + `pic_infos`（weibo.com 的 ajax 接口）。实况视频跟在对应那张静图上。
  */
 internal fun picsOf(o: JSONObject): List<Pic> {
+    val ids = o.optJSONArray("pic_ids")
+    val infos = o.optJSONObject("pic_infos")
     val arr = o.optJSONArray("pics")
     if (arr != null && arr.length() > 0) {
         val parsed = buildList {
@@ -339,10 +341,34 @@ internal fun picsOf(o: JSONObject): List<Pic> {
             }
         }
         // `pics` 可能整组都是占位项（图片评论的客户端通道就是这样），此时继续看 `pic_ids` / `pic_infos`。
-        if (parsed.isNotEmpty()) return parsed
+        if (parsed.isNotEmpty()) {
+            // 超过 9 张图的微博在部分接口里 `pics[]` 只给前 9 张、`pic_ids[]` 才带全量 10~18 张，补齐剩余图片。
+            if (ids != null && ids.length() > parsed.size) {
+                val seenPids = parsed.mapNotNull { it.pid.takeIf(String::isNotBlank) }.toHashSet()
+                val merged = ArrayList<Pic>(ids.length())
+                merged.addAll(parsed)
+                for (i in 0 until ids.length()) {
+                    val id = ids.optString(i).orEmpty().trim()
+                    if (id.isBlank() || id in seenPids) continue
+                    seenPids.add(id)
+                    val extra = infos?.optJSONObject(id)?.let { picOf(it) }
+                    if (extra != null) {
+                        merged.add(if (extra.pid.isBlank()) extra.copy(pid = id) else extra)
+                    } else {
+                        merged.add(
+                            Pic(
+                                thumb = "https://wx1.sinaimg.cn/orj360/$id.jpg",
+                                large = "https://wx1.sinaimg.cn/large/$id.jpg",
+                                pid = id,
+                            ),
+                        )
+                    }
+                }
+                return merged
+            }
+            return parsed
+        }
     }
-    val ids = o.optJSONArray("pic_ids")
-    val infos = o.optJSONObject("pic_infos")
     if (ids != null && ids.length() > 0) {
         return buildList {
             for (i in 0 until ids.length()) {

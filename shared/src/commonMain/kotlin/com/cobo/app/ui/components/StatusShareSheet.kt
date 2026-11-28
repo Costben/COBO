@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -120,6 +121,21 @@ internal fun resolveSharePosterDensity(
     val clampedDp = targetWidthDp.coerceIn(ShareWidthMinDp, ShareWidthMaxDp)
     val effectiveDensity = (containerWidthPx.toFloat() / clampedDp.toFloat()).coerceIn(0.75f, 6.0f)
     return Density(density = effectiveDensity, fontScale = baseDensity.fontScale)
+}
+
+/**
+ * 计算图文分享海报内单张图片的展示宽高比：
+ * - [fullImage] 为 `true` 时保留原图自然比例（仅在极端比例 `0.08..6.0` 做安全兜底），确保超长图与超宽图完整展现不裁切；
+ * - [fullImage] 为 `false` 时收紧至紧凑区间 `0.65..1.9`，避免预览卡片过高。
+ */
+internal fun resolveShareImageAspectRatio(
+    width: Float,
+    height: Float,
+    fullImage: Boolean,
+    fallbackAspect: Float = 1.45f,
+): Float {
+    val raw = if (width > 0f && height > 0f) width / height else fallbackAspect
+    return if (fullImage) raw.coerceIn(0.08f, 6.0f) else raw.coerceIn(0.65f, 1.9f)
 }
 
 /** 分享海报风格：双联票卡（方案 C）与纸墨刊物（方案 B）。 */
@@ -356,11 +372,18 @@ internal fun StatusShareSheet(
     var showBrand by remember(status.id) { mutableStateOf(true) }
     var showStats by remember(status.id) { mutableStateOf(true) }
     var showMeta by remember(status.id) { mutableStateOf(true) }
+    var showFullImage by remember(status.id) { mutableStateOf(true) }
     var overrideWidthDp by remember(status.id) { mutableStateOf(lastShareWidthDp) }
     var detectedNativeWidthDp by remember(status.id) { mutableStateOf(360) }
     var busy by remember(status.id) { mutableStateOf(false) }
+    // 仅在点击「保存相册 / 系统分享」瞬间按需开启 GraphicsLayer 离屏录制；
+    // 日常预览与上下滑动直接走常规 GPU 绘制，避免 iOS Skiko 滚动每帧重录整张长图造成掉帧卡顿。
+    var capturingLayer by remember(status.id) { mutableStateOf(false) }
     val shareLayer = rememberGraphicsLayer()
     val baseDensity = LocalDensity.current
+    val hasShareImages = remember(status.id, status.pics, status.retweeted?.pics) {
+        status.pics.isNotEmpty() || status.retweeted?.pics?.isNotEmpty() == true
+    }
 
     LaunchedEffect(status.id) { show = true }
 
@@ -370,8 +393,16 @@ internal fun StatusShareSheet(
     }
 
     suspend fun renderSharePng(): ByteArray? {
-        withFrameNanos { }
-        val bitmap = runCatching { shareLayer.toImageBitmap() }.getOrNull() ?: return null
+        capturingLayer = true
+        val bitmap = try {
+            // 等待两帧确保 drawWithContent 完成一次完整的 shareLayer.record。
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { shareLayer.toImageBitmap() }.getOrNull()
+        } finally {
+            capturingLayer = false
+        }
+        if (bitmap == null) return null
         return withContext(ioDispatcher) {
             encodeImageBitmapToPng(bitmap)
         }
@@ -454,8 +485,12 @@ internal fun StatusShareSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .drawWithContent {
-                                shareLayer.record { this@drawWithContent.drawContent() }
-                                drawLayer(shareLayer)
+                                if (capturingLayer) {
+                                    shareLayer.record { this@drawWithContent.drawContent() }
+                                    drawLayer(shareLayer)
+                                } else {
+                                    drawContent()
+                                }
                             },
                     ) {
                         CompositionLocalProvider(LocalDensity provides posterDensity) {
@@ -468,6 +503,7 @@ internal fun StatusShareSheet(
                                     showBrand = showBrand,
                                     showStats = showStats,
                                     showMeta = showMeta,
+                                    showFullImage = showFullImage,
                                 )
                                 SharePosterStyle.Editorial -> EditorialSharePoster(
                                     status = status,
@@ -478,6 +514,7 @@ internal fun StatusShareSheet(
                                     showBrand = showBrand,
                                     showStats = showStats,
                                     showMeta = showMeta,
+                                    showFullImage = showFullImage,
                                 )
                             }
                         }
@@ -617,7 +654,7 @@ internal fun StatusShareSheet(
 
             Spacer(Modifier.height(10.dp))
 
-            // 要素开关行：二维码 / Cobo 标签 / 互动数 / 日期来源
+            // 要素开关行：完整图像（含配图时优先展示）/ 二维码 / Cobo 标签 / 互动数 / 日期来源
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -625,6 +662,14 @@ internal fun StatusShareSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (hasShareImages) {
+                    ShareOptionChip(
+                        label = "完整图像",
+                        active = showFullImage,
+                        modifier = Modifier.testTag("share_toggle_full_image"),
+                        onClick = { if (!busy) showFullImage = !showFullImage },
+                    )
+                }
                 ShareOptionChip(
                     label = "二维码",
                     active = showQr,
@@ -855,16 +900,19 @@ private fun BentoTicketSharePoster(
     showBrand: Boolean,
     showStats: Boolean,
     showMeta: Boolean,
+    showFullImage: Boolean,
 ) {
     val dark = theme.isDark
     val accent = COUITheme.colorScheme.primary
     val linkColor = if (dark) Color(0xFF6BB3FF) else Color(0xFF156CD6)
 
-    val canvasBrush = when (theme) {
-        BentoShareTheme.Light -> Brush.verticalGradient(listOf(Color(0xFFEAEFF6), Color(0xFFE6ECF4)))
-        BentoShareTheme.Blue -> Brush.linearGradient(listOf(Color(0xFFDCEBFF), Color(0xFFEBF2FC)))
-        BentoShareTheme.Dark -> Brush.verticalGradient(listOf(Color(0xFF0B0D12), Color(0xFF0E1118)))
-        BentoShareTheme.Obsidian -> Brush.linearGradient(listOf(Color(0xFF11192A), Color(0xFF090C14)))
+    val canvasBrush = remember(theme) {
+        when (theme) {
+            BentoShareTheme.Light -> Brush.verticalGradient(listOf(Color(0xFFEAEFF6), Color(0xFFE6ECF4)))
+            BentoShareTheme.Blue -> Brush.linearGradient(listOf(Color(0xFFDCEBFF), Color(0xFFEBF2FC)))
+            BentoShareTheme.Dark -> Brush.verticalGradient(listOf(Color(0xFF0B0D12), Color(0xFF0E1118)))
+            BentoShareTheme.Obsidian -> Brush.linearGradient(listOf(Color(0xFF11192A), Color(0xFF090C14)))
+        }
     }
     val cardBg = when (theme) {
         BentoShareTheme.Light -> Color(0xFFFFFFFF)
@@ -974,6 +1022,7 @@ private fun BentoTicketSharePoster(
                 SharePosterImageGrid(
                     pics = status.pics,
                     placeholderColor = quoteBg,
+                    fullImage = showFullImage,
                     outerCorner = 14.dp,
                     innerCorner = 6.dp,
                 )
@@ -1016,6 +1065,7 @@ private fun BentoTicketSharePoster(
                         SharePosterImageGrid(
                             pics = quoted.pics,
                             placeholderColor = dividerColor,
+                            fullImage = showFullImage,
                             outerCorner = 10.dp,
                             innerCorner = 5.dp,
                         )
@@ -1170,6 +1220,7 @@ private fun EditorialSharePoster(
     showBrand: Boolean,
     showStats: Boolean,
     showMeta: Boolean,
+    showFullImage: Boolean,
 ) {
     val bodyFont = if (serif) FontFamily.Serif else FontFamily.Default
     val user = status.user
@@ -1258,6 +1309,7 @@ private fun EditorialSharePoster(
                         SharePosterImageGrid(
                             pics = status.pics,
                             placeholderColor = theme.line,
+                            fullImage = showFullImage,
                             outerCorner = 8.dp,
                             innerCorner = 3.dp,
                         )
@@ -1350,6 +1402,7 @@ private fun EditorialSharePoster(
                                 SharePosterImageGrid(
                                     pics = quoted.pics,
                                     placeholderColor = theme.line,
+                                    fullImage = showFullImage,
                                     outerCorner = 6.dp,
                                     innerCorner = 3.dp,
                                 )
@@ -1599,26 +1652,33 @@ private fun ShareQrBox(
 private fun SharePosterImageGrid(
     pics: List<Pic>,
     placeholderColor: Color,
+    fullImage: Boolean,
     outerCorner: Dp = 12.dp,
     innerCorner: Dp = 6.dp,
 ) {
     val shown = pics.take(9)
-    if (shown.size == 1) {
-        val pic = shown[0]
-        val aspect = if (pic.width > 0 && pic.height > 0) {
-            (pic.width.toFloat() / pic.height.toFloat()).coerceIn(0.65f, 1.9f)
-        } else {
-            1.45f
+    if (fullImage) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            shown.forEach { pic ->
+                ShareFullAspectImage(
+                    pic = pic,
+                    placeholderColor = placeholderColor,
+                    corner = if (shown.size == 1) outerCorner else innerCorner.coerceAtLeast(8.dp),
+                    fullImage = true,
+                )
+            }
         }
-        AsyncImage(
-            model = pic.large.ifBlank { pic.thumb },
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(aspect)
-                .clip(RoundedCornerShape(outerCorner))
-                .background(placeholderColor),
+        return
+    }
+    if (shown.size == 1) {
+        ShareFullAspectImage(
+            pic = shown[0],
+            placeholderColor = placeholderColor,
+            corner = outerCorner,
+            fullImage = false,
         )
         return
     }
@@ -1638,10 +1698,17 @@ private fun SharePosterImageGrid(
                 for (i in 0 until cols) {
                     val pic = row.getOrNull(i)
                     if (pic != null) {
+                        val declaredAspect = if (pic.width > 0 && pic.height > 0) {
+                            pic.width.toFloat() / pic.height.toFloat()
+                        } else {
+                            null
+                        }
+                        val isLong = declaredAspect != null && declaredAspect < 0.5f
                         AsyncImage(
                             model = pic.large.ifBlank { pic.thumb },
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
+                            alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
                             modifier = Modifier
                                 .weight(1f)
                                 .aspectRatio(1f)
@@ -1655,6 +1722,42 @@ private fun SharePosterImageGrid(
             }
         }
     }
+}
+
+@Composable
+private fun ShareFullAspectImage(
+    pic: Pic,
+    placeholderColor: Color,
+    corner: Dp,
+    fullImage: Boolean,
+) {
+    val modelUrl = pic.large.ifBlank { pic.thumb }
+    var measuredWidth by remember(modelUrl) { mutableFloatStateOf(pic.width.toFloat()) }
+    var measuredHeight by remember(modelUrl) { mutableFloatStateOf(pic.height.toFloat()) }
+    val aspect = resolveShareImageAspectRatio(
+        width = measuredWidth,
+        height = measuredHeight,
+        fullImage = fullImage,
+    )
+    val isLong = !fullImage && measuredWidth > 0f && measuredHeight > 0f && (measuredWidth / measuredHeight) < 0.5f
+    AsyncImage(
+        model = modelUrl,
+        contentDescription = null,
+        contentScale = if (fullImage) ContentScale.FillWidth else ContentScale.Crop,
+        alignment = if (isLong) Alignment.TopCenter else Alignment.Center,
+        onSuccess = { state ->
+            val s = state.painter.intrinsicSize
+            if (s.width > 0f && s.height > 0f) {
+                measuredWidth = s.width
+                measuredHeight = s.height
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(aspect)
+            .clip(RoundedCornerShape(corner))
+            .background(placeholderColor),
+    )
 }
 
 @Composable

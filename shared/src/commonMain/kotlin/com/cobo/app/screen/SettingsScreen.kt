@@ -80,6 +80,7 @@ import com.cobo.app.data.FeedTabSelection
 import com.cobo.app.data.FollowGroup
 import com.cobo.app.data.HotBoard
 import com.cobo.app.data.ImageBrowseQuality
+import com.cobo.app.data.OverNineImageDisplayMode
 import com.cobo.app.data.ImageTopBarButton
 import com.cobo.app.data.AnimationSpeed
 import com.cobo.app.data.LocalBackupBundle
@@ -242,6 +243,7 @@ private class SettingsUiState(context: PlatformContext) {
     var pickSearchPanelAnimation by mutableStateOf(false)
     var pickBottomLeftAction by mutableStateOf(false)
     var pickImageBrowseQuality by mutableStateOf(false)
+    var pickOverNineImageDisplayMode by mutableStateOf(false)
     var pickRecommendSeenRetention by mutableStateOf(false)
     var pickHotBoards by mutableStateOf(false)
     var pickAccentColor by mutableStateOf(false)
@@ -1073,6 +1075,35 @@ private fun displayMediaSubEntries(
             summary = App.settings.imageBrowseQuality.label,
             cardListPosition = pos,
             onClick = { state.pickImageBrowseQuality = true },
+        )
+    },
+    SettingsEntry(
+        id = "single_image_square_crop",
+        title = "单图裁剪为正方形",
+        summary = "开启后单张配图按四宫格单格尺寸裁剪为正方形显示",
+        keywords = "单图 裁剪 正方形 四宫格 方图 缩略图 尺寸 图片 single image square crop",
+    ) { pos ->
+        SettingsSwitchRow(
+            checked = App.settings.singleImageSquareCrop,
+            onCheckedChange = { App.settings.applySingleImageSquareCrop(it) },
+            title = "单图裁剪为正方形",
+            summary = "开启后单张配图按四宫格单格尺寸裁剪为正方形显示",
+            modifier = Modifier.testTag("settings_single_image_square_crop"),
+            cardListPosition = pos,
+        )
+    },
+    SettingsEntry(
+        id = "over_nine_image_display_mode",
+        title = "超过 9 张图片显示方式",
+        summary = App.settings.overNineImageDisplayMode.label,
+        keywords = "超过9张 九图 超九图 多图 折叠 展开 蒙版 剩余数量 图片 over nine multi image",
+    ) { pos ->
+        SettingsArrowRow(
+            title = "超过 9 张图片显示方式",
+            modifier = Modifier.testTag("settings_over_nine_image_display_mode"),
+            summary = App.settings.overNineImageDisplayMode.label,
+            cardListPosition = pos,
+            onClick = { state.pickOverNineImageDisplayMode = true },
         )
     },
     SettingsEntry(
@@ -2420,6 +2451,22 @@ private fun SettingsDialogs(
                 val picked = ImageBrowseQuality.fromKey(key)
                 App.settings.applyImageBrowseQuality(picked)
                 state.pickImageBrowseQuality = false
+            },
+        )
+    }
+
+    if (state.pickOverNineImageDisplayMode) {
+        OptionPicker(
+            title = "超过 9 张图片显示方式",
+            options = OverNineImageDisplayMode.entries.map { it.key to it.label },
+            selectedKey = App.settings.overNineImageDisplayMode.key,
+            tagPrefix = "over_nine_image_display_mode",
+            groupKey = "over-nine-image-display-mode",
+            onDismiss = { state.pickOverNineImageDisplayMode = false },
+            onPick = { key ->
+                val picked = OverNineImageDisplayMode.fromKey(key)
+                App.settings.applyOverNineImageDisplayMode(picked)
+                state.pickOverNineImageDisplayMode = false
             },
         )
     }

@@ -110,6 +110,20 @@ enum class ImageBrowseQuality(val key: String, val label: String) {
     }
 }
 
+/** 超过 9 张图片的微博在卡片网格中的显示方式。 */
+enum class OverNineImageDisplayMode(val key: String, val label: String) {
+    CollapseNine("collapse_nine", "折叠成 9 张"),
+    CollapseWithCount("collapse_with_count", "覆盖蒙版显示剩余数量"),
+    ExpandAll("expand_all", "全部展开"),
+    ;
+
+    companion object {
+        fun fromKey(key: String?): OverNineImageDisplayMode {
+            return entries.firstOrNull { it.key == key } ?: CollapseNine
+        }
+    }
+}
+
 /** 底栏左下角融合球按钮的功能。 */
 enum class BottomLeftAction(val key: String, val label: String) {
     Refresh("refresh", "回到顶部刷新"),
@@ -501,6 +515,16 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     var retweetImageCompact by mutableStateOf(sp.getBoolean("retweet_image_compact", false))
         private set
 
+    /** 单图裁剪为正方形：开启后单张配图按四宫格（两列）单格大小裁剪为正方形显示。默认关。 */
+    var singleImageSquareCrop by mutableStateOf(sp.getBoolean("single_image_square_crop", false))
+        private set
+
+    /** 超过 9 张图片的微博在卡片网格中的显示方式：折叠成 9 张 / 覆盖蒙版显示剩余数量 / 全部展开。 */
+    var overNineImageDisplayMode by mutableStateOf(
+        OverNineImageDisplayMode.fromKey(sp.getString("over_nine_image_display_mode", null)),
+    )
+        private set
+
     /**
      * 搜索面板里显示哪些热搜榜，按 [HotBoard] 的声明顺序保存。
      *
@@ -520,6 +544,16 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
     fun applyRetweetImageCompact(value: Boolean) {
         retweetImageCompact = value
         sp.edit().putBoolean("retweet_image_compact", value).apply()
+    }
+
+    fun applySingleImageSquareCrop(value: Boolean) {
+        singleImageSquareCrop = value
+        sp.edit().putBoolean("single_image_square_crop", value).apply()
+    }
+
+    fun applyOverNineImageDisplayMode(value: OverNineImageDisplayMode) {
+        overNineImageDisplayMode = value
+        sp.edit().putString("over_nine_image_display_mode", value.key).apply()
     }
 
     fun applyMainTab(value: Int) {
@@ -996,6 +1030,8 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
         profileShowStatuses = profileShowStatuses,
         imageBrowseQualityKey = imageBrowseQuality.key,
         retweetImageCompact = retweetImageCompact,
+        singleImageSquareCrop = singleImageSquareCrop,
+        overNineImageDisplayModeKey = overNineImageDisplayMode.key,
         livePhotoAutoPlay = livePhotoAutoPlay,
         livePhotoSound = livePhotoSound,
         videoAutoFloatOnBack = videoAutoFloatOnBack,
@@ -1077,6 +1113,10 @@ class Settings(@Suppress("UNUSED_PARAMETER") context: PlatformContext = Platform
             ImageBrowseQuality.entries.firstOrNull { it.key == key }?.let(::applyImageBrowseQuality)
         }
         backup.retweetImageCompact?.let(::applyRetweetImageCompact)
+        backup.singleImageSquareCrop?.let(::applySingleImageSquareCrop)
+        backup.overNineImageDisplayModeKey?.let { key ->
+            OverNineImageDisplayMode.entries.firstOrNull { it.key == key }?.let(::applyOverNineImageDisplayMode)
+        }
         backup.livePhotoAutoPlay?.let(::applyLivePhotoAutoPlay)
         backup.livePhotoSound?.let(::applyLivePhotoSound)
         backup.videoAutoFloatOnBack?.let(::applyVideoAutoFloatOnBack)

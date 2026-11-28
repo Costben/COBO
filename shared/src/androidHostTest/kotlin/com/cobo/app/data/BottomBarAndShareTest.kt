@@ -2,8 +2,10 @@ package com.cobo.app.data
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Density
+import com.cobo.app.json.JSONObject
 import com.cobo.app.screen.CachedProfileStatuses
 import com.cobo.app.screen.ProfileStatusesCache
+import com.cobo.app.ui.components.ImageGridDisplaySpec
 import com.cobo.app.ui.components.ImageGridLayout
 import com.cobo.app.ui.components.ShareWidthMaxDp
 import com.cobo.app.ui.components.ShareWidthMinDp
@@ -13,7 +15,9 @@ import com.cobo.app.ui.components.buildWeiboShareUrl
 import com.cobo.app.ui.components.formatShareBodyText
 import com.cobo.app.ui.components.formatShareDateTime
 import com.cobo.app.ui.components.formatShareMastheadDate
+import com.cobo.app.ui.components.resolveImageGridDisplay
 import com.cobo.app.ui.components.resolveImageGridLayout
+import com.cobo.app.ui.components.resolveShareImageAspectRatio
 import com.cobo.app.ui.components.resolveSharePosterDensity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -142,19 +146,64 @@ class BottomBarAndShareTest {
         assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 2), resolveImageGridLayout(4, true))
         assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(9, true))
 
+        assertEquals(ImageGridLayout(totalSlotsPerRow = 2, itemsPerRow = 2), resolveImageGridLayout(1, false))
         assertEquals(ImageGridLayout(totalSlotsPerRow = 2, itemsPerRow = 2), resolveImageGridLayout(2, false))
         assertEquals(ImageGridLayout(totalSlotsPerRow = 2, itemsPerRow = 2), resolveImageGridLayout(4, false))
         assertEquals(ImageGridLayout(totalSlotsPerRow = 3, itemsPerRow = 3), resolveImageGridLayout(5, false))
     }
 
     @Test
+    fun shareFullImageAspectRatioPreservesLongAndWideImages() {
+        // 长图 (1080x5400 = 0.2) 在完整图像模式下保持 0.2，关闭时收紧到 0.65
+        assertEquals(0.2f, resolveShareImageAspectRatio(1080f, 5400f, fullImage = true), 0.001f)
+        assertEquals(0.65f, resolveShareImageAspectRatio(1080f, 5400f, fullImage = false), 0.001f)
+        // 超宽图 (4000x1000 = 4.0) 在完整图像模式下保持 4.0，关闭时收紧到 1.9
+        assertEquals(4.0f, resolveShareImageAspectRatio(4000f, 1000f, fullImage = true), 0.001f)
+        assertEquals(1.9f, resolveShareImageAspectRatio(4000f, 1000f, fullImage = false), 0.001f)
+        // 极端比例兜底与缺省尺寸回落
+        assertEquals(0.08f, resolveShareImageAspectRatio(100f, 5000f, fullImage = true), 0.001f)
+        assertEquals(6.0f, resolveShareImageAspectRatio(9000f, 1000f, fullImage = true), 0.001f)
+        assertEquals(1.45f, resolveShareImageAspectRatio(0f, 0f, fullImage = true), 0.001f)
+    }
+
+    @Test
+    fun overNineImageDisplayModeResolvesVisibleAndOverflowCounts() {
+        assertEquals(ImageGridDisplaySpec(9, 0), resolveImageGridDisplay(9, OverNineImageDisplayMode.CollapseNine))
+        assertEquals(ImageGridDisplaySpec(9, 0), resolveImageGridDisplay(9, OverNineImageDisplayMode.CollapseWithCount))
+        assertEquals(ImageGridDisplaySpec(9, 0), resolveImageGridDisplay(9, OverNineImageDisplayMode.ExpandAll))
+
+        assertEquals(ImageGridDisplaySpec(9, 0), resolveImageGridDisplay(14, OverNineImageDisplayMode.CollapseNine))
+        assertEquals(ImageGridDisplaySpec(9, 5), resolveImageGridDisplay(14, OverNineImageDisplayMode.CollapseWithCount))
+        assertEquals(ImageGridDisplaySpec(14, 0), resolveImageGridDisplay(14, OverNineImageDisplayMode.ExpandAll))
+    }
+
+    @Test
+    fun picsOfAppendsRemainingPicIdsWhenPicsArrayIsCappedAtNine() {
+        val picsJson = (1..9).joinToString(",") { i ->
+            """{"pid":"pid$i","url":"https://wx1.sinaimg.cn/orj360/pid$i.jpg"}"""
+        }
+        val idsJson = (1..12).joinToString(",") { i -> "\"pid$i\"" }
+        val payload = JSONObject("""{"pics":[$picsJson],"pic_ids":[$idsJson]}""")
+        val parsed = picsOf(payload)
+        assertEquals(12, parsed.size)
+        assertEquals("pid10", parsed[9].pid)
+        assertEquals("pid12", parsed[11].pid)
+    }
+
+    @Test
     fun localBackupRoundTripsRetweetImageCompact() {
         val bundle = LocalBackupBundle(
             exportedAt = 1234L,
-            appVersion = "1.2.10",
-            settings = SettingsBackup(retweetImageCompact = true),
+            appVersion = "1.2.11",
+            settings = SettingsBackup(
+                retweetImageCompact = true,
+                singleImageSquareCrop = true,
+                overNineImageDisplayModeKey = OverNineImageDisplayMode.CollapseWithCount.key,
+            ),
         )
         val decoded = decodeLocalBackupJson(encodeLocalBackupJson(bundle))
         assertEquals(true, decoded.settings?.retweetImageCompact)
+        assertEquals(true, decoded.settings?.singleImageSquareCrop)
+        assertEquals(OverNineImageDisplayMode.CollapseWithCount.key, decoded.settings?.overNineImageDisplayModeKey)
     }
 }
