@@ -1,10 +1,10 @@
 package com.cobo.app
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.cobo.app.data.Api
 import com.cobo.app.data.CacheStore
@@ -28,10 +28,12 @@ import com.cobo.app.platform.PlatformContext
 import com.cobo.app.platform.PlatformHttp
 import com.cobo.app.platform.currentTimeMillis
 import com.cobo.app.platform.ioDispatcher
-import com.cobo.app.platform.setStatusBarDarkIcons
+import com.cobo.app.platform.platformSystemBarsApplier
 import com.cobo.app.ui.CoboRoot
 import com.cobo.app.ui.CoboTheme
 import com.cobo.app.ui.isDarkTheme
+import io.github.suqi8.coui.kmp.utils.CouiSystemBarsEffect
+import io.github.suqi8.coui.kmp.utils.CouiSystemBarsHost
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -51,10 +53,16 @@ fun CoboAppRoot() {
     App.ensureInitialized()
     CoboTheme {
         val dark = isDarkTheme()
-        LaunchedEffect(dark) {
-            setStatusBarDarkIcons(!dark)
+        val applier = remember { platformSystemBarsApplier() }
+        CouiSystemBarsHost(applier = applier) {
+            CouiSystemBarsEffect(
+                darkStatusBarIcons = !dark,
+                darkNavigationBarIcons = !dark,
+                statusBarVisible = true,
+                navigationBarVisible = true,
+            )
+            CoboRoot()
         }
-        CoboRoot()
     }
 }
 

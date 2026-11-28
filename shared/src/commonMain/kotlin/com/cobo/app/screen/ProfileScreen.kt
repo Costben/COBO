@@ -71,9 +71,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Velocity
+import com.cobo.app.ui.LocalRouteTransition
 import com.cobo.app.ui.isDarkTheme
 import com.cobo.app.ui.rememberIsTopRoute
 import io.github.suqi8.coui.kmp.theme.LocalContentColor
+import io.github.suqi8.coui.kmp.utils.CouiSystemBarsEffect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -287,18 +289,12 @@ internal fun rememberCoverContrast(
     val effective = if (active && !coverUrl.isNullOrBlank()) CoverContrast(useWhiteContent = true) else CoverContrast()
     val darkTheme = isDarkTheme()
     val lightStatusBars = !(darkTheme || effective.useWhiteContent)
-    LaunchedEffect(manageStatusBar, lightStatusBars) {
-        if (manageStatusBar) {
-            setStatusBarDarkIcons(lightStatusBars)
-        }
-    }
-    DisposableEffect(manageStatusBar, darkTheme) {
-        onDispose {
-            if (manageStatusBar) {
-                setStatusBarDarkIcons(!darkTheme)
-            }
-        }
-    }
+    val profileTransition = LocalRouteTransition.current
+    CouiSystemBarsEffect(
+        darkStatusBarIcons = lightStatusBars,
+        darkNavigationBarIcons = !darkTheme,
+        active = { manageStatusBar && profileTransition?.exiting?.invoke() != true },
+    )
     return effective
 }
 

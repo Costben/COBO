@@ -196,6 +196,7 @@ import com.cobo.app.ui.components.liveMediaCacheFile
 import com.cobo.app.ui.components.originalSize
 import com.cobo.app.ui.components.rememberImageSaveState
 import com.cobo.app.ui.evaluateVideoCenterGesture
+import com.cobo.app.ui.isDarkTheme
 import com.cobo.app.ui.isWeiboLiveLink
 import com.cobo.app.ui.resolveWeiboLink
 import com.cobo.app.ui.shouldAutoCloseVideoOnComplete
@@ -240,6 +241,7 @@ import io.github.suqi8.coui.kmp.squircle.isSquircleEnabled
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.theme.LocalContentColor
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
+import io.github.suqi8.coui.kmp.utils.CouiSystemBarsEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -257,6 +259,19 @@ internal fun shouldAutoHideImageViewerChrome(
     chromeVisible: Boolean,
     menuOpen: Boolean,
 ): Boolean = autoHideEnabled && chromeVisible && !menuOpen
+
+internal fun shouldShowImageViewerSystemBars(
+    chromeVisible: Boolean,
+    menuOpen: Boolean,
+    avatarMoreOpen: Boolean,
+    cropDialogOpen: Boolean,
+    exiting: Boolean,
+): Boolean = chromeVisible || menuOpen || avatarMoreOpen || cropDialogOpen || exiting
+
+internal fun shouldImageViewerOwnSystemBars(
+    exiting: Boolean,
+    bgAlpha: Float,
+): Boolean = !exiting && bgAlpha >= 0.5f
 
 internal fun shouldAutoHideVideoControls(
     autoHideEnabled: Boolean,
@@ -588,19 +603,40 @@ fun ImageViewerScreen(
         transition?.onHasReturnTarget?.invoke(hasThumb)
         origins.beginViewing(viewerOwner, if (transitionExiting && !hasThumb) null else current)
     }
+    var topBandIsLight by remember(current) { mutableStateOf(false) }
+    val systemBarsVisible = shouldShowImageViewerSystemBars(
+        chromeVisible = chromeVisible,
+        menuOpen = menuOpen,
+        avatarMoreOpen = avatarMoreOpen,
+        cropDialogOpen = pendingCropUri != null,
+        exiting = frame.dismiss.exiting || transitionExiting,
+    )
     DisposableEffect(viewerOwner) {
-        setStatusBarDarkIcons(false)
         onDispose {
             origins.endViewing(viewerOwner)
-            setStatusBarDarkIcons(null)
         }
     }
+    CouiSystemBarsEffect(
+        darkStatusBarIcons = topBandIsLight,
+        darkNavigationBarIcons = false,
+        statusBarVisible = systemBarsVisible,
+        navigationBarVisible = systemBarsVisible,
+        active = {
+            val d = frame.dismiss
+            val exitingNow = d.exiting || transition?.exiting?.invoke() == true
+            val bgAlpha = when {
+                d.exiting -> d.exitBgAlpha.value
+                d.active -> d.currentBgAlpha()
+                else -> progress()
+            }
+            shouldImageViewerOwnSystemBars(exiting = exitingNow, bgAlpha = bgAlpha)
+        },
+    )
     LaunchedEffect(current, frame.dismiss.boxSize) {
         val scaleDensity = density.coerceAtLeast(1f)
         val wDp = (frame.dismiss.boxSize.width / scaleDensity).roundToInt().coerceAtLeast(1)
         val hDp = (frame.dismiss.boxSize.height / scaleDensity).roundToInt().coerceAtLeast(1)
-        val lightTop = platformTopBandIsLight(current, wDp, hDp)
-        setStatusBarDarkIcons(lightTop)
+        topBandIsLight = platformTopBandIsLight(current, wDp, hDp)
     }
 
     LaunchedEffect(
@@ -753,8 +789,15 @@ fun ImageViewerScreen(
                 chromeAlphaState.value
         }
 
+        val localDensity = LocalDensity.current
+        val liveTopInsetPx = WindowInsets.statusBars.union(WindowInsets.displayCutout).getTop(localDensity)
+        var stableTopInsetPx by remember(frame.dismiss.boxSize.width) { mutableIntStateOf(liveTopInsetPx) }
+        if (liveTopInsetPx > stableTopInsetPx) {
+            stableTopInsetPx = liveTopInsetPx
+        }
+
         if (chromeMounted) {
-            val topInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
+            val topInsets = WindowInsets(top = stableTopInsetPx).union(WindowInsets.displayCutout)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2499,18 +2542,23 @@ fun VideoScreen(
                 }
             }
 
+            val videoTransition = LocalRouteTransition.current
             LaunchedEffect(landscape) {
                 setScreenOrientation(if (landscape) PlatformOrientation.Landscape else PlatformOrientation.Portrait)
-                setSystemBarsVisible(!landscape)
             }
 
+            CouiSystemBarsEffect(
+                darkStatusBarIcons = false,
+                darkNavigationBarIcons = false,
+                statusBarVisible = !landscape && (controlsVisible || speedMenu),
+                navigationBarVisible = !landscape && (controlsVisible || speedMenu),
+                active = { videoTransition?.exiting?.invoke() != true },
+            )
+
             DisposableEffect(Unit) {
-                setStatusBarDarkIcons(false)
                 onDispose {
                     keepScreenOn(false)
                     setScreenOrientation(PlatformOrientation.Portrait)
-                    setSystemBarsVisible(true)
-                    setStatusBarDarkIcons(null)
                     writeScreenBrightness(-1f)
                     if (!handedOffToFloating) {
                         player.release()

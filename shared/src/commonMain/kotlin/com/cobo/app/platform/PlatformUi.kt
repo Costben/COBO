@@ -107,6 +107,7 @@ expect fun rememberJsonImportLauncher(
 expect fun setScreenOrientation(orientation: PlatformOrientation)
 expect fun setSystemBarsVisible(visible: Boolean)
 expect fun setStatusBarDarkIcons(darkIcons: Boolean?)
+internal expect fun platformSystemBarsApplier(): io.github.suqi8.coui.kmp.utils.CouiSystemBarsApplier?
 expect fun keepScreenOn(enabled: Boolean)
 expect fun readScreenBrightness(): Float
 expect fun writeScreenBrightness(value: Float)

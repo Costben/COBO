@@ -376,6 +376,8 @@ actual fun setStatusBarDarkIcons(darkIcons: Boolean?) {
     }
 }
 
+internal actual fun platformSystemBarsApplier(): io.github.suqi8.coui.kmp.utils.CouiSystemBarsApplier? = null
+
 actual fun keepScreenOn(enabled: Boolean) {
     val activity = AndroidPlatformHolder.currentActivity() ?: return
     activity.runOnUiThread {

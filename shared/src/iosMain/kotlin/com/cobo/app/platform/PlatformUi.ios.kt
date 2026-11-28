@@ -597,6 +597,12 @@ actual fun setStatusBarDarkIcons(darkIcons: Boolean?) {
     postNotification("CoboStatusBarStyleChanged", "darkIcons", NSNumber(int = styleValue))
 }
 
+internal actual fun platformSystemBarsApplier(): io.github.suqi8.coui.kmp.utils.CouiSystemBarsApplier? =
+    io.github.suqi8.coui.kmp.utils.CouiSystemBarsApplier { style ->
+        setStatusBarDarkIcons(style.darkStatusBarIcons)
+        setSystemBarsVisible(style.statusBarVisible && style.navigationBarVisible)
+    }
+
 actual fun keepScreenOn(enabled: Boolean) {
     dispatch_async(dispatch_get_main_queue()) {
         UIApplication.sharedApplication.idleTimerDisabled = enabled
