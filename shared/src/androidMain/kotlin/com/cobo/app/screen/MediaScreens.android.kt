@@ -143,7 +143,7 @@ internal actual fun PlatformTiledLongImageOverlay(
 
     LaunchedEffect(url, original) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            val local = File(url)
+            val local = File(url.removePrefix("file://"))
             if (local.isFile && local.length() > 0L) cachedFile = local
             return@LaunchedEffect
         }

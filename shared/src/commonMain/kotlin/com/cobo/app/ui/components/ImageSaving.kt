@@ -13,7 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -40,9 +39,13 @@ import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.overlay.OverlayListPopup
 import io.github.suqi8.coui.kmp.theme.LocalDismissState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val ImageSaveAppScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 data class SaveImageItem(
     val url: String,
@@ -89,9 +92,14 @@ internal suspend fun downloadMediaToFile(
 }
 
 suspend fun downloadImage(url: String): ByteArray? = withContext(ioDispatcher) {
-    val host = parseUrlHost(url)
+    val trimmed = url.trim()
+    if (trimmed.startsWith("/") || trimmed.startsWith("file://", ignoreCase = true)) {
+        val localPath = trimmed.removePrefix("file://")
+        return@withContext PlatformFile(localPath).readBytesOrNull()
+    }
+    val host = parseUrlHost(trimmed)
     val headers = App.imageHeadersForHost(host)
-    PlatformHttp.downloadBytes(url, headers)
+    PlatformHttp.downloadBytes(trimmed, headers)
 }
 
 private fun extensionFor(url: String): String {
@@ -113,35 +121,53 @@ private fun mimeFor(ext: String): String = when (ext.lowercase()) {
     else -> "image/jpeg"
 }
 
+suspend fun saveToGalleryResult(
+    @Suppress("UNUSED_PARAMETER") context: PlatformContext,
+    bytes: ByteArray,
+    url: String,
+): Result<Unit> {
+    val ext = extensionFor(url)
+    val name = "cobo_${currentTimeMillis()}.$ext"
+    return saveImageBytesToGallery(bytes, name, mimeFor(ext))
+}
+
 suspend fun saveToGallery(
     @Suppress("UNUSED_PARAMETER") context: PlatformContext,
     bytes: ByteArray,
     url: String,
-): Boolean {
-    val ext = extensionFor(url)
-    val name = "cobo_${currentTimeMillis()}.$ext"
-    return saveImageBytesToGallery(bytes, name, mimeFor(ext)).isSuccess
+): Boolean = saveToGalleryResult(context, bytes, url).isSuccess
+
+suspend fun saveLivePhotoToGalleryResult(
+    @Suppress("UNUSED_PARAMETER") context: PlatformContext,
+    item: SaveImageItem,
+): Result<Unit> {
+    val targetUrl = if (item.preserveUrl) item.url else originalSize(item.url)
+    val imageBytes = downloadImage(targetUrl) ?: if (targetUrl != item.url) downloadImage(item.url) else null
+    if (imageBytes == null) return Result.failure(IllegalStateException("图片下载失败"))
+    val videoBytes = if (item.liveUrl.isNotBlank()) downloadImage(item.liveUrl) else null
+    if (videoBytes != null) {
+        val liveResult = platformSaveLivePhotoToGallery(imageBytes, videoBytes)
+        if (liveResult.isSuccess) return liveResult
+    }
+    return saveToGalleryResult(PlatformContext(), imageBytes, targetUrl)
 }
 
 suspend fun saveLivePhotoToGallery(
     @Suppress("UNUSED_PARAMETER") context: PlatformContext,
     item: SaveImageItem,
-): Boolean {
-    val targetUrl = if (item.preserveUrl) item.url else originalSize(item.url)
-    val imageBytes = downloadImage(targetUrl) ?: if (targetUrl != item.url) downloadImage(item.url) else null
-    if (imageBytes == null) return false
-    val videoBytes = if (item.liveUrl.isNotBlank()) downloadImage(item.liveUrl) else null
-    if (videoBytes != null) {
-        val liveResult = platformSaveLivePhotoToGallery(imageBytes, videoBytes)
-        if (liveResult.isSuccess) return true
-    }
-    return saveToGallery(PlatformContext(), imageBytes, targetUrl)
-}
+): Boolean = saveLivePhotoToGalleryResult(context, item).isSuccess
 
 @Stable
 class ImageSaveState(
     private val context: PlatformContext,
-    private val scope: CoroutineScope,
+    private val scope: CoroutineScope = ImageSaveAppScope,
+    private val onNotify: (String) -> Unit = App::toast,
+    private val saveStill: suspend (SaveImageItem) -> Result<Unit> = { item ->
+        saveStillItemResult(context, item)
+    },
+    private val saveLive: suspend (SaveImageItem) -> Result<Unit> = { item ->
+        saveLivePhotoToGalleryResult(context, item)
+    },
 ) {
     var hud by mutableStateOf("")
         internal set
@@ -151,8 +177,11 @@ class ImageSaveState(
         private set
 
     fun flash(message: String) {
-        hud = message
+        val text = message.trim()
+        if (text.isEmpty()) return
+        hud = text
         tick++
+        onNotify(text)
     }
 
     fun saveOne(item: SaveImageItem) {
@@ -165,24 +194,34 @@ class ImageSaveState(
 
     fun saveAll(items: List<SaveImageItem>) {
         if (items.isEmpty()) return
+        if (items.size == 1) {
+            saveOne(items.first())
+            return
+        }
         scope.launch { performSaveAll(items) }
     }
 
     private suspend fun performSaveOne(item: SaveImageItem) {
-        if (saving) return
-        saving = true
-        val saved = if (item.isLive) {
-            flash("正在保存实况图…")
-            saveLivePhotoToGallery(context, item)
-        } else {
-            flash("正在保存原图…")
-            saveStillItem(item)
+        if (saving) {
+            flash("正在保存，请稍候…")
+            return
         }
-        saving = false
+        saving = true
+        val result = try {
+            if (item.isLive) {
+                saveLive(item)
+            } else {
+                saveStill(item)
+            }
+        } finally {
+            saving = false
+        }
+        val errMsg = result.exceptionOrNull()?.message?.trim().orEmpty()
         flash(
             when {
-                saved && item.isLive -> "已保存实况图到相册"
-                saved -> "已保存到相册"
+                result.isSuccess && item.isLive -> "已保存实况图到相册"
+                result.isSuccess -> "已保存到相册"
+                errMsg.isNotBlank() -> errMsg
                 item.isLive -> "实况图保存失败"
                 else -> "保存失败"
             },
@@ -190,27 +229,31 @@ class ImageSaveState(
     }
 
     private suspend fun performSaveAll(items: List<SaveImageItem>) {
-        if (saving) return
+        if (saving) {
+            flash("正在保存，请稍候…")
+            return
+        }
         saving = true
         var ok = 0
         var liveOk = 0
-        for ((position, item) in items.withIndex()) {
-            flash(
-                if (item.isLive) {
-                    "正在保存实况图 ${position + 1}/${items.size}…"
+        var lastErr = ""
+        try {
+            for (item in items) {
+                val res = if (item.isLive) saveLive(item) else saveStill(item)
+                if (res.isSuccess) {
+                    ok++
+                    if (item.isLive) liveOk++
                 } else {
-                    "正在保存 ${position + 1}/${items.size}…"
-                },
-            )
-            val saved = if (item.isLive) saveLivePhotoToGallery(context, item) else saveStillItem(item)
-            if (saved) {
-                ok++
-                if (item.isLive) liveOk++
+                    res.exceptionOrNull()?.message?.trim()?.takeIf { it.isNotEmpty() }?.let { lastErr = it }
+                }
             }
+        } finally {
+            saving = false
         }
-        saving = false
         flash(
             when {
+                ok == 0 && lastErr.isNotBlank() -> lastErr
+                ok == 0 -> "保存失败"
                 ok == items.size && liveOk == items.size -> "已保存 $ok 张实况图到相册"
                 ok == items.size && liveOk > 0 -> "已保存 $ok 张到相册（含 $liveOk 张实况图）"
                 ok == items.size -> "已保存 $ok 张到相册"
@@ -218,18 +261,20 @@ class ImageSaveState(
             },
         )
     }
+}
 
-    private suspend fun saveStillItem(item: SaveImageItem): Boolean {
-        val target = if (item.preserveUrl) item.url else originalSize(item.url)
-        val bytes = downloadImage(target) ?: if (target != item.url) downloadImage(item.url) else null
-        return bytes != null && saveToGallery(context, bytes, target)
-    }
+private suspend fun saveStillItemResult(context: PlatformContext, item: SaveImageItem): Result<Unit> {
+    val target = if (item.preserveUrl) item.url else originalSize(item.url)
+    val bytes = downloadImage(target)
+        ?: (if (target != item.url) downloadImage(item.url) else null)
+        ?: return Result.failure(IllegalStateException("图片下载失败"))
+    return saveToGalleryResult(context, bytes, target)
 }
 
 @Composable
 fun rememberImageSaveState(): ImageSaveState {
-    val scope = rememberCoroutineScope()
-    val state = remember { ImageSaveState(App.context, scope) }
+    // 使用应用级作用域执行保存任务，避免看图页或菜单关闭后中断下载与完成提示。
+    val state = remember { ImageSaveState(App.context, ImageSaveAppScope) }
     LaunchedEffect(state.tick) {
         if (state.hud.isNotEmpty()) {
             delay(1600)

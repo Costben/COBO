@@ -186,7 +186,6 @@ import com.cobo.app.ui.VideoVerticalZone
 import com.cobo.app.ui.classifyVideoVerticalZone
 import com.cobo.app.ui.components.AvatarCropDialog
 import com.cobo.app.ui.components.CoboRefreshSpinner
-import com.cobo.app.ui.components.SaveHud
 import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.WeiboWebView
@@ -1093,8 +1092,6 @@ fun ImageViewerScreen(
             onDismiss = { menuOpen = false },
             state = saveState,
         )
-
-        SaveHud(saveState)
     }
 
     val cropUri = pendingCropUri

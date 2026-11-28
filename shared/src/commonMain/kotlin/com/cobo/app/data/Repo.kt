@@ -331,6 +331,21 @@ class Repo(private val context: PlatformContext, private val store: Store) {
     var favoritesVersion by mutableIntStateOf(0)
         private set
 
+    /** 本次会话内微博账号云端收藏状态覆盖，供信息流、详情页与收藏页「微博」栏即时同步。 */
+    val cloudFavoriteOverrides = mutableStateMapOf<String, Boolean>()
+
+    var cloudFavoritesVersion by mutableIntStateOf(0)
+        private set
+
+    fun isCloudFavorited(id: String, fallback: Boolean): Boolean =
+        if (id.isBlank()) fallback else cloudFavoriteOverrides[id] ?: fallback
+
+    fun recordCloudFavoriteState(id: String, favorited: Boolean) {
+        if (id.isBlank()) return
+        cloudFavoriteOverrides[id] = favorited
+        cloudFavoritesVersion++
+    }
+
     val deletedStatusIds = mutableStateMapOf<String, Boolean>()
 
     var deletedVersion by mutableIntStateOf(0)
@@ -726,6 +741,8 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         superTopicFollowOverrides.clear()
         superTopicFollowInFlight.clear()
         superTopicFollowVersion++
+        cloudFavoriteOverrides.clear()
+        cloudFavoritesVersion++
     }
 
     private suspend fun configFor(cookie: String, force: Boolean = false): Config {
@@ -2057,6 +2074,9 @@ class Repo(private val context: PlatformContext, private val store: Store) {
     suspend fun detail(id: String, force: Boolean = false): Status? {
         val parsed: Status? = if (isClientChannel()) {
             val root = containerGet("statuses/show", mapOf("id" to id, "isGetLongText" to "1"))
+            if (isDeletedStatusJson(root)) {
+                throw StatusDeletedException(deletedStatusReasonOf(root), ClientLogin.errorCode(root))
+            }
             enrichContainerLongTextObjects(listOf(root))
             val stillTruncated = hasLongTextFlag(root) && extractLongTextContent(root).isNullOrBlank()
             val clientStatus = Status.from(root, fullText = !stillTruncated)
@@ -2065,7 +2085,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
                     get(Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)), cookie(), force)
                 }.getOrNull()
                 val mobileData = mobileRoot?.optJSONObject("data")
-                if (mobileData != null) {
+                if (mobileData != null && !isDeletedStatusJson(mobileData)) {
                     enrichMobileDetailLongText(id, mobileData)
                     val mobileStillTruncated = extractLongTextContent(mobileData).isNullOrBlank() &&
                         hasLongTextFlag(mobileData) &&
@@ -2084,8 +2104,14 @@ class Repo(private val context: PlatformContext, private val store: Store) {
                 cookie(),
                 force,
             )
+            if (isDeletedStatusJson(root)) {
+                throw StatusDeletedException(deletedStatusReasonOf(root), ClientLogin.errorCode(root))
+            }
             val data = root.optJSONObject("data")
             if (data != null) {
+                if (isDeletedStatusJson(data)) {
+                    throw StatusDeletedException(deletedStatusReasonOf(data), ClientLogin.errorCode(data))
+                }
                 enrichMobileDetailLongText(id, data)
                 val mobileStillTruncated = extractLongTextContent(data).isNullOrBlank() &&
                     hasLongTextFlag(data) &&
@@ -2908,24 +2934,53 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         }
     }
 
+    private suspend fun performDesktopFavorite(id: String, favorited: Boolean) {
+        val body = JSONObject().put("id", id).toString()
+        // 微博桌面端取消收藏接口服务端拼写就是 destoryFavorites，不能改拼写否则 404。
+        val path = if (favorited) "/ajax/statuses/destoryFavorites" else "/ajax/statuses/createFavorites"
+        val root = desktopPost(path, json = body)
+        checkDesktopOk(root, "操作失败")
+    }
+
     /** 切换微博账号里的收藏状态，[favorited] 表示切换前的状态，不影响本地收藏。 */
     suspend fun favorite(id: String, favorited: Boolean): Boolean {
         if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
-        if (isClientChannel()) {
-            containerPost(
-                if (favorited) "favorites/destroy" else "favorites/create",
-                form = mapOf("id" to id),
-            )
-        } else {
-            postOk(
-                "https://m.weibo.cn/api/favorites/${if (favorited) "destroy" else "create"}",
-                mapOf("id" to id),
-            )
+        val targetFavorited = !favorited
+        try {
+            if (isClientChannel()) {
+                try {
+                    containerPost(
+                        if (favorited) "favorites/destroy" else "favorites/create",
+                        form = mapOf("id" to id),
+                    )
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    if (!isAlreadyMatchingFavoriteState(e, targetFavorited)) {
+                        if (hasDesktopCookie() && shouldFallbackFavoriteToDesktop(e)) {
+                            performDesktopFavorite(id, favorited)
+                        } else {
+                            throw e
+                        }
+                    }
+                }
+            } else {
+                // m.weibo.cn/api/favorites/{create,destroy} 已被微博下线（返回 404 链接无效），统一走桌面端 AJAX 接口。
+                performDesktopFavorite(id, favorited)
+            }
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            if (!isAlreadyMatchingFavoriteState(t, targetFavorited)) {
+                throw ApiException(formatFavoriteErrorMessage(t), (t as? ApiException)?.errno)
+            }
         }
         App.cache.invalidate(
             Api.url("https://m.weibo.cn/statuses/show", mapOf("id" to id)),
             cookie(),
         )
+        withContext(Dispatchers.Main.immediate) {
+            recordCloudFavoriteState(id, targetFavorited)
+        }
         return true
     }
 
@@ -3268,6 +3323,7 @@ class Repo(private val context: PlatformContext, private val store: Store) {
         }
         store.removeFavorite(id)
         if (targetMid != id) store.removeFavorite(targetMid)
+        store.markHistoryDeleted(id, targetMid)
         withContext(Dispatchers.Main.immediate) {
             if (localFavoriteIds.remove(id) != null || (targetMid != id && localFavoriteIds.remove(targetMid) != null)) {
                 favoritesVersion++
@@ -4112,6 +4168,9 @@ class Repo(private val context: PlatformContext, private val store: Store) {
                 Api.postDesktopForm(url, form.orEmpty(), cookie, token)
             }
         }
+        if (desktopXsrf().isNullOrBlank()) {
+            refreshDesktopAuth()
+        }
         var last: Throwable? = null
         for (attempt in 0..1) {
             if (attempt == 1) refreshDesktopAuth()
@@ -4915,41 +4974,63 @@ class Repo(private val context: PlatformContext, private val store: Store) {
     suspend fun favorites(cursor: String? = null, force: Boolean = false): FeedPage =
         FeedPage(store.favorites(), null)
 
-    /** 账号云端收藏：客户端通道走 `2/favorites`，桌面端走 `ajax/favorites/all_fav`，网页端走 `230267`。 */
+    private suspend fun desktopCloudFavorites(uid: String, page: Int): FeedPage {
+        val root = desktopGetAuthenticated(
+            Api.url(
+                "https://weibo.com/ajax/favorites/all_fav",
+                mapOf(
+                    "uid" to uid,
+                    "page" to page.toString(),
+                    "count" to "20",
+                    "with_total" to "true",
+                ),
+            ),
+        )
+        return parseCloudFavoritesPayload(root, page)
+    }
+
+    /** 账号云端收藏：客户端通道走 `2/favorites`，网页登录及兜底统一走桌面端 `ajax/favorites/all_fav`。 */
     suspend fun cloudFavorites(cursor: String? = null, force: Boolean = false): FeedPage {
         if (!hasSession()) throw ApiException(LOGIN_REQUIRED, errno = "-100")
         val page = cursor?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         if (isClientChannel()) {
-            val root = containerGet("favorites", mapOf("page" to page.toString(), "count" to "20"))
-            val payload = root.optJSONObject("data") ?: root
-            val favs = payload.optJSONArray("favorites")
-            if (favs != null) {
-                val list = ArrayList<JSONObject>(favs.length())
-                for (i in 0 until favs.length()) {
-                    val entry = favs.optJSONObject(i) ?: continue
-                    (entry.optJSONObject("status") ?: entry).let(list::add)
+            try {
+                val root = containerGet(
+                    "favorites",
+                    mapOf("page" to page.toString(), "count" to "20", "isGetLongText" to "1"),
+                )
+                val payload = root.optJSONObject("data") ?: root
+                val favs = payload.optJSONArray("favorites")
+                if (favs != null) {
+                    val list = ArrayList<JSONObject>(favs.length())
+                    for (i in 0 until favs.length()) {
+                        val entry = favs.optJSONObject(i) ?: continue
+                        (entry.optJSONObject("status") ?: entry).let(list::add)
+                    }
+                    enrichContainerLongTextObjects(list)
+                } else {
+                    enrichContainerLongTextArray(
+                        payload.optJSONArray("status")
+                            ?: payload.optJSONArray("statuses")
+                            ?: payload.optJSONArray("list"),
+                    )
                 }
-                enrichContainerLongTextObjects(list)
-            } else {
-                enrichContainerLongTextArray(payload.optJSONArray("statuses") ?: payload.optJSONArray("list"))
+                return parseCloudFavoritesPayload(root, page)
+            } catch (e: Throwable) {
+                if (e is CancellationException || !hasDesktopCookie() || !shouldFallbackFavoriteToDesktop(e)) {
+                    throw e
+                }
+                return desktopCloudFavorites(ownUid(), page)
             }
-            return parseCloudFavoritesPayload(root, page)
         }
         val uid = ownUid()
-        if (session?.loginType == LOGIN_TYPE_CLIENT) {
-            val desk = desktopCookieOrNull()
-            if (desk != null) {
-                val root = Api.getDesktop(
-                    Api.url(
-                        "https://weibo.com/ajax/favorites/all_fav",
-                        mapOf("uid" to uid, "page" to page.toString(), "count" to "20"),
-                    ),
-                    desk,
-                )
-                return parseCloudFavoritesPayload(root, page)
-            }
+        if (hasDesktopCookie()) {
+            return desktopCloudFavorites(uid, page)
         }
-        return container("230267", cursor, force = force)
+        val fallback = container("230267", cursor, force = force)
+        return fallback.copy(
+            items = fallback.items.map { if (it.favorited) it else it.copy(favorited = true) },
+        )
     }
 
     /** 我赞过的微博：从个人主页 `tabsInfo` 解析赞容器，或走桌面端 `ajax/statuses/mylike`。 */
@@ -5149,6 +5230,14 @@ internal fun extractLikeTabContainerId(root: JSONObject?): String? {
 }
 
 internal fun parseCloudFavoritesPayload(root: JSONObject, page: Int, pageSize: Int = 20): FeedPage {
+    if (root.has("ok") && root.optInt("ok", 1) != 1) {
+        val code = root.str("errno").ifBlank { root.int("ok", 0).toString() }
+        val msg = root.str("msg").ifBlank { root.str("message") }.ifBlank {
+            if (code == "-100") "微博登录状态已失效，请重新登录" else "加载微博收藏失败"
+        }
+        throw ApiException(msg, code)
+    }
+    val dataArray = root.optJSONArray("data")
     val payload = root.optJSONObject("data") ?: root
     val items = ArrayList<Status>()
     val favs = payload.optJSONArray("favorites")
@@ -5156,19 +5245,31 @@ internal fun parseCloudFavoritesPayload(root: JSONObject, page: Int, pageSize: I
         for (i in 0 until favs.length()) {
             val entry = favs.optJSONObject(i) ?: continue
             val statusObj = entry.optJSONObject("status") ?: entry
-            Status.from(statusObj)?.let(items::add)
+            Status.from(statusObj)?.let { s ->
+                items.add(if (s.favorited) s else s.copy(favorited = true))
+            }
         }
     } else {
-        val list = payload.optJSONArray("statuses") ?: payload.optJSONArray("list")
+        // weibo.com/ajax/favorites/all_fav:
+        // - 不带 with_total 时返回 {"ok":1,"data":[...]}
+        // - 带 with_total=true 时返回 {"ok":1,"total_page":N,"data":{"status":[...],"total_number":M}}
+        val list = dataArray
+            ?: payload.optJSONArray("status")
+            ?: payload.optJSONArray("statuses")
+            ?: payload.optJSONArray("list")
         if (list != null) {
-            items.addAll(statusesOf(list))
+            statusesOf(list).forEach { s ->
+                items.add(if (s.favorited) s else s.copy(favorited = true))
+            }
         }
     }
-    val total = payload.int("total_number")
-    val hasMore = items.isNotEmpty() && (
-        items.size >= pageSize ||
-            (total > 0 && page * pageSize < total)
-        )
+    val totalPage = root.int("total_page").takeIf { it > 0 } ?: payload.int("total_page")
+    val total = payload.int("total_number").takeIf { it > 0 } ?: root.int("total_number")
+    val hasMore = items.isNotEmpty() && when {
+        totalPage > 0 -> page < totalPage
+        total > 0 -> page * pageSize < total
+        else -> items.size >= pageSize
+    }
     return FeedPage(items, if (hasMore) (page + 1).toString() else null)
 }
 
@@ -5339,5 +5440,56 @@ internal fun formatLikeErrorMessage(err: Throwable): String {
         if (parsed.isNotBlank()) return parsed
         return if (err.code == 429) "点赞太频繁了，请稍后再试" else "操作失败（HTTP ${err.code}）"
     }
+    return raw.ifBlank { "操作失败" }
+}
+
+internal fun isAlreadyMatchingFavoriteState(err: Throwable, targetFavorited: Boolean): Boolean {
+    val errno = (err as? ApiException)?.errno.orEmpty()
+    val raw = when (err) {
+        is ApiHttpException -> extractWeiboHttpErrorMessage(err.body).ifBlank { err.body }
+        else -> err.message.orEmpty()
+    }
+    val lower = raw.lowercase()
+    return if (targetFavorited) {
+        errno == "20704" ||
+            lower.contains("have collected") ||
+            lower.contains("already collected") ||
+            raw.contains("已收藏") ||
+            raw.contains("已经收藏")
+    } else {
+        errno == "20705" ||
+            lower.contains("not collected") ||
+            lower.contains("have not collected") ||
+            lower.contains("not exist") ||
+            raw.contains("未收藏") ||
+            raw.contains("没有收藏")
+    }
+}
+
+internal fun shouldFallbackFavoriteToDesktop(err: Throwable): Boolean {
+    if (err is ApiHttpException) {
+        return err.code in setOf(400, 403, 404, 412, 418, 429, 432)
+    }
+    if (err is ApiException) {
+        val errno = err.errno.orEmpty()
+        if (errno == "-100") return false
+        val msg = err.message.orEmpty()
+        if (msg == LOGIN_REQUIRED || msg.contains("未登录")) return false
+        return true
+    }
+    return false
+}
+
+internal fun formatFavoriteErrorMessage(err: Throwable): String {
+    if (err is ApiHttpException) {
+        val parsed = extractWeiboHttpErrorMessage(err.body)
+        if (parsed.isNotBlank()) return parsed
+        return if (err.code == 403 || err.code == 418 || err.code == 432) {
+            "微博登录状态受限，请尝试重新登录"
+        } else {
+            "操作失败（HTTP ${err.code}）"
+        }
+    }
+    val raw = err.message.orEmpty().trim()
     return raw.ifBlank { "操作失败" }
 }

@@ -114,6 +114,7 @@ import com.cobo.app.data.ContentFilters
 import com.cobo.app.data.DetailInitialSection
 import com.cobo.app.data.DetailSectionTab
 import com.cobo.app.data.FilterSurface
+import com.cobo.app.data.HistoryImageArchiver
 import com.cobo.app.data.HistoryItem
 import com.cobo.app.data.Membership
 import com.cobo.app.data.MuteUserMode
@@ -130,6 +131,9 @@ import com.cobo.app.data.computeDetailSectionFillerHeightPx
 import com.cobo.app.data.detailSectionHeaderIndex
 import com.cobo.app.data.filterComments
 import com.cobo.app.data.formatWeiboTime
+import com.cobo.app.data.isDeletedStatusThrowable
+import com.cobo.app.data.resolveHistoryFallbackStatus
+import com.cobo.app.data.sanitizeStatusForHistory
 import com.cobo.app.data.shouldFilterComment
 import com.cobo.app.data.shouldFilterStatus
 import com.cobo.app.data.stripHtml
@@ -198,6 +202,7 @@ import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
 import io.github.suqi8.coui.kmp.icon.COUIIcons
 import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.icon.extended.Copy
+import io.github.suqi8.coui.kmp.icon.extended.Delete
 import io.github.suqi8.coui.kmp.icon.extended.Edit
 import io.github.suqi8.coui.kmp.icon.extended.Forward
 import io.github.suqi8.coui.kmp.icon.extended.More
@@ -224,10 +229,33 @@ fun DetailScreen(
     mid: String,
     readOnly: Boolean = false,
     initialSection: DetailInitialSection = DetailInitialSection.Body,
+    fromHistory: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
-    // 列表里点进来的或稍后再看离线快照先顶上：正文、图片、互动数都已经有了，先画出来，接口回来再换。
-    var status by remember(id) { mutableStateOf(StatusMemory.find(id) ?: ReadLater.find(id, mid)?.status) }
+    val savedHistoryItem = remember(id, mid) { App.store.findHistory(id, mid) }
+    val archivedHistoryStatus = remember(savedHistoryItem) {
+        savedHistoryItem?.let { resolveHistoryFallbackStatus(it, App.store.historyImagesDir()) }
+    }
+    var isDeletedArchive by remember(id, mid) {
+        mutableStateOf(
+            savedHistoryItem?.deleted == true ||
+                App.repo.isDeleted(id) ||
+                (mid.isNotBlank() && App.repo.isDeleted(mid)),
+        )
+    }
+    var offlineHistoryFallback by remember(id) { mutableStateOf(false) }
+    // 列表里点进来的、稍后再看或浏览历史离线快照先顶上：正文与图片已经有了，先画出来，接口回来再换。
+    var status by remember(id) {
+        val initial = if (isDeletedArchive && archivedHistoryStatus != null) {
+            archivedHistoryStatus
+        } else {
+            StatusMemory.find(id)
+                ?: ReadLater.find(id, mid)?.status
+                ?: archivedHistoryStatus
+        }
+        mutableStateOf(initial)
+    }
+    val effectiveReadOnly = readOnly || isDeletedArchive
     var detailError by remember(id) { mutableStateOf<String?>(null) }
     var activeTab by remember(id, initialSection) {
         mutableStateOf(
@@ -469,40 +497,89 @@ fun DetailScreen(
         }
     }
 
+    suspend fun persistViewedStatus(s: Status) {
+        val saved = withContext(ioDispatcher) {
+            App.store.saveHistoryStatus(s)
+        }
+        HistoryImageArchiver.scheduleDownload(saved)
+    }
+
+    suspend fun switchToDeletedArchive(fallbackError: String?) {
+        isDeletedArchive = true
+        offlineHistoryFallback = false
+        commentError = null
+        repostError = null
+        val archive = withContext(ioDispatcher) {
+            val existing = App.store.findHistory(id, mid)
+            if (existing != null) {
+                App.store.markHistoryDeleted(id, mid)
+                resolveHistoryFallbackStatus(existing.copy(deleted = true), App.store.historyImagesDir())
+            } else {
+                status?.let { current ->
+                    val saved = App.store.saveHistoryStatus(current, deleted = true)
+                    HistoryImageArchiver.scheduleDownload(saved)
+                    resolveHistoryFallbackStatus(saved, App.store.historyImagesDir())
+                }
+            }
+        }
+        if (archive != null) {
+            status = archive
+            detailError = null
+        } else if (status != null) {
+            status = sanitizeStatusForHistory(status!!)
+            detailError = null
+        } else {
+            detailError = fallbackError ?: "该微博已被删除"
+        }
+    }
+
     LaunchedEffect(id) {
         detailError = null
+        val seeded = status
+        if (isDeletedArchive && seeded != null) {
+            return@LaunchedEffect
+        }
+        // 非历史回看且列表已带入正文时先落盘一次，防止刚点进就立刻返回丢失快照。
+        if (!fromHistory && seeded != null) {
+            scope.launch { persistViewedStatus(seeded) }
+        }
         // 有列表带来的那条时，评论不必等正文回来再发：id/mid 路由里就有，两件事并行，
         // 但等进场展开落位后再写回 UI 状态，防止展开动画中途被评论重组打断。
-        val seeded = status
-        if (seeded != null) scope.launch { loadComments(true, force = false, waitEnterTransition = true) }
+        if (seeded != null && !isDeletedArchive) {
+            scope.launch { loadComments(true, force = false, waitEnterTransition = true) }
+        }
         try {
-            val fetched = App.repo.detail(id, force = false)
+            val fetched = App.repo.detail(id, force = fromHistory)
             if (seeded != null) awaitEnterTransitionSettled()
-            status = com.cobo.app.data.mergeDetailStatusWithSeeded(
+            val merged = com.cobo.app.data.mergeDetailStatusWithSeeded(
                 fetched,
                 seeded,
             )
+            if (merged != null) {
+                status = merged
+                isDeletedArchive = false
+                offlineHistoryFallback = false
+                persistViewedStatus(merged)
+            } else if (status == null) {
+                detailError = "正文加载失败"
+            }
+        } catch (c: CancellationException) {
+            throw c
         } catch (t: Throwable) {
-            if (status == null) {
+            if (isDeletedStatusThrowable(t)) {
+                switchToDeletedArchive(t.message)
+            } else if (status != null) {
+                if (archivedHistoryStatus != null && seeded === archivedHistoryStatus) {
+                    offlineHistoryFallback = true
+                }
+            } else {
                 detailError = t.message ?: "正文加载失败"
             }
         }
-        status?.let { s ->
-            val historyItem = HistoryItem(
-                s.id,
-                s.mid,
-                s.plainText.take(120),
-                s.user?.name.orEmpty(),
-                currentTimeMillis(),
-                // 列表里要按原样还原 emoji 与链接，纯文本留作兜底与裁剪后的短标题。
-                s.textHtml.take(1000),
-            )
-            withContext(ioDispatcher) {
-                App.store.addHistory(historyItem)
-            }
-        }
         // 没有列表数据可顶时才等正文：那条路的 id 可能还是 Base62，评论要先拿到数字 id。
-        if (seeded == null) loadComments(true, force = false)
+        if (seeded == null && !isDeletedArchive && status != null) {
+            loadComments(true, force = false)
+        }
     }
 
     LaunchedEffect(id, mid) {
@@ -669,13 +746,33 @@ fun DetailScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (status != null && isDeletedArchive) {
+                    item(key = "deleted_archive_banner") {
+                        DeletedArchiveNoticeBanner(
+                            title = "已删除",
+                            message = "该微博已被删除，当前显示本地保存的历史快照（仅保留文字与图片）",
+                            isErrorTone = true,
+                            modifier = Modifier.testTag("detail_deleted_banner"),
+                        )
+                    }
+                } else if (status != null && offlineHistoryFallback) {
+                    item(key = "offline_archive_banner") {
+                        DeletedArchiveNoticeBanner(
+                            title = "离线快照",
+                            message = "当前无法连接微博，正在显示本地保存的历史快照（仅保留文字与图片）",
+                            isErrorTone = false,
+                            modifier = Modifier.testTag("detail_offline_banner"),
+                        )
+                    }
+                }
+
                 when {
                     status != null -> item(key = "status") {
                         StatusCard(
                             status = status!!,
                             onOpen = {},
                             onDeleted = { nav.pop() },
-                            onUser = { nav.push(Route.Profile(it.id)) },
+                            onUser = { if (it.id.isNotBlank()) nav.push(Route.Profile(it.id)) },
                             onImage = { pics, i -> nav.push(Route.Images(pics, i)) },
                             onVideo = { nav.push(Route.Video(it.url, it.title, it.isLive, it.fid, it.statusId)) },
                             onLike = {
@@ -685,7 +782,7 @@ fun DetailScreen(
                                 }
                             },
                             showActions = false,
-                            actionsEnabled = !readOnly,
+                            actionsEnabled = !effectiveReadOnly,
                             onOpenQuoted = { quoted, quotedOrigin ->
                                 quotedOrigin.attachToRow(listState, "status", topBarBounds)
                                 nav.push(Route.Detail(quoted.id, quoted.mid, readOnly), quotedOrigin)
@@ -693,14 +790,26 @@ fun DetailScreen(
                             keepFrame = keepCardFrame,
                             foldLongText = false,
                             isDetail = true,
+                            allowDeleted = isDeletedArchive,
+                            deletedBadge = isDeletedArchive,
                             onExpandTruncated = {
                                 val current = status
                                 scope.launch {
                                     runCatching { App.repo.detail(id, force = true) }
                                         .onSuccess { reloaded ->
-                                            status = com.cobo.app.data.mergeDetailStatusWithSeeded(reloaded, current)
+                                            val merged = com.cobo.app.data.mergeDetailStatusWithSeeded(reloaded, current)
+                                            if (merged != null) {
+                                                status = merged
+                                                persistViewedStatus(merged)
+                                            }
                                         }
-                                        .onFailure { App.toast(it.message ?: "展开全文失败") }
+                                        .onFailure { t ->
+                                            if (isDeletedStatusThrowable(t)) {
+                                                switchToDeletedArchive(t.message)
+                                            } else {
+                                                App.toast(t.message ?: "展开全文失败")
+                                            }
+                                        }
                                 }
                             },
                         )
@@ -710,7 +819,23 @@ fun DetailScreen(
                         ErrorState(detailError!!) {
                             scope.launch {
                                 detailError = null
-                                status = runCatching { App.repo.detail(id, force = true) }.getOrNull()
+                                runCatching { App.repo.detail(id, force = true) }
+                                    .onSuccess { reloaded ->
+                                        if (reloaded != null) {
+                                            status = reloaded
+                                            isDeletedArchive = false
+                                            persistViewedStatus(reloaded)
+                                        } else {
+                                            detailError = "正文加载失败"
+                                        }
+                                    }
+                                    .onFailure { t ->
+                                        if (isDeletedStatusThrowable(t)) {
+                                            switchToDeletedArchive(t.message)
+                                        } else {
+                                            detailError = t.message ?: "正文加载失败"
+                                        }
+                                    }
                             }
                         }
                     }
@@ -718,7 +843,7 @@ fun DetailScreen(
                     else -> item { LoadingState() }
                 }
 
-                if ((status?.editCount ?: 0) > 0) {
+                if (!isDeletedArchive && (status?.editCount ?: 0) > 0) {
                     item {
                         Card(
                             modifier = Modifier
@@ -761,6 +886,18 @@ fun DetailScreen(
                     shouldFilterStatus(it, filterRules, FilterSurface.Feed, selfUid)
                 }
 
+                if (isDeletedArchive) {
+                    item(key = "deleted_archive_footer") {
+                        Text(
+                            text = "该微博已被删除，历史快照仅保留文字与图片，不含评论、转发与视频",
+                            fontSize = 12.sp,
+                            color = scheme.onSurfaceSecondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 20.dp),
+                        )
+                    }
+                } else {
                 item(key = "section_header") {
                     Box(Modifier.fillMaxWidth()) {
                         Row(
@@ -999,6 +1136,7 @@ fun DetailScreen(
                         Spacer(Modifier.height(fillerDp))
                     }
                 }
+                }
             }
             }
         }
@@ -1033,11 +1171,30 @@ fun DetailScreen(
                             HighlightedIconButton(
                                 onClick = {
                                     scope.launch {
-                                        status = runCatching { App.repo.detail(id, force = true) }.getOrNull()
-                                        if (activeTab == DetailSectionTab.Comments) {
-                                            loadComments(true, force = true)
-                                        } else {
-                                            loadReposts(true, force = true)
+                                        val previous = status
+                                        try {
+                                            val reloaded = App.repo.detail(id, force = true)
+                                            if (reloaded != null) {
+                                                val merged = com.cobo.app.data.mergeDetailStatusWithSeeded(reloaded, previous) ?: reloaded
+                                                status = merged
+                                                isDeletedArchive = false
+                                                offlineHistoryFallback = false
+                                                persistViewedStatus(merged)
+                                                if (activeTab == DetailSectionTab.Comments) {
+                                                    loadComments(true, force = true)
+                                                } else {
+                                                    loadReposts(true, force = true)
+                                                }
+                                            }
+                                        } catch (c: CancellationException) {
+                                            throw c
+                                        } catch (t: Throwable) {
+                                            if (isDeletedStatusThrowable(t)) {
+                                                switchToDeletedArchive(t.message)
+                                                App.toast("该微博已被删除")
+                                            } else {
+                                                App.toast(t.message ?: "刷新失败")
+                                            }
                                         }
                                     }
                                 },
@@ -1053,12 +1210,7 @@ fun DetailScreen(
                 val current = status
                 val currentLocalFavorited = current?.let { App.repo.isFavorited(it) } == true
                 val currentInReadLater = current?.let { ReadLater.contains(it.id) } == true
-                var currentCloudFavorited by remember(current?.id) {
-                    mutableStateOf(current?.favorited == true)
-                }
-                LaunchedEffect(current?.id, current?.favorited) {
-                    currentCloudFavorited = current?.favorited == true
-                }
+                val currentCloudFavorited = current?.let { App.repo.isCloudFavorited(it.id, it.favorited) } == true
                 var favoriteMenuExpanded by remember(current?.id) { mutableStateOf(false) }
                 val anySaved = currentLocalFavorited || currentCloudFavorited || currentInReadLater
                 val favButtonIcon = when {
@@ -1088,7 +1240,7 @@ fun DetailScreen(
                         contentDescription = "转发",
                         onClick = { repostDialog = true },
                         modifier = Modifier.testTag("detail_repost"),
-                        enabled = !readOnly && !detailBarHidden,
+                        enabled = !effectiveReadOnly && !detailBarHidden,
                     )
                     DetailFloatingToolbarItem(
                         icon = CoboIcons.Comment,
@@ -1096,7 +1248,7 @@ fun DetailScreen(
                         contentDescription = "评论",
                         onClick = { commentDialog = true },
                         modifier = Modifier.testTag("detail_comment"),
-                        enabled = !readOnly && !detailBarHidden,
+                        enabled = !effectiveReadOnly && !detailBarHidden,
                     )
                     Box {
                         DetailFloatingToolbarItem(
@@ -1116,7 +1268,7 @@ fun DetailScreen(
                             val s = current ?: return@OverlayListPopup
                             val dismiss = LocalDismissState.current
                             val menuScheme = COUITheme.colorScheme
-                            val showCloudFav = !readOnly && !App.repo.guest
+                            val showCloudFav = !effectiveReadOnly && !App.repo.guest
                             val optionSize = 2 + if (showCloudFav) 1 else 0
                             var idx = 0
                             ListPopupColumn {
@@ -1162,11 +1314,11 @@ fun DetailScreen(
                                         onSelectedIndexChange = {
                                             dismiss?.invoke()
                                             favoriteMenuExpanded = false
+                                            val beforeCloudFav = currentCloudFavorited
                                             scope.launch {
-                                                runCatching { App.repo.favorite(s.id, currentCloudFavorited) }
+                                                runCatching { App.repo.favorite(s.id, beforeCloudFav) }
                                                     .onSuccess {
-                                                        val next = !currentCloudFavorited
-                                                        currentCloudFavorited = next
+                                                        val next = !beforeCloudFav
                                                         status = s.copy(favorited = next)
                                                         App.toast(if (next) "已收藏到微博账号" else "已取消微博账号收藏")
                                                     }
@@ -1212,7 +1364,7 @@ fun DetailScreen(
                         },
                         modifier = Modifier.testTag("detail_like"),
                         active = current?.liked == true,
-                        enabled = !readOnly && !detailBarHidden,
+                        enabled = !effectiveReadOnly && !detailBarHidden,
                     )
                 }
             }
@@ -2836,3 +2988,46 @@ private fun detailFavoritePopupPositionProvider(): PopupPositionProvider =
 
         override fun getMargins(): PaddingValues = margins
     }
+
+@Composable
+private fun DeletedArchiveNoticeBanner(
+    title: String,
+    message: String,
+    isErrorTone: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = COUITheme.colorScheme
+    val accent = if (isErrorTone) scheme.error else scheme.primary
+    val bg = accent.copy(alpha = 0.10f)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = COUIIcons.Delete,
+            contentDescription = title,
+            tint = accent,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = accent,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = message,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = scheme.onSurfaceSecondary,
+            )
+        }
+    }
+}

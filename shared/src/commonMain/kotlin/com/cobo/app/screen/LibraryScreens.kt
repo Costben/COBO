@@ -1,6 +1,7 @@
 package com.cobo.app.screen
 
 import com.cobo.app.platform.formatEpochMillis
+import com.cobo.app.platform.ioDispatcher
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -36,20 +38,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.cobo.app.App
 import com.cobo.app.data.Account
 import com.cobo.app.data.Draft
 import com.cobo.app.data.HistoryItem
+import com.cobo.app.data.UserRemarks
+import com.cobo.app.data.resolveHistoryStatus
 import com.cobo.app.ui.NavState
 import com.cobo.app.ui.blurEffectsEnabled
 import com.cobo.app.ui.layerBackdropIf
@@ -92,6 +100,7 @@ import io.github.suqi8.coui.kmp.icon.extended.Refresh
 import io.github.suqi8.coui.kmp.theme.COUITheme
 import io.github.suqi8.coui.kmp.utils.scrollEndHaptic
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private fun formatStamp(millis: Long): String =
     formatEpochMillis(millis, "MM-dd HH:mm")
@@ -192,10 +201,16 @@ fun HistoryScreen(nav: NavState) {
         if (key.isEmpty()) history else history.filter { it.matches(key) }
     }
 
-    // 从详情页回来时不重排：看过的记录只把浏览时间写回文件，顺序要等离开本页再进来才生效。
-    // 否则刚看完的那一条会当着人的面被抬到最前面，整个列表跟着错位。
+    // 从详情页回来时不重排：看过的记录只把浏览时间写回文件，顺序要等离开本页再进来才生效；
+    // 但若在详情页里检测到微博已被删除或更新了快照，需原地同步标记与图片信息。
     LaunchedEffect(nav.current) {
-        if (nav.current is Route.History) openId = null
+        if (nav.current is Route.History) {
+            openId = null
+            val latestById = withContext(ioDispatcher) {
+                App.store.history().associateBy { it.id }
+            }
+            history = history.mapNotNull { old -> latestById[old.id] }
+        }
     }
 
     val pageColor = pageContainerColor()
@@ -264,7 +279,7 @@ fun HistoryScreen(nav: NavState) {
                                 if (swipe.isRevealed) {
                                     scope.launch { swipe.close() }
                                 } else {
-                                    nav.push(Route.Detail(item.id, item.mid))
+                                    nav.push(Route.Detail(item.id, item.mid, fromHistory = true))
                                 }
                             },
                         )
@@ -347,7 +362,7 @@ fun HistoryScreen(nav: NavState) {
     if (confirm) {
         ConfirmDialog(
             title = "清空浏览历史",
-            message = "会删除本地保存的全部浏览记录。",
+            message = "会删除本地保存的全部浏览记录与缓存图片。",
             confirmText = "清空",
             onDismiss = { confirm = false },
             onConfirm = {
@@ -362,37 +377,135 @@ fun HistoryScreen(nav: NavState) {
     }
 }
 
-/** 筛选只匹配看得见的字：作者名和正文纯文本。 */
-private fun HistoryItem.matches(key: String): Boolean =
-    user.contains(key, ignoreCase = true) || text.contains(key, ignoreCase = true)
+/** 筛选匹配作者名、本地备注与正文纯文本（优先匹配离线保存的完整正文）。 */
+private fun HistoryItem.matches(key: String): Boolean {
+    if (user.contains(key, ignoreCase = true) || text.contains(key, ignoreCase = true)) return true
+    val snap = snapshot ?: return false
+    if (snap.plainText.contains(key, ignoreCase = true)) return true
+    val author = snap.user
+    if (author != null) {
+        if (author.name.contains(key, ignoreCase = true)) return true
+        if (UserRemarks[author.id]?.contains(key, ignoreCase = true) == true) return true
+    }
+    return false
+}
 
-/** 一条历史记录的正文。 */
+/** 一条历史记录的正文与已保存的配图缩略图。 */
 @Composable
 private fun HistoryRowBody(item: HistoryItem, modifier: Modifier = Modifier) {
+    val scheme = COUITheme.colorScheme
+    val resolvedSnapshot = remember(item) {
+        resolveHistoryStatus(item, App.store.historyImagesDir())
+    }
+    val author = resolvedSnapshot?.user
+    val displayAuthor = UserRemarks.displayName(author?.id, author?.name?.ifBlank { item.user } ?: item.user)
+        .ifBlank { "未知用户" }
+    val isDeleted = item.deleted || App.repo.isDeleted(item.id) || (item.mid.isNotBlank() && App.repo.isDeleted(item.mid))
+    val displayHtml = resolvedSnapshot?.textHtml?.takeIf { it.isNotBlank() } ?: item.html
+    val displayPlain = resolvedSnapshot?.plainText?.takeIf { it.isNotBlank() } ?: item.text
+    val pics = resolvedSnapshot?.pics.orEmpty()
+
     Column(modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-        if (item.html.isNotBlank()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (!author?.avatar.isNullOrBlank()) {
+                    Avatar(author?.avatar, 22.dp)
+                    Spacer(Modifier.width(7.dp))
+                }
+                Text(
+                    text = displayAuthor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = scheme.onSurfaceSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (isDeleted) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "已删除",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = scheme.error,
+                        modifier = Modifier
+                            .testTag("history_deleted_badge_${item.id}")
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(scheme.error.copy(alpha = 0.14f))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = formatStamp(item.time),
+                fontSize = 11.sp,
+                color = scheme.onSurfaceSecondary,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        if (displayHtml.isNotBlank()) {
             WeiboRichText(
-                html = item.html,
+                html = displayHtml,
                 fontSize = 14.sp,
                 lineHeight = 19.sp,
-                maxLines = 2,
+                maxLines = 3,
                 selectable = false,
             )
         } else {
             // 旧记录没存 HTML，只能按当初裁剪下来的纯文本兜底。
             Text(
-                item.text.ifBlank { "（无正文）" },
+                displayPlain.ifBlank { "（无正文）" },
                 fontSize = 14.sp,
-                maxLines = 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "${item.user}  ${formatStamp(item.time)}",
-            fontSize = 11.sp,
-            color = COUITheme.colorScheme.onSurfaceSecondary,
-        )
+        if (pics.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            val previewLimit = 4
+            val shownPics = pics.take(previewLimit)
+            val overflow = (pics.size - previewLimit).coerceAtLeast(0)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                shownPics.forEachIndexed { idx, pic ->
+                    val model = pic.thumb.ifBlank { pic.large }
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.surfaceContainerHigh),
+                    ) {
+                        AsyncImage(
+                            model = model,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (overflow > 0 && idx == shownPics.lastIndex) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.52f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "+$overflow",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

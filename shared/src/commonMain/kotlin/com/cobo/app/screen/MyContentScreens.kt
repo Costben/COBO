@@ -141,7 +141,8 @@ fun FavoritesScreen(
     nav: NavState,
     initialTab: Int? = null,
 ) {
-    val guest = remember { App.repo.guest }
+    val guest = App.repo.guest
+    val accountKey = App.repo.session?.uid.orEmpty()
     val localStore = remember {
         FeedStore("local_favorites") { cursor, force -> App.repo.favorites(cursor, force) }
     }
@@ -151,8 +152,14 @@ fun FavoritesScreen(
     }
 
     val scope = rememberCoroutineScope()
-    val cloudStore = remember(guest) {
-        if (guest) null else FeedStore("cloud_favorites") { cursor, force -> App.repo.cloudFavorites(cursor, force) }
+    val cloudStore = remember(guest, accountKey) {
+        if (guest) null else FeedStore("cloud_favorites_$accountKey") { cursor, force -> App.repo.cloudFavorites(cursor, force) }
+    }
+    val cloudFavVersion = App.repo.cloudFavoritesVersion
+    LaunchedEffect(cloudFavVersion, cloudStore) {
+        if (cloudFavVersion > 0 && cloudStore != null && cloudStore.loaded) {
+            cloudStore.refresh()
+        }
     }
     val tabs = remember(guest) {
         if (guest) listOf("本地收藏", "稍后再看") else listOf("微博", "本地", "稍后再看")

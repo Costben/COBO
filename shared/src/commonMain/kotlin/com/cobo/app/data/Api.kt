@@ -16,7 +16,7 @@ import com.cobo.app.platform.platformOsVersion
 import com.cobo.app.platform.resolveRelativeUrl
 import kotlinx.coroutines.withContext
 
-class ApiException(message: String, val errno: String? = null) : Exception(message)
+open class ApiException(message: String, val errno: String? = null) : Exception(message)
 
 class ApiHttpException(
     val code: Int,

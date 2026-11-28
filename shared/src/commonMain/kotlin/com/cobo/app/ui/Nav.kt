@@ -230,6 +230,7 @@ sealed interface Route {
         val mid: String,
         val readOnly: Boolean = false,
         val initialSection: DetailInitialSection = DetailInitialSection.Body,
+        val fromHistory: Boolean = false,
     ) : Route
     data class EditHistory(val mid: String) : Route
     data class Profile(val uid: String?) : Route

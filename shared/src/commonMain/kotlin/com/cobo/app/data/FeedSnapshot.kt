@@ -213,6 +213,8 @@ private fun picToSnapshot(p: Pic): JSONObject = JSONObject().apply {
     if (p.videoUrl.isNotBlank()) put("videoUrl", p.videoUrl)
     if (p.videoTitle.isNotBlank()) put("videoTitle", p.videoTitle)
     if (p.durationSec > 0) put("durationSec", p.durationSec)
+    if (p.preserveUrl) put("preserveUrl", true)
+    if (p.pid.isNotBlank()) put("pid", p.pid)
     if (p.videoFid.isNotBlank()) put("videoFid", p.videoFid)
     if (p.videoStatusId.isNotBlank()) put("videoStatusId", p.videoStatusId)
 }
@@ -226,6 +228,8 @@ private fun picFromSnapshot(o: JSONObject): Pic = Pic(
     videoUrl = o.str("videoUrl"),
     videoTitle = o.str("videoTitle"),
     durationSec = o.int("durationSec"),
+    preserveUrl = o.optBoolean("preserveUrl", false),
+    pid = o.str("pid"),
     videoFid = o.str("videoFid"),
     videoStatusId = o.str("videoStatusId"),
 )

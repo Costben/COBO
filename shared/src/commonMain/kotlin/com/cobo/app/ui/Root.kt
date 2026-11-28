@@ -6,26 +6,19 @@ import com.cobo.app.platform.LocalBackRouteIsTop
 import com.cobo.app.platform.platformScreenSizePx
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -40,7 +33,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -66,16 +58,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.cobo.app.App
@@ -125,22 +113,14 @@ import com.cobo.app.ui.components.LocalImageSaver
 import com.cobo.app.ui.components.SaveImageItem
 import com.cobo.app.ui.components.SaveImagesMenu
 import com.cobo.app.ui.components.UpdateDialog
-import com.cobo.app.ui.components.inputCapsuleGlass
 import com.cobo.app.ui.components.rememberImageSaveState
-import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.PreciseClickState
 import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.SnackbarData
-import io.github.suqi8.coui.kmp.basic.SnackbarDuration
-import io.github.suqi8.coui.kmp.basic.SnackbarHost
-import io.github.suqi8.coui.kmp.basic.SnackbarHostState
-import io.github.suqi8.coui.kmp.basic.SnackbarResult
-import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.ToastHost
+import io.github.suqi8.coui.kmp.basic.rememberToastHostState
 import io.github.suqi8.coui.kmp.blur.LocalBackdrop
 import io.github.suqi8.coui.kmp.blur.layerBackdrop
 import io.github.suqi8.coui.kmp.blur.rememberLayerBackdrop
-import io.github.suqi8.coui.kmp.icon.COUIIcons
-import io.github.suqi8.coui.kmp.icon.extended.Close
 import io.github.suqi8.coui.kmp.layout.DialogButtonBar
 import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
 import io.github.suqi8.coui.kmp.overlay.OverlayDialog
@@ -390,7 +370,7 @@ fun CoboRoot(
             popupHost = {
                 CompositionLocalProvider(LocalBackdrop provides if (blur) rootBackdrop else null) {
                     COUIPopupHost()
-                    // 使用磨砂玻璃胶囊替换 COUI 默认大半径 dropShadow，避免在 SnackbarHost LazyColumn 底部被裁切出矩形阴影。
+                    // 1:1 对齐 ColorOS 17 SystemUI 原生 Toast（OplusToastLayout + OplusToastDefaultAnimation）。
                     AppSnackbarHost(
                         nav = nav,
                         onOpenClipboardLink = { link -> linkHandler(link.rawUrl) },
@@ -621,29 +601,20 @@ fun CoboRoot(
     }
 }
 
-/** 全局统一提示与剪贴板识别：复用磨砂玻璃胶囊 [GlassToastSnackbar] / [GlassActionSnackbar]。 */
+private val ToastFixedBottomOffset = 82.dp
+private val ToastImeBottomOffset = 24.dp
+
+/** 全局轻提示与剪贴板识别宿主：直接使用上游 COUI 17 原生 [ToastHost]，并保持跨页固定高度不跳动。 */
 @Composable
 private fun AppSnackbarHost(
     nav: NavState,
     onOpenClipboardLink: (DetectedWeiboLink) -> Unit,
 ) {
-    val hostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-    var activeCount by remember { mutableIntStateOf(0) }
-    LaunchedEffect(hostState) {
+    val toastState = rememberToastHostState()
+
+    LaunchedEffect(toastState) {
         App.toastEvents.collect { message ->
-            hostState.newestSnackbarData()?.dismiss()
-            activeCount++
-            launch {
-                try {
-                    hostState.showSnackbar(
-                        message = message,
-                        duration = SnackbarDuration.Custom(2200L),
-                    )
-                } finally {
-                    activeCount = (activeCount - 1).coerceAtLeast(0)
-                }
-            }
+            toastState.showToast(message = message)
         }
     }
 
@@ -660,110 +631,40 @@ private fun AppSnackbarHost(
         val link = detected ?: return@LaunchedEffect
         App.dismissClipboardLink()
         if (suppressed) return@LaunchedEffect
-        activeCount++
-        scope.launch {
-            try {
-                hostState.newestSnackbarData()?.dismiss()
-                val result = hostState.showSnackbar(
-                    message = "剪贴板发现${link.kind.label}",
-                    actionLabel = "打开",
-                    withDismissAction = true,
-                    duration = SnackbarDuration.Custom(6_000L),
-                )
-                if (result == SnackbarResult.ActionPerformed) {
-                    onOpenClipboardLink(link)
-                }
-            } finally {
-                activeCount = (activeCount - 1).coerceAtLeast(0)
-            }
-        }
+        toastState.showToast(
+            message = "剪贴板发现${link.kind.label}",
+            durationMillis = 6_000L,
+            actionLabel = "打开",
+            withDismissAction = true,
+            onAction = { onOpenClipboardLink(link) },
+        )
     }
 
-    // 无提示展示时不订阅 WindowInsets.ime，避免搜索栏弹出/收起键盘时每帧触发根部全屏重组与重排。
-    if (activeCount == 0) return
+    // 记住可见态系统导航栏高度，防止看图页等沉浸式页面隐藏/恢复导航栏时 Toast 跟着上下跳动；
+    // 全应用统一停在底栏上方固定高度，不随页面路由或底栏显隐切换位置。
     val density = LocalDensity.current
-    val imeOpen = WindowInsets.ime.getBottom(density) > 0
-    val hasFloatingBottomBar = !imeOpen && (topRoute == Route.Main || topRoute is Route.Detail)
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(bottom = if (hasFloatingBottomBar) 44.dp else 0.dp),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        SnackbarHost(state = hostState) { data ->
-            if (data.visuals.actionLabel != null) {
-                GlassActionSnackbar(data = data)
-            } else {
-                GlassToastSnackbar(data = data)
-            }
-        }
+    val liveNavBottomPx = WindowInsets.navigationBars.getBottom(density)
+    var stableNavBottomPx by remember { mutableIntStateOf(liveNavBottomPx) }
+    if (liveNavBottomPx > 0 && liveNavBottomPx != stableNavBottomPx) {
+        stableNavBottomPx = liveNavBottomPx
     }
-}
 
-@Composable
-private fun GlassActionSnackbar(data: SnackbarData) {
-    val scheme = COUITheme.colorScheme
-    val scope = rememberCoroutineScope()
-    val backdrop = LocalBackdrop.current
-    val dark = isDarkTheme()
-    val actionLabel = data.visuals.actionLabel
-
-    Box(modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 32.dp)) {
-        Row(
-            modifier = Modifier
-                .heightIn(min = 46.dp)
-                .inputCapsuleGlass(
-                    backdrop = backdrop,
-                    isDark = dark,
-                    cornerRadius = 23.dp,
-                )
-                .clickable { scope.launch { data.performAction() } }
-                .padding(start = 18.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = data.visuals.message,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = scheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            if (!actionLabel.isNullOrBlank()) {
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = actionLabel,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { scope.launch { data.performAction() } }
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-            }
-            if (data.visuals.withDismissAction) {
-                Spacer(Modifier.width(2.dp))
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(15.dp))
-                        .clickable { scope.launch { data.dismiss() } },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = COUIIcons.Close,
-                        contentDescription = "关闭",
-                        tint = scheme.onSurfaceSecondary,
-                        modifier = Modifier.size(15.dp),
-                    )
-                }
-            }
+    // 仅在有活跃 Toast 时才订阅 WindowInsets.ime，避免键盘弹出/收起时每帧触发根部重组。
+    val bottomPadding = if (toastState.hasActiveToast) {
+        val imeBottomPx = WindowInsets.ime.getBottom(density)
+        if (imeBottomPx > 0) {
+            with(density) { imeBottomPx.toDp() } + ToastImeBottomOffset
+        } else {
+            with(density) { stableNavBottomPx.toDp() } + ToastFixedBottomOffset
         }
+    } else {
+        ToastFixedBottomOffset
     }
+    ToastHost(
+        state = toastState,
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = bottomPadding),
+        applySystemInsets = false,
+    )
 }
 
 @Composable
@@ -812,34 +713,6 @@ private fun ShareChoiceDialog(
                 },
             ),
         )
-    }
-}
-
-@Composable
-private fun GlassToastSnackbar(data: SnackbarData) {
-    // 四周留足阴影余量，确保 SnackbarHost 的 LazyColumn item 不裁切磨砂胶囊柔阴影。
-    Box(modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 24.dp, bottom = 32.dp)) {
-        Box(
-            modifier = Modifier
-                .heightIn(min = 42.dp)
-                .inputCapsuleGlass(
-                    backdrop = LocalBackdrop.current,
-                    isDark = isDarkTheme(),
-                    cornerRadius = 21.dp,
-                )
-                .padding(horizontal = 18.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = data.visuals.message,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = COUITheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
-        }
     }
 }
 
@@ -1186,6 +1059,7 @@ private fun RouteContent(route: Route, nav: NavState) {
             route.mid,
             route.readOnly || App.repo.guest,
             route.initialSection,
+            route.fromHistory,
         )
         is Route.EditHistory -> EditHistoryScreen(nav, route.mid)
         is Route.Profile -> ProfileScreen(nav, route.uid)

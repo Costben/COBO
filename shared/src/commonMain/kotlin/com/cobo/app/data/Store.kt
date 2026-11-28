@@ -11,9 +11,14 @@ import com.cobo.app.json.JSONArray
 import com.cobo.app.json.JSONObject
 
 
-class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext = PlatformContext()) {
+class Store(
+    @Suppress("UNUSED_PARAMETER") private val context: PlatformContext = PlatformContext(),
+    private val baseDir: PlatformFile = appFilesDir(),
+) {
 
-    private fun file(name: String): PlatformFile = appFilesDir().child(name)
+    private fun file(name: String): PlatformFile = baseDir.child(name)
+
+    fun historyImagesDir(): PlatformFile = baseDir.child(HistoryImagesDirName)
 
     /** 读文件。`secret` 的文件走 [SecretStore]，没有 `v1:` 前缀的旧明文照读。 */
     private fun readText(name: String, secret: Boolean = false): String? {
@@ -315,64 +320,117 @@ class Store(@Suppress("UNUSED_PARAMETER") private val context: PlatformContext =
 
     fun history(): List<HistoryItem> {
         val arr = readArray("history.json")
-        val out = ArrayList<HistoryItem>()
+        val out = ArrayList<HistoryItem>(arr.length().coerceAtMost(MaxHistoryItems))
         for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            out.add(HistoryItem(o.str("id"), o.str("mid"), o.str("text"), o.str("user"), o.optLong("time"), o.str("html")))
+            decodeHistoryItemJson(arr.optJSONObject(i))?.let(out::add)
+            if (out.size >= MaxHistoryItems) break
         }
         return out
     }
 
-    fun addHistory(item: HistoryItem) {
-        val arr = readArray("history.json")
-        val out = JSONArray()
-        out.put(
-            JSONObject()
-                .put("id", item.id)
-                .put("mid", item.mid)
-                .put("text", item.text)
-                .put("user", item.user)
-                .put("html", item.html)
-                .put("time", currentTimeMillis())
-        )
-        for (i in 0 until arr.length()) {
-            if (out.length() >= 100) break
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.str("id") == item.id) continue
-            out.put(o)
+    fun findHistory(id: String, mid: String = ""): HistoryItem? {
+        if (id.isBlank() && mid.isBlank()) return null
+        return history().firstOrNull { item ->
+            (id.isNotBlank() && (item.id == id || item.mid == id)) ||
+                (mid.isNotBlank() && (item.id == mid || item.mid == mid))
         }
-        write("history.json", out)
+    }
+
+    fun isHistoryImageReferenced(fileName: String): Boolean {
+        if (fileName.isBlank()) return false
+        return history().any { item ->
+            fileName in item.localImages ||
+                item.snapshot?.pics?.any { historyImageFileName(it) == fileName } == true
+        }
+    }
+
+    fun addHistory(item: HistoryItem, preserveDeleted: Boolean = true) {
+        if (item.id.isBlank()) return
+        val existing = history()
+        val prev = existing.firstOrNull { it.id == item.id }
+        val normalized = HistoryItem(
+            id = item.id,
+            mid = item.mid.ifBlank { prev?.mid.orEmpty().ifBlank { item.id } },
+            text = item.text.ifBlank { prev?.text.orEmpty() },
+            user = item.user.ifBlank { prev?.user.orEmpty() },
+            time = if (item.time > 0L) item.time else currentTimeMillis(),
+            html = item.html.ifBlank { prev?.html.orEmpty() },
+            snapshot = item.snapshot?.let(::sanitizeStatusForHistory) ?: prev?.snapshot,
+            localImages = when {
+                item.localImages.isNotEmpty() -> item.localImages
+                item.snapshot != null -> sanitizeStatusForHistory(item.snapshot).pics.map(::historyImageFileName)
+                else -> prev?.localImages.orEmpty()
+            },
+            deleted = if (preserveDeleted) (item.deleted || prev?.deleted == true) else item.deleted,
+        )
+        val retained = ArrayList<HistoryItem>(MaxHistoryItems)
+        retained.add(normalized)
+        for (old in existing) {
+            if (retained.size >= MaxHistoryItems) break
+            if (old.id == item.id) continue
+            retained.add(old)
+        }
+        writeHistory(retained)
+        HistoryImageArchiver.pruneOrphanFiles(historyImagesDir(), retained)
+    }
+
+    fun saveHistoryStatus(
+        status: Status,
+        nowMs: Long = currentTimeMillis(),
+        deleted: Boolean = false,
+    ): HistoryItem {
+        val item = buildHistoryItem(status = status, nowMs = nowMs, deleted = deleted)
+        addHistory(item, preserveDeleted = deleted)
+        return item
+    }
+
+    /**
+     * 在原位置把历史记录标记为已删除，不打乱历史排序，也不覆盖已保存的正文与图片快照。
+     */
+    fun markHistoryDeleted(id: String, mid: String = ""): Boolean {
+        if (id.isBlank() && mid.isBlank()) return false
+        val existing = history()
+        var changed = false
+        val updated = existing.map { item ->
+            val matched = (id.isNotBlank() && (item.id == id || item.mid == id)) ||
+                (mid.isNotBlank() && (item.id == mid || item.mid == mid))
+            if (matched && !item.deleted) {
+                changed = true
+                item.copy(deleted = true)
+            } else {
+                item
+            }
+        }
+        if (changed) {
+            writeHistory(updated)
+        }
+        return changed
     }
 
     fun removeHistory(id: String) {
-        val arr = readArray("history.json")
-        val out = JSONArray()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.str("id") == id) continue
-            out.put(o)
-        }
-        write("history.json", out)
+        val retained = history().filterNot { it.id == id }
+        writeHistory(retained)
+        HistoryImageArchiver.pruneOrphanFiles(historyImagesDir(), retained)
     }
 
-    fun clearHistory() = write("history.json", JSONArray())
+    fun clearHistory() {
+        write("history.json", JSONArray())
+        HistoryImageArchiver.clearAllFiles(historyImagesDir())
+    }
 
     fun mergeHistory(incoming: List<HistoryItem>): Int {
         val merged = mergeBackupHistory(history(), incoming)
+        writeHistory(merged)
+        HistoryImageArchiver.pruneOrphanFiles(historyImagesDir(), merged)
+        return merged.size
+    }
+
+    private fun writeHistory(items: List<HistoryItem>) {
         val out = JSONArray()
-        merged.forEach { item ->
-            out.put(
-                JSONObject()
-                    .put("id", item.id)
-                    .put("mid", item.mid)
-                    .put("text", item.text)
-                    .put("user", item.user)
-                    .put("html", item.html)
-                    .put("time", item.time),
-            )
+        items.take(MaxHistoryItems).forEach { item ->
+            out.put(encodeHistoryItemJson(item, includeLocalImages = true))
         }
         write("history.json", out)
-        return merged.size
     }
 
     /**

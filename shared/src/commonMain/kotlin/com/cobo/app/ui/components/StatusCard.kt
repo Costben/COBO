@@ -181,28 +181,34 @@ fun StatusCard(
     isDetail: Boolean = false,
     /** 详情页正文若仍处于服务端截断态，点击尾部「展开全文」时触发的重试补全回调。 */
     onExpandTruncated: (() -> Unit)? = null,
+    /** 允许渲染已删除微博的本地历史快照（浏览历史详情页使用）。 */
+    allowDeleted: Boolean = false,
+    /** 在卡片头部显示「已删除」标识并收起服务端写操作入口。 */
+    deletedBadge: Boolean = false,
 ) {
     val displayStatus = App.repo.editedStatus(status.id, status.mid) ?: status
-    if (App.repo.isDeleted(displayStatus.id)) return
+    if (!allowDeleted && App.repo.isDeleted(displayStatus.id)) return
     // 列表画过就记住这条，详情页第一帧直接用它，不用再等接口。
-    remember(displayStatus) { StatusMemory.remember(displayStatus) }
+    if (!deletedBadge) {
+        remember(displayStatus) { StatusMemory.remember(displayStatus) }
+    }
     val scheme = COUITheme.colorScheme
     val scope = rememberCoroutineScope()
     val linkHandler = LocalLinkHandler.current
     val statusEditor = LocalStatusEditor.current
     val effectiveFavorited = App.repo.isFavorited(displayStatus.id)
     val inReadLater = ReadLater.contains(displayStatus.id)
-    var cloudFavorited by remember(displayStatus.id) { mutableStateOf(displayStatus.favorited) }
+    val cloudFavorited = App.repo.isCloudFavorited(displayStatus.id, displayStatus.favorited)
     val author = displayStatus.user
     val authorId = author?.id.orEmpty()
     val isGuest = App.repo.guest
     val isSelf = !isGuest && authorId.isNotBlank() && authorId == App.repo.session?.uid
-    val canEdit = isSelf
-    val canDelete = isSelf
+    val canEdit = isSelf && !deletedBadge
+    val canDelete = isSelf && !deletedBadge
     val canFollow = author != null && authorId.isNotBlank() && !isSelf
     val canLocalMute = authorId.isNotBlank() && authorId != App.repo.session?.uid
     val reportMid = displayStatus.mid.ifBlank { displayStatus.id }
-    val canReport = !isGuest && !isSelf && reportMid.isNotBlank()
+    val canReport = !isGuest && !isSelf && !deletedBadge && reportMid.isNotBlank()
     val effectiveFollowing = when {
         !canFollow -> false
         isGuest -> FollowTags[authorId] == FollowTag.Local
@@ -226,15 +232,16 @@ fun StatusCard(
         val added = ReadLater.toggle(displayStatus)
         App.toast(if (added) "已加入稍后再看" else "已移出稍后再看")
     }
-    val handleCloudFavorite: (() -> Unit)? = if (isGuest) {
+    val handleCloudFavorite: (() -> Unit)? = if (isGuest || deletedBadge) {
         null
     } else {
         {
+            val currentCloudFav = cloudFavorited
             scope.launch {
-                runCatching { App.repo.favorite(displayStatus.id, cloudFavorited) }
+                runCatching { App.repo.favorite(displayStatus.id, currentCloudFav) }
                     .onSuccess {
-                        cloudFavorited = !cloudFavorited
-                        App.toast(if (cloudFavorited) "已收藏到微博账号" else "已取消微博账号收藏")
+                        val next = !currentCloudFav
+                        App.toast(if (next) "已收藏到微博账号" else "已取消微博账号收藏")
                     }
                     .onFailure { App.toast(it.message ?: "操作失败") }
             }
@@ -294,6 +301,7 @@ fun StatusCard(
             onReport = if (canReport) { { linkHandler(statusReportUrl(reportMid)) } } else null,
             onEdit = handleEdit,
             onDelete = if (canDelete) { { if (!deleting) confirmDelete = true } } else null,
+            deletedBadge = deletedBadge,
         )
         if (displayStatus.textHtml.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
@@ -469,6 +477,7 @@ fun StatusHeader(
     onReport: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
+    deletedBadge: Boolean = false,
 ) {
     val scheme = COUITheme.colorScheme
     val user = status.user
@@ -511,6 +520,20 @@ fun StatusHeader(
                     if (tag != null) {
                         Spacer(Modifier.width(4.dp))
                         FollowTagBadge(tag, compact = true)
+                    }
+                    if (deletedBadge) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "已删除",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = scheme.error,
+                            modifier = Modifier
+                                .testTag("status_deleted_badge")
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(scheme.error.copy(alpha = 0.14f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
                     }
                 }
                 if (showMore && (onShareCard != null || onToggleFavorite != null || onToggleReadLater != null || onToggleCloudFavorite != null || onToggleFollow != null || onLocalMute != null || onReport != null || onEdit != null || onDelete != null)) {

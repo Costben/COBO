@@ -2921,6 +2921,12 @@ data class HistoryItem(
     val time: Long,
     /** 详情页正文的原始 HTML：历史列表靠它还原 emoji 与链接；旧记录没有这一项。 */
     val html: String = "",
+    /** 离线保存的精简微博快照：仅保留文字与静态图片，不含评论、转发与视频。 */
+    val snapshot: Status? = null,
+    /** 本地持久化图片文件名列表（相对 `history-images/` 目录，与 snapshot.pics 顺序对应）。 */
+    val localImages: List<String> = emptyList(),
+    /** 该微博已被检测到删除（本机删除或服务端返回已删除/不存在）。 */
+    val deleted: Boolean = false,
 )
 
 /**

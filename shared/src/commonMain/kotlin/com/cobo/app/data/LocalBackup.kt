@@ -154,15 +154,7 @@ internal fun encodeLocalBackupJson(bundle: LocalBackupBundle): String {
     bundle.history?.let { history ->
         val arr = JSONArray()
         history.forEach { h ->
-            arr.put(
-                JSONObject()
-                    .put("id", h.id)
-                    .put("mid", h.mid)
-                    .put("text", h.text)
-                    .put("user", h.user)
-                    .put("time", h.time)
-                    .put("html", h.html),
-            )
+            arr.put(encodeHistoryItemJson(h, includeLocalImages = false))
         }
         root.put("history", arr)
     }
@@ -223,19 +215,7 @@ internal fun decodeLocalBackupJson(raw: String): LocalBackupBundle {
     val history = root.optJSONArray("history")?.let { arr ->
         buildList<HistoryItem>(arr.length()) {
             for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val id = o.str("id")
-                if (id.isBlank()) continue
-                add(
-                    HistoryItem(
-                        id = id,
-                        mid = o.str("mid").ifBlank { id },
-                        text = o.str("text"),
-                        user = o.str("user"),
-                        time = o.optLong("time", 0L),
-                        html = o.str("html"),
-                    ),
-                )
+                decodeHistoryItemJson(arr.optJSONObject(i))?.let(::add)
             }
         }
     }
@@ -324,8 +304,27 @@ internal fun mergeBackupHistory(
     for (h in existing + incoming) {
         if (h.id.isBlank()) continue
         val prev = byId[h.id]
-        if (prev == null || h.time > prev.time) {
-            byId[h.id] = h
+        byId[h.id] = if (prev == null) {
+            h
+        } else {
+            val primary = if (h.time > prev.time) h else prev
+            val secondary = if (primary === h) prev else h
+            val mergedSnapshot = primary.snapshot ?: secondary.snapshot
+            val mergedLocalImages = when {
+                primary.localImages.isNotEmpty() -> primary.localImages
+                secondary.localImages.isNotEmpty() -> secondary.localImages
+                mergedSnapshot != null -> mergedSnapshot.pics.map(::historyImageFileName)
+                else -> emptyList()
+            }
+            primary.copy(
+                mid = primary.mid.ifBlank { secondary.mid },
+                text = primary.text.ifBlank { secondary.text },
+                user = primary.user.ifBlank { secondary.user },
+                html = primary.html.ifBlank { secondary.html },
+                snapshot = mergedSnapshot,
+                localImages = mergedLocalImages,
+                deleted = primary.deleted || secondary.deleted,
+            )
         }
     }
     return byId.values.sortedByDescending { it.time }.take(limit)
